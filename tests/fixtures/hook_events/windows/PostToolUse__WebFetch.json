@@ -1,0 +1,23 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000007",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\E--bk-lab-matchers\\00000000-0000-4000-8000-000000000007.jsonl",
+  "cwd": "E:\\bk-lab-matchers",
+  "prompt_id": "00000000-0000-4000-8000-000000000008",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "WebFetch",
+  "tool_input": {
+    "url": "https://example.com",
+    "prompt": "What is the page title?"
+  },
+  "tool_response": {
+    "bytes": 577,
+    "code": 200,
+    "codeText": "OK",
+    "result": "# Page Title\n\nThe page title is **\"Example Domain\"**.\n\nThis heading introduces a domain created specifically for use in documentation and educational materials, as the content notes: \"This domain is for use in documentation examples without needing permission.\"",
+    "durationMs": 2760,
+    "url": "https://example.com"
+  },
+  "tool_use_id": "toolu_FIXTURE0008",
+  "duration_ms": 2760
+}

@@ -1,0 +1,27 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000015",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\E--bk-lab-e11\\00000000-0000-4000-8000-000000000015.jsonl",
+  "cwd": "E:\\bk-lab-e11",
+  "prompt_id": "00000000-0000-4000-8000-000000000016",
+  "permission_mode": "default",
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "PowerShell",
+  "tool_input": {
+    "command": "New-Item -ItemType File -Path BK_PLAIN_F.txt -Force",
+    "description": "Create plain file BK_PLAIN_F.txt"
+  },
+  "permission_suggestions": [
+    {
+      "type": "addDirectories",
+      "directories": [
+        "E:\\bk-lab-e11"
+      ],
+      "destination": "session"
+    },
+    {
+      "type": "setMode",
+      "mode": "acceptEdits",
+      "destination": "session"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\E--bk-lab\\00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "E:\\bk-lab",
+  "prompt_id": "00000000-0000-4000-8000-000000000004",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "E:\\bk-lab\\probe.txt"
+  },
+  "tool_response": {
+    "type": "text",
+    "file": {
+      "filePath": "E:\\bk-lab\\probe.txt",
+      "content": "probe file for M0a E15\n",
+      "numLines": 2,
+      "startLine": 1,
+      "totalLines": 2
+    }
+  },
+  "tool_use_id": "toolu_FIXTURE0003",
+  "duration_ms": 5
+}

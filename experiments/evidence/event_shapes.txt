@@ -1,0 +1,64 @@
+# \u5404 hook \u4e8b\u4ef6 stdin JSON \u7684\u5b57\u6bb5\u540d\uff08\u53ea\u542b\u5b57\u6bb5\u540d\uff0c\u4e0d\u542b\u503c\uff09
+
+ConfigChange / -
+  {"top": ["cwd", "file_path", "hook_event_name", "prompt_id", "session_id", "source", "transcript_path"]}
+PermissionRequest / PowerShell
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "transcript_path"], "tool_input": ["command", "description"]}
+PostToolUse / Agent
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["description", "prompt"], "tool_response": ["agentId", "canReadOutputFile", "description", "isAsync", "outputFile", "prompt", "resolvedModel", "status"]}
+PostToolUse / Bash
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["command", "description"], "tool_response": ["interrupted", "isImage", "noOutputExpected", "stderr", "stdout"]}
+PostToolUse / Edit
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["file_path", "new_string", "old_string", "replace_all"], "tool_response": ["filePath", "newString", "oldString", "originalFile", "replaceAll", "structuredPatch", "userModified"]}
+PostToolUse / Glob
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["path", "pattern"], "tool_response": ["countIsComplete", "durationMs", "filenames", "numFiles", "totalMatches", "truncated"]}
+PostToolUse / Grep
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["path", "pattern"], "tool_response": ["filenames", "mode", "numFiles", "totalFiles"]}
+PostToolUse / PowerShell
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["command", "description"], "tool_response": ["interrupted", "isImage", "stderr", "stdout"]}
+PostToolUse / Read
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["file_path"], "tool_response": ["file", "type"]}
+PostToolUse / StructuredOutput
+  {"top": ["agent_id", "cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["ok"]}
+PostToolUse / ToolSearch
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["max_results", "query"], "tool_response": ["matches", "query", "total_deferred_tools"]}
+PostToolUse / WebFetch
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["prompt", "url"], "tool_response": ["bytes", "code", "codeText", "durationMs", "result", "url"]}
+PostToolUse / WebSearch
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["mode", "query"], "tool_response": ["durationSeconds", "query", "results", "searchCount"]}
+PostToolUse / Write
+  {"top": ["cwd", "duration_ms", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["content", "file_path"], "tool_response": ["content", "filePath", "originalFile", "structuredPatch", "type", "userModified"]}
+PostToolUse / mcp__bkmcp__echo
+  {"top": ["cwd", "duration_ms", "hook_event_name", "mcp_server", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_response", "tool_use_id", "transcript_path"], "tool_input": ["text"]}
+PreToolUse / Agent
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["description", "prompt"]}
+PreToolUse / Bash
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["command", "description"]}
+PreToolUse / Edit
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["file_path", "new_string", "old_string", "replace_all"]}
+PreToolUse / Glob
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["path", "pattern"]}
+PreToolUse / Grep
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["path", "pattern"]}
+PreToolUse / PowerShell
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["command", "description"]}
+PreToolUse / Read
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["file_path"]}
+PreToolUse / StructuredOutput
+  {"top": ["agent_id", "cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["ok"]}
+PreToolUse / ToolSearch
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["max_results", "query"]}
+PreToolUse / WebFetch
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["prompt", "url"]}
+PreToolUse / WebSearch
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["mode", "query"]}
+PreToolUse / Write
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["content", "file_path"]}
+PreToolUse / mcp__bkmcp__echo
+  {"top": ["cwd", "hook_event_name", "mcp_server", "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name", "tool_use_id", "transcript_path"], "tool_input": ["text"]}
+SessionStart / -
+  {"top": ["cwd", "hook_event_name", "session_id", "source", "transcript_path"]}
+Stop / -
+  {"top": ["background_tasks", "cwd", "hook_event_name", "last_assistant_message", "permission_mode", "prompt_id", "session_crons", "session_id", "stop_hook_active", "transcript_path"]}
+UserPromptSubmit / -
+  {"top": ["cwd", "hook_event_name", "permission_mode", "prompt", "prompt_id", "session_id", "transcript_path"]}

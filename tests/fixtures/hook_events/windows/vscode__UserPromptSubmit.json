@@ -1,0 +1,10 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000019",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\e--bk-lab\\00000000-0000-4000-8000-000000000019.jsonl",
+  "cwd": "e:\\bk-lab",
+  "scratchpad_dir": "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--bk-lab\\00000000-0000-4000-8000-000000000019\\scratchpad",
+  "prompt_id": "00000000-0000-4000-8000-000000000020",
+  "permission_mode": "acceptEdits",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "<ide_opened_file>The user opened the file e:\\bk-lab\\prompts\\prompt_a.txt in the IDE. This may or may not be related to the current task.</ide_opened_file>\n\n\n<pasted_content id=\"52e6\">\n这是一个 hook 行为实验，请严格按下面三步执行，不要做别的事：\n1. 用 PowerShell 工具执行：Write-Output 'BK_A_MARK ✓ 中文'\n2. 用 Read 工具读取当前目录下的 probe.txt\n3. 用 Write 工具创建 out_a.txt，内容为 hi\n完成后只回复 DONE。\n</pasted_content id=\"52e6\">"
+}

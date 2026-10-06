@@ -1,0 +1,37 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000007",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\E--bk-lab-matchers\\00000000-0000-4000-8000-000000000007.jsonl",
+  "cwd": "E:\\bk-lab-matchers",
+  "prompt_id": "00000000-0000-4000-8000-000000000008",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "E:\\bk-lab-matchers\\notes.txt",
+    "old_string": "alpha",
+    "new_string": "beta",
+    "replace_all": false
+  },
+  "tool_response": {
+    "filePath": "E:\\bk-lab-matchers\\notes.txt",
+    "oldString": "alpha",
+    "newString": "beta",
+    "originalFile": "alpha\n",
+    "structuredPatch": [
+      {
+        "oldStart": 1,
+        "oldLines": 1,
+        "newStart": 1,
+        "newLines": 1,
+        "lines": [
+          "-alpha",
+          "+beta"
+        ]
+      }
+    ],
+    "userModified": false,
+    "replaceAll": false
+  },
+  "tool_use_id": "toolu_FIXTURE0005",
+  "duration_ms": 12
+}

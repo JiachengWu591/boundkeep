@@ -1,0 +1,18 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000019",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\e--bk-lab\\00000000-0000-4000-8000-000000000019.jsonl",
+  "cwd": "e:\\bk-lab",
+  "scratchpad_dir": "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--bk-lab\\00000000-0000-4000-8000-000000000019\\scratchpad",
+  "prompt_id": "00000000-0000-4000-8000-000000000020",
+  "permission_mode": "acceptEdits",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "PowerShell",
+  "tool_input": {
+    "command": "Write-Output 'BK_A_MARK ✓ 中文'",
+    "description": "Print marker string"
+  },
+  "tool_use_id": "toolu_FIXTURE0016"
+}

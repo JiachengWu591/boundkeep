@@ -1,0 +1,190 @@
+# M0a \u6c47\u603b\uff08\u8131\u654f\uff1b\u7531 experiments/summarize_m0a.py \u4ece raw/ \u91cd\u65b0\u63a8\u5bfc\uff09
+# Claude Code 2.1.291, Windows 11 build 26200, 2026-10-06
+
+======== E4 additionalContext
+PostToolUse nonce visible to model : True
+UserPromptSubmit nonce visible     : True
+
+======== E5 matcher x tool (PreToolUse; count of hook invocations)
+label         PowerShell  Read        Write       Edit        Glob        Grep        ToolSearch  WebFetch    mcp__bkmcp_
+m-star        x1          x2          x1          x1          x1          x1          x2          x1          x1         
+m-empty       x1          x2          x1          x1          x1          x1          x2          x1          x1         
+m-omitted     x1          x2          x1          x1          x1          x1          x2          x1          x1         
+m-bash-ps     x1          .           .           .           .           .           .           .           .          
+m-ps-exact    x1          .           .           .           .           .           .           .           .          
+m-pow-regex   x1          .           .           .           .           .           .           .           .          
+m-anch-regex  x1          .           .           .           .           .           .           .           .          
+m-rw-list     .           x2          x1          x1          .           .           .           .           .          
+m-comma       .           x2          x1          .           .           .           .           .           .          
+m-glob-grep   .           .           .           .           x1          x1          .           .           .          
+m-web         .           .           .           .           .           .           .           x1          .          
+m-mcp-regex   .           .           .           .           .           .           .           .           x1         
+m-mcp-exact   .           .           .           .           .           .           .           .           x1         
+matchers that never fired: m-ps-lower (powershell), m-pow-prefix (Pow), m-task (Task|Agent)
+
+======== E6 / E16 / E22 broken-hook modes (one claude -p run each)
+nonexist         hook_started=False tool_executed=True  exit=1 outcome=error stderr="Error occurred while executing hook command: ENOENT: no suc
+cmdshim          hook_started=False tool_executed=True  exit=1 outcome=error stderr="Failed to run: spawn E:\\bk-lab-fail\\shim.cmd EINVAL"
+notexec          hook_started=False tool_executed=True  exit=1 outcome=error stderr="Failed to run: EFTYPE: inappropriate file type or format, u
+exit127          hook_started=True  tool_executed=True  exit=127 outcome=error stderr=""
+exit3            hook_started=True  tool_executed=True  exit=3 outcome=error stderr=""
+stderr_only      hook_started=True  tool_executed=True  exit=0 outcome=success stderr="BK_STDERR_ONLY_TEXT"
+plain_text       hook_started=True  tool_executed=True  exit=0 outcome=success stderr=""
+badjson          hook_started=True  tool_executed=True  exit=0 outcome=success stderr=""
+json_and_exit2   hook_started=True  tool_executed=False exit=2 outcome=error stderr="BK_J2_STDERR_REASON"
+jsondeny_exit1   hook_started=True  tool_executed=False exit=1 outcome=error stderr=""
+old_block        hook_started=True  tool_executed=False exit=0 outcome=success stderr=""
+nonutf8          hook_started=True  tool_executed=True  exit=0 outcome=success stderr=""
+bigout           hook_started=True  tool_executed=True  exit=0 outcome=success stderr=""
+hang_noread      hook_started=True  tool_executed=True  exit=1 outcome=cancelled stderr=""
+shellform_noamp  hook_started=False tool_executed=True  exit=1 outcome=error stderr="\ufffd\ufffd\ufffd\ufffd\u03bb\ufffd\ufffd \ufffd\ufffd:1 \
+shellform_amp    hook_started=True  tool_executed=True  all hook responses success/no output
+shellform_ps     hook_started=True  tool_executed=True  all hook responses success/no output
+shellform_bash   hook_started=False tool_executed=True  exit=1 outcome=error stderr="Failed to run: Hook \"\"D:/anaconda3/python.exe\" -I -S \"E
+miseshim         hook_started=True  tool_executed=True  all hook responses success/no output
+winapps          hook_started=False tool_executed=True  exit=49 outcome=error stderr=""
+exe_launcher     hook_started=True  tool_executed=True  all hook responses success/no output
+unicode_exe      hook_started=True  tool_executed=True  all hook responses success/no output
+unicode_script   hook_started=True  tool_executed=True  all hook responses success/no output
+
+======== E9 sessions and config merge
+e9_s1   SessionStart (source, session_id[:8]): [('startup', 'b592832e')]
+e9_s2   SessionStart (source, session_id[:8]): [('resume', 'b592832e')]
+e9_s3   SessionStart (source, session_id[:8]): [('resume', 'b592832e')]
+e9_s4   SessionStart (source, session_id[:8]): [('resume', 'b592832e'), ('compact', 'b592832e')]
+e9_merge UserPromptSubmit hooks fired: ['cli-hook', 'local-hook', 'prompt']
+e9_par_sonnet: PreToolUse starts ['17.338', '17.743', '18.295'] (model issued one tool per turn, so parallel tool calls were NOT exercised)
+
+======== E10 per-tool-call latency seen by the host (Glob x10 per run)
+hooks ON  n=20 p50=142 ms p95=204 ms min=126 max=204
+hooks OFF n=20 p50=47 ms p95=54 ms min=37 max=54
+
+======== E10 process cold start / pipe round trip (bench_hook_cold_start.py)
+machine: {"os": "Windows-11-10.0.26200-SP0", "cpu": "13th Gen Intel(R) Core(TM) i7-13700H", "python": "3.12.7", "cpus": 20}
+bare: python -I -S -c pass                                     {"n": 60, "p50_ms": 17.7, "p95_ms": 26.6, "min_ms": 16.9, "max_ms": 28.6, "nonzero_rc": 0}
+bare: python -I -c pass (with site)                            {"n": 60, "p50_ms": 25.9, "p95_ms": 28.0, "min_ms": 24.4, "max_ms": 51.2, "nonzero_rc": 0}
+recorder: python -I -S probe_hook.py                           {"n": 60, "p50_ms": 29.5, "p95_ms": 32.8, "min_ms": 27.7, "max_ms": 38.9, "nonzero_rc": 0}
+exe launcher: FIRST run after creation (ms)                    271.8
+recorder: launcher .exe                                        {"n": 60, "p50_ms": 46.2, "p95_ms": 52.9, "min_ms": 43.6, "max_ms": 58.6, "nonzero_rc": 0}
+recorder: mise shim python.exe -I -S                           {"n": 60, "p50_ms": 93.3, "p95_ms": 118.9, "min_ms": 88.4, "max_ms": 126.6, "nonzero_rc": 0}
+pipe client: python -I -S ipc_pipe_client.py (round trip)      {"n": 60, "p50_ms": 28.9, "p95_ms": 43.0, "min_ms": 26.3, "max_ms": 44.2, "nonzero_rc": 0}
+pipe client: launcher .exe (round trip)                        {"n": 60, "p50_ms": 44.4, "p95_ms": 58.5, "min_ms": 41.1, "max_ms": 257.0, "nonzero_rc": 0}
+pipe client: daemon down (FileNotFoundError path)              {"n": 20, "p50_ms": 28.1, "p95_ms": 39.8, "min_ms": 26.2, "max_ms": 39.8, "nonzero_rc": 0}
+
+======== E11 hook allow vs permission rules (e11_allow_b; New-Item needs approval unless a hook allows)
+reached PreToolUse : ['BK_PLAIN_F.txt', 'BK_ALLOW_F.txt', 'BK_ASKRULE_BK_ALLOW_F.txt', 'BK_DENYRULE_BK_ALLOW_F.txt', 'BK_ASKRULE_F.txt']
+executed           : ['BK_ALLOW_F.txt']
+PermissionRequest  : ['BK_PLAIN_F.txt', 'BK_ASKRULE_BK_ALLOW_F.txt', 'BK_ASKRULE_F.txt']
+rules: ask=New-Item *BK_ASKRULE*, deny=New-Item *BK_DENYRULE*; hook allows when the command contains BK_ALLOW
+
+======== E11 hook decisions under each permission mode (commands: PLAIN, DENY, ASK, ALLOW)
+--permission-mode manual       payload permission_mode=['default'] executed=['BK_PLAIN_MODE', 'BK_ALLOW_MODE']
+--permission-mode acceptEdits  payload permission_mode=['acceptEdits'] executed=['BK_PLAIN_MODE', 'BK_ALLOW_MODE']
+--permission-mode plan         payload permission_mode=['plan'] executed=['BK_PLAIN_MODE', 'BK_ALLOW_MODE']
+--permission-mode dontAsk      payload permission_mode=['dontAsk'] executed=['BK_PLAIN_MODE', 'BK_ALLOW_MODE']
+--permission-mode auto         payload permission_mode=['default'] executed=['BK_PLAIN_MODE', 'BK_ALLOW_MODE']
+
+======== E12 disableAllHooks / config tampering
+e12_disable: settings.local.json={disableAllHooks:true} present at start -> recorder events=0, hook_started=0
+e12_tamper: permission_denied for ['Write', 'PowerShell']
+e12_midflight (settings.local.json rewritten mid-run):
+    11:30:02.328 pre-iso    PreToolUse    "Write-Output 'BK_BEFORE'"
+    11:30:04.563 post-iso   PostToolUse   "Write-Output 'BK_BEFORE'"
+    11:30:07.428 pre-iso    PreToolUse    "Start-Sleep -Seconds 15"
+    11:30:11.506 cfg-change ConfigChange  "local_settings"
+e12_midflight_block (settings.local.json rewritten mid-run):
+    11:31:18.689 pre-iso    PreToolUse    "Write-Output 'BK_BEFORE'"
+    11:31:20.946 post-iso   PostToolUse   "Write-Output 'BK_BEFORE'"
+    11:31:23.205 pre-iso    PreToolUse    "Start-Sleep -Seconds 15"
+    11:31:27.540 cfg-block  ConfigChange  "local_settings"
+    11:31:40.409 post-iso   PostToolUse   "Start-Sleep -Seconds 15"
+    11:31:42.678 pre-iso    PreToolUse    "Write-Output 'BK_AFTER'"
+    11:31:44.887 post-iso   PostToolUse   "Write-Output 'BK_AFTER'"
+    11:31:46.912 stop       Stop          ""
+
+(e13 failed: AttributeError: 'NoneType' object has no attribute 'startswith')
+
+======== E14 prompt / agent hooks on PreToolUse (BK_PROMPT_OK then BK_PROMPT_BLOCK)
+e14_prompt      executed=['Write-Output BK_PROMPT_OK'] hook_names=['PostToolUse:PowerShell', 'PreToolUse:PowerShell'] cost=0.0238366 final_text=""
+e14_prompt_cob  executed=['Write-Output BK_PROMPT_OK'] hook_names=['PostToolUse:PowerShell', 'PreToolUse:PowerShell'] cost=0.0139812 final_text="\u7b2c\u4e00\u6761\u547d\u4ee4\u6210\u529f\u6267\u884c\uff0c\u8f93\u51fa `BK_PROMPT_OK`\uff1b\u7b2c\u4e8c\u6761\u547d\u4ee4\u88ab\u62d2\u7edd\uff0c\u62d2\u7edd\u7406\u7531\u4e3a `BK_PROMPT_REASON_41aa`\u3002"
+e14_agent       executed=['Write-Output BK_PROMPT_OK'] hook_names=['PostToolUse:PowerShell', 'PostToolUse:StructuredOutput', 'PreToolUse:PowerShell', 'PreToolUse:StructuredOutput'] cost=0.02727685 final_text="\u7b2c\u4e00\u6761\u547d\u4ee4\u6267\u884c\u6210\u529f\uff08\u8f93\u51fa BK_PROMPT_OK\uff09\uff0c\u7b2c\u4e8c\u6761\u547d\u4ee4\u88ab\u62d2\u7edd\uff08\u539f\u56e0\uff1aAgent hook condition was not met: BK_PROMPT_REASON_"
+
+======== VS Code extension (claude-vscode) sessions: hook timeline from the interactive UI tests
+-- session #1 cwd=e:\bk-lab
+   09:48:43.166 session-start SessionStart     -          mode=None        "startup"
+-- session #2 cwd=e:\bk-lab
+   09:53:19.166 session-start SessionStart     -          mode=None        "startup"
+   09:56:04.207 prompt        UserPromptSubmit -          mode=acceptEdits "<ide_opened_file>The user open"
+   09:56:07.717 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output 'BK_A_MARK \u2713 \u4e2d\u6587'"
+   09:56:11.577 post-iso      PostToolUse      PowerShell mode=acceptEdits "Write-Output 'BK_A_MARK \u2713 \u4e2d\u6587'"
+   09:56:11.642 pre-iso       PreToolUse       Read       mode=acceptEdits "e:\\bk-lab\\probe.txt"
+   09:56:11.716 post-iso      PostToolUse      Read       mode=acceptEdits "e:\\bk-lab\\probe.txt"
+   09:56:11.771 pre-iso       PreToolUse       Write      mode=acceptEdits "e:\\bk-lab\\out_a.txt"
+   09:56:11.857 post-iso      PostToolUse      Write      mode=acceptEdits "e:\\bk-lab\\out_a.txt"
+   09:56:14.023 stop          Stop             -          mode=acceptEdits ""
+   11:55:42.356 prompt        UserPromptSubmit -          mode=acceptEdits "<ide_selection>The user select"
+   11:55:46.670 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_EXIT1_MARK"
+   11:55:49.145 post-iso      PostToolUse      PowerShell mode=acceptEdits "Write-Output BK_EXIT1_MARK"
+   11:55:50.421 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_EXIT2_MARK"
+   11:55:51.747 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_DENY_MARK"
+   11:55:53.047 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_SLEEP_MARK"
+   11:56:00.767 post-iso      PostToolUse      PowerShell mode=acceptEdits "Write-Output BK_SLEEP_MARK"
+   11:56:02.050 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_NAIVE_MARK"
+   11:56:04.469 post-iso      PostToolUse      PowerShell mode=acceptEdits "Write-Output BK_NAIVE_MARK"
+   11:56:05.940 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_ASK_MARK"
+   11:56:31.640 post-iso      PostToolUse      PowerShell mode=acceptEdits "Write-Output BK_ASK_MARK"
+   11:56:34.208 stop          Stop             -          mode=acceptEdits ""
+-- session #3 cwd=e:\bk-lab
+   11:58:38.088 session-start SessionStart     -          mode=None        "clear"
+   11:58:46.912 prompt        UserPromptSubmit -          mode=acceptEdits "<ide_selection>The user select"
+   11:58:49.842 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_EXIT1_MARK"
+   11:58:50.931 post-iso      PostToolUse      PowerShell mode=acceptEdits "Write-Output BK_EXIT1_MARK"
+   11:58:53.714 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_DENY_MARK"
+   11:58:54.956 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_SLEEP_MARK"
+   11:59:01.490 post-iso      PostToolUse      PowerShell mode=acceptEdits "Write-Output BK_SLEEP_MARK"
+   11:59:03.472 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_NAIVE_MARK"
+   11:59:04.627 post-iso      PostToolUse      PowerShell mode=acceptEdits "Write-Output BK_NAIVE_MARK"
+   11:59:06.394 pre-iso       PreToolUse       PowerShell mode=acceptEdits "Write-Output BK_ASK_MARK"
+   11:59:20.018 post-iso      PostToolUse      PowerShell mode=acceptEdits "Write-Output BK_ASK_MARK"
+   11:59:22.208 stop          Stop             -          mode=acceptEdits ""
+-- session #4 cwd=e:\bk-lab-matchers
+   12:00:34.516 session-start SessionStart     -          mode=None        "startup"
+(gaps: BK_ASK_MARK PreToolUse -> PostToolUse took 25.7 s and 13.6 s = the user was prompted and approved; BK_EXIT2 / BK_DENY have no PostToolUse = blocked)
+
+======== E20 / E21 local probes
+{
+ "documents_folder": "~\\Documents",
+ "documents_redirected_to_onedrive": false,
+ "profile_paths": [
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\profile.ps1",
+  "~\\Documents\\WindowsPowerShell\\profile.ps1",
+  "~\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1"
+ ],
+ "home_has_non_ascii": false,
+ "volumes (letter:fs:type)": [
+  "E:NTFS:Fixed",
+  "C:NTFS:Fixed",
+  "D:NTFS:Fixed"
+ ],
+ "fsutil_case_sensitive_E_bk_lab": "Case sensitive attribute on directory E:\\bk-lab is disabled.",
+ "fsutil_8dot3_C": "Failed to open the volume.\r\nError 5: Access is denied.",
+ "realpath existing short  C:\\PROGRA~1": "C:\\Program Files",
+ "realpath nonexisting tail C:\\PROGRA~1\\nonexist": "C:\\Program Files\\nonexist",
+ "realpath nonexisting short C:\\Users\\NONEXI~1": "C:\\Users\\NONEXI~1",
+ "realpath nonexisting 'C:\\Program Files\\NoSuchDir\\..\\x'": "C:\\Program Files\\x",
+ "git_bash_found": true,
+ "git_bash_cygpath": [
+  "/ => D:\\\u65b0\u5efa\u6587\u4ef6\u5939\\Git\\",
+  "/tmp => ~\\AppData\\Local\\Temp",
+  "/usr => D:\\\u65b0\u5efa\u6587\u4ef6\u5939\\Git\\usr",
+  "/c/Users => C:\\Users",
+  "/c/Users/<user> => ~",
+  "/d/x => D:\\x",
+  "./ => .\\"
+ ]
+}
+== PowerShell: Desktop 5.1.26100.9444; language mode: FullLanguage
+== E20: Parser::ParseInput under ConstrainedLanguage (one-way switch inside this process)
+language mode now: ConstrainedLanguage
+-- fallback inside CLM: Get-Alias / Get-Command still work?
+Get-Alias rm -> Remove-Item

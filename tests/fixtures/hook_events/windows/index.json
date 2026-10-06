@@ -1,0 +1,287 @@
+{
+  "claude_code_version": "2.1.291",
+  "platform": "Windows 11 build 26200, zh-CN, ANSI code page 936",
+  "captured": "2026-10-06",
+  "source": "experiments/probe_hook.py (M0a)",
+  "sanitization": "user name -> testuser; UUIDs / toolu_* / agent ids -> numbered placeholders; Chinese text and drive-letter case kept",
+  "notes": [
+    "stdin is UTF-8 bytes; paths use backslashes; drive-letter case varies (see vscode__* fixtures: lowercase e:)",
+    "PostToolUse.tool_response contains raw tool output (never forward it to an LLM backend)"
+  ],
+  "files": [
+    {
+      "file": "SessionStart__startup.json",
+      "event": "SessionStart",
+      "tool": null,
+      "host_entrypoint": "sdk-cli",
+      "run": "a_cli"
+    },
+    {
+      "file": "SessionStart__resume.json",
+      "event": "SessionStart",
+      "tool": null,
+      "host_entrypoint": "sdk-cli",
+      "run": "e9_s2"
+    },
+    {
+      "file": "SessionStart__compact.json",
+      "event": "SessionStart",
+      "tool": null,
+      "host_entrypoint": "sdk-cli",
+      "run": "e9_s4"
+    },
+    {
+      "file": "UserPromptSubmit__chinese.json",
+      "event": "UserPromptSubmit",
+      "tool": null,
+      "host_entrypoint": "sdk-cli",
+      "run": "a_cli"
+    },
+    {
+      "file": "PreToolUse__PowerShell.json",
+      "event": "PreToolUse",
+      "tool": "PowerShell",
+      "host_entrypoint": "sdk-cli",
+      "run": "a_cli"
+    },
+    {
+      "file": "PostToolUse__PowerShell.json",
+      "event": "PostToolUse",
+      "tool": "PowerShell",
+      "host_entrypoint": "sdk-cli",
+      "run": "a_cli"
+    },
+    {
+      "file": "PreToolUse__Bash_gitbash.json",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "host_entrypoint": "sdk-cli",
+      "run": "d_cli_gitbash"
+    },
+    {
+      "file": "PostToolUse__Bash_gitbash.json",
+      "event": "PostToolUse",
+      "tool": "Bash",
+      "host_entrypoint": "sdk-cli",
+      "run": "d_cli_gitbash"
+    },
+    {
+      "file": "PreToolUse__Read.json",
+      "event": "PreToolUse",
+      "tool": "Read",
+      "host_entrypoint": "sdk-cli",
+      "run": "a_cli"
+    },
+    {
+      "file": "PostToolUse__Read.json",
+      "event": "PostToolUse",
+      "tool": "Read",
+      "host_entrypoint": "sdk-cli",
+      "run": "a_cli"
+    },
+    {
+      "file": "PreToolUse__Write.json",
+      "event": "PreToolUse",
+      "tool": "Write",
+      "host_entrypoint": "sdk-cli",
+      "run": "a_cli"
+    },
+    {
+      "file": "PostToolUse__Write.json",
+      "event": "PostToolUse",
+      "tool": "Write",
+      "host_entrypoint": "sdk-cli",
+      "run": "a_cli"
+    },
+    {
+      "file": "PreToolUse__Edit.json",
+      "event": "PreToolUse",
+      "tool": "Edit",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PostToolUse__Edit.json",
+      "event": "PostToolUse",
+      "tool": "Edit",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PreToolUse__Glob.json",
+      "event": "PreToolUse",
+      "tool": "Glob",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PostToolUse__Glob.json",
+      "event": "PostToolUse",
+      "tool": "Glob",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PreToolUse__Grep.json",
+      "event": "PreToolUse",
+      "tool": "Grep",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PostToolUse__Grep.json",
+      "event": "PostToolUse",
+      "tool": "Grep",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PreToolUse__WebFetch.json",
+      "event": "PreToolUse",
+      "tool": "WebFetch",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PostToolUse__WebFetch.json",
+      "event": "PostToolUse",
+      "tool": "WebFetch",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PreToolUse__WebSearch.json",
+      "event": "PreToolUse",
+      "tool": "WebSearch",
+      "host_entrypoint": "sdk-cli",
+      "run": "e13_websearch"
+    },
+    {
+      "file": "PostToolUse__WebSearch.json",
+      "event": "PostToolUse",
+      "tool": "WebSearch",
+      "host_entrypoint": "sdk-cli",
+      "run": "e13_websearch"
+    },
+    {
+      "file": "PreToolUse__mcp_echo.json",
+      "event": "PreToolUse",
+      "tool": "mcp__bkmcp__echo",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PostToolUse__mcp_echo.json",
+      "event": "PostToolUse",
+      "tool": "mcp__bkmcp__echo",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PreToolUse__ToolSearch.json",
+      "event": "PreToolUse",
+      "tool": "ToolSearch",
+      "host_entrypoint": "sdk-cli",
+      "run": "m_cli"
+    },
+    {
+      "file": "PostToolUse__ToolSearch.json",
+      "event": "PostToolUse",
+      "tool": "ToolSearch",
+      "host_entrypoint": "sdk-cli",
+      "run": "e13_cli"
+    },
+    {
+      "file": "PreToolUse__Agent.json",
+      "event": "PreToolUse",
+      "tool": "Agent",
+      "host_entrypoint": "sdk-cli",
+      "run": "e13_cli"
+    },
+    {
+      "file": "PostToolUse__Agent.json",
+      "event": "PostToolUse",
+      "tool": "Agent",
+      "host_entrypoint": "sdk-cli",
+      "run": "e13_cli"
+    },
+    {
+      "file": "PreToolUse__PowerShell_in_subagent.json",
+      "event": "PreToolUse",
+      "tool": "PowerShell",
+      "host_entrypoint": "sdk-cli",
+      "run": "e13_cli"
+    },
+    {
+      "file": "PostToolUse__PowerShell_in_subagent.json",
+      "event": "PostToolUse",
+      "tool": "PowerShell",
+      "host_entrypoint": "sdk-cli",
+      "run": "e13_cli"
+    },
+    {
+      "file": "Stop.json",
+      "event": "Stop",
+      "tool": null,
+      "host_entrypoint": "sdk-cli",
+      "run": "a_cli"
+    },
+    {
+      "file": "ConfigChange__local_settings.json",
+      "event": "ConfigChange",
+      "tool": null,
+      "host_entrypoint": "sdk-cli",
+      "run": "e12_midflight"
+    },
+    {
+      "file": "PermissionRequest__PowerShell.json",
+      "event": "PermissionRequest",
+      "tool": "PowerShell",
+      "host_entrypoint": "sdk-cli",
+      "run": "e11_allow_b"
+    },
+    {
+      "file": "vscode__SessionStart.json",
+      "event": "SessionStart",
+      "tool": null,
+      "host_entrypoint": "claude-vscode",
+      "run": "(vscode)"
+    },
+    {
+      "file": "vscode__SessionStart__clear.json",
+      "event": "SessionStart",
+      "tool": null,
+      "host_entrypoint": "claude-vscode",
+      "run": "(vscode)"
+    },
+    {
+      "file": "vscode__UserPromptSubmit.json",
+      "event": "UserPromptSubmit",
+      "tool": null,
+      "host_entrypoint": "claude-vscode",
+      "run": "(vscode)"
+    },
+    {
+      "file": "vscode__PreToolUse__PowerShell.json",
+      "event": "PreToolUse",
+      "tool": "PowerShell",
+      "host_entrypoint": "claude-vscode",
+      "run": "(vscode)"
+    },
+    {
+      "file": "vscode__PreToolUse__Read.json",
+      "event": "PreToolUse",
+      "tool": "Read",
+      "host_entrypoint": "claude-vscode",
+      "run": "(vscode)"
+    },
+    {
+      "file": "vscode__PostToolUse__PowerShell.json",
+      "event": "PostToolUse",
+      "tool": "PowerShell",
+      "host_entrypoint": "claude-vscode",
+      "run": "(vscode)"
+    }
+  ],
+  "missing": []
+}

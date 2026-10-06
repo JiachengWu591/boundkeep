@@ -1,0 +1,17 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000007",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\E--bk-lab-matchers\\00000000-0000-4000-8000-000000000007.jsonl",
+  "cwd": "E:\\bk-lab-matchers",
+  "prompt_id": "00000000-0000-4000-8000-000000000008",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__bkmcp__echo",
+  "tool_input": {
+    "text": "BK_M_MCP"
+  },
+  "tool_use_id": "toolu_FIXTURE0011",
+  "mcp_server": {
+    "name": "bkmcp",
+    "source": "dynamic"
+  }
+}

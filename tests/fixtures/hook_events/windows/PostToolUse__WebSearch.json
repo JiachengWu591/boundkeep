@@ -1,0 +1,68 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000009",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\E--bk-lab-matchers\\00000000-0000-4000-8000-000000000009.jsonl",
+  "cwd": "E:\\bk-lab-matchers",
+  "prompt_id": "00000000-0000-4000-8000-000000000010",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "WebSearch",
+  "tool_input": {
+    "query": "example domain iana",
+    "mode": "standard"
+  },
+  "tool_response": {
+    "query": "example domain iana",
+    "results": [
+      {
+        "tool_use_id": "srvtoolu_FIXTURE0010",
+        "content": [
+          {
+            "title": "Example Domains",
+            "url": "https://iana.org/help/example-domains"
+          },
+          {
+            "title": "Example Domains",
+            "url": "https://www.iana.org/domains/example%5C"
+          },
+          {
+            "title": "0% found this document useful (0 votes)",
+            "url": "https://www.scribd.com/document/873956284/Example-Domains"
+          },
+          {
+            "title": "Example Domains",
+            "url": "https://www.netify.ai/documentation/agent/concepts/features/applications/catalog/example-domains"
+          },
+          {
+            "title": "IANA-managed Reserved Domains",
+            "url": "https://res-dom.iana.org"
+          },
+          {
+            "title": "kiroku.today",
+            "url": "https://kiroku.today/en/url/www.iana.org/domains/example"
+          },
+          {
+            "title": "example domains",
+            "url": "https://www.netify.ai/documentation/netify-agent/v4/integration_resources/applications/catalog/example-domains"
+          },
+          {
+            "title": "IANA-managed Reserved Domains",
+            "url": "https://iana.org/domains/reserved"
+          },
+          {
+            "title": "Archive readyExternal timestamp ready",
+            "url": "https://kiroku.today/en/a/0fefee89dcmmb4gt"
+          },
+          {
+            "title": "example.com - dns.ninja",
+            "url": "https://dns.ninja/en/dns-lookup/com/example"
+          }
+        ]
+      },
+      "Based on the search results, here's what I found about example domains maintained by IANA:\n\nExample domains such as example.com and example.org are maintained by IANA for documentation purposes, as described in RFC 2606 and RFC 6761. These domains may be used as illustrative examples in documents without prior coordination with IANA, and they are not available for registration or transfer.\n\nIANA provides a web service on the example domain hosts to provide basic information on the purpose of the domain, though these web services are provided as best effort and are not designed to support production applications. While incidental traffic for incorrectly configured applications is expected, applications should not be designed to require the example domains to have operating HTTP service."
+    ],
+    "durationSeconds": 6.382380199999999,
+    "searchCount": 1
+  },
+  "tool_use_id": "toolu_FIXTURE0009",
+  "duration_ms": 6383
+}

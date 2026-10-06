@@ -1,0 +1,14 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000011",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\E--bk-lab\\00000000-0000-4000-8000-000000000011.jsonl",
+  "cwd": "E:\\bk-lab",
+  "prompt_id": "00000000-0000-4000-8000-000000000012",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Execute PowerShell command and report output",
+    "prompt": "Execute the following PowerShell command and report the output: Write-Output 'BK_SUB_PS'"
+  },
+  "tool_use_id": "toolu_FIXTURE0014"
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000002",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\E--bk-lab\\00000000-0000-4000-8000-000000000002.jsonl",
+  "cwd": "E:\\bk-lab",
+  "prompt_id": "00000000-0000-4000-8000-000000000003",
+  "hook_event_name": "SessionStart",
+  "source": "compact",
+  "model": "claude-haiku-4-5-20251001"
+}

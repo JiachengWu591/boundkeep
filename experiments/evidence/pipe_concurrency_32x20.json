@@ -1,0 +1,358 @@
+{
+ "env": {
+  "python": "3.12.7",
+  "os": "Windows-11-10.0.26200-SP0",
+  "cpus": 20,
+  "threads": 32,
+  "calls_per_thread": 20,
+  "reps": 3
+ },
+ "variants": {
+  "asyncio start_serving_pipe (1 pending instance)": {
+   "server": "READY",
+   "sequential": {
+    "calls": 200,
+    "p50_ms": 0.075,
+    "p95_ms": 0.165,
+    "max_ms": 0.543,
+    "busy_retries": 0
+   },
+   "no_retry": [
+    {
+     "calls": 640,
+     "ok": 177,
+     "errors": 463,
+     "error_kinds": {
+      "OSError errno=22": 463
+     },
+     "busy_retries": 463,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 463
+     },
+     "wall_s": 0.013,
+     "p50_ms": 0.41,
+     "p95_ms": 1.02,
+     "p99_ms": 1.19,
+     "max_ms": 1.3
+    },
+    {
+     "calls": 640,
+     "ok": 160,
+     "errors": 480,
+     "error_kinds": {
+      "OSError errno=22": 480
+     },
+     "busy_retries": 480,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 480
+     },
+     "wall_s": 0.012,
+     "p50_ms": 0.44,
+     "p95_ms": 0.98,
+     "p99_ms": 1.07,
+     "max_ms": 1.42
+    },
+    {
+     "calls": 640,
+     "ok": 174,
+     "errors": 466,
+     "error_kinds": {
+      "OSError errno=22": 466
+     },
+     "busy_retries": 466,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 466
+     },
+     "wall_s": 0.013,
+     "p50_ms": 0.42,
+     "p95_ms": 1.38,
+     "p99_ms": 1.67,
+     "max_ms": 1.67
+    }
+   ],
+   "with_retry": [
+    {
+     "calls": 640,
+     "ok": 640,
+     "errors": 0,
+     "error_kinds": {},
+     "busy_retries": 284,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 284
+     },
+     "wall_s": 0.062,
+     "p50_ms": 0.19,
+     "p95_ms": 5.58,
+     "p99_ms": 34.17,
+     "max_ms": 54.59
+    },
+    {
+     "calls": 640,
+     "ok": 640,
+     "errors": 0,
+     "error_kinds": {},
+     "busy_retries": 304,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 304
+     },
+     "wall_s": 0.061,
+     "p50_ms": 0.2,
+     "p95_ms": 6.19,
+     "p99_ms": 33.99,
+     "max_ms": 54.41
+    },
+    {
+     "calls": 640,
+     "ok": 640,
+     "errors": 0,
+     "error_kinds": {},
+     "busy_retries": 308,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 308
+     },
+     "wall_s": 0.083,
+     "p50_ms": 0.2,
+     "p95_ms": 9.25,
+     "p99_ms": 34.72,
+     "max_ms": 75.61
+    }
+   ],
+   "acl": [
+    "D:(A;;FR;;;WD)(A;;FR;;;AN)(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;S-1-5-21-<id>)",
+    "Everyone | Read, Synchronize | Allow",
+    "NT AUTHORITY\\ANONYMOUS LOGON | Read, Synchronize | Allow",
+    "NT AUTHORITY\\SYSTEM | 2032127 | Allow",
+    "BUILTIN\\Administrators | 2032127 | Allow",
+    "<host>\\<user> | 2032127 | Allow"
+   ]
+  },
+  "ctypes pool=1, DACL=current user, REJECT_REMOTE": {
+   "server": "READY sddl=D:P(A;;GA;;;S-1-5-21-<id>)",
+   "sequential": {
+    "calls": 200,
+    "p50_ms": 0.021,
+    "p95_ms": 0.045,
+    "max_ms": 1.144,
+    "busy_retries": 2
+   },
+   "no_retry": [
+    {
+     "calls": 640,
+     "ok": 58,
+     "errors": 582,
+     "error_kinds": {
+      "OSError errno=22": 582
+     },
+     "busy_retries": 582,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 582
+     },
+     "wall_s": 0.009,
+     "p50_ms": 0.11,
+     "p95_ms": 0.45,
+     "p99_ms": 0.7,
+     "max_ms": 0.7
+    },
+    {
+     "calls": 640,
+     "ok": 47,
+     "errors": 593,
+     "error_kinds": {
+      "OSError errno=22": 593
+     },
+     "busy_retries": 593,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 593
+     },
+     "wall_s": 0.01,
+     "p50_ms": 0.2,
+     "p95_ms": 0.6,
+     "p99_ms": 0.88,
+     "max_ms": 0.88
+    },
+    {
+     "calls": 640,
+     "ok": 42,
+     "errors": 598,
+     "error_kinds": {
+      "OSError errno=22": 598
+     },
+     "busy_retries": 598,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 598
+     },
+     "wall_s": 0.009,
+     "p50_ms": 0.27,
+     "p95_ms": 0.51,
+     "p99_ms": 0.71,
+     "max_ms": 0.71
+    }
+   ],
+   "with_retry": [
+    {
+     "calls": 640,
+     "ok": 640,
+     "errors": 0,
+     "error_kinds": {},
+     "busy_retries": 192,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 192
+     },
+     "wall_s": 0.122,
+     "p50_ms": 0.03,
+     "p95_ms": 4.54,
+     "p99_ms": 74.78,
+     "max_ms": 116.3
+    },
+    {
+     "calls": 640,
+     "ok": 640,
+     "errors": 0,
+     "error_kinds": {},
+     "busy_retries": 184,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 184
+     },
+     "wall_s": 0.062,
+     "p50_ms": 0.02,
+     "p95_ms": 4.73,
+     "p99_ms": 34.95,
+     "max_ms": 54.71
+    },
+    {
+     "calls": 640,
+     "ok": 640,
+     "errors": 0,
+     "error_kinds": {},
+     "busy_retries": 196,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 196
+     },
+     "wall_s": 0.098,
+     "p50_ms": 0.02,
+     "p95_ms": 2.59,
+     "p99_ms": 54.11,
+     "max_ms": 94.8
+    }
+   ],
+   "acl": [
+    "D:P(A;;FA;;;S-1-5-21-<id>)",
+    "<host>\\<user> | 2032127 | Allow"
+   ]
+  },
+  "ctypes pool=8, DACL=current user, REJECT_REMOTE": {
+   "server": "READY sddl=D:P(A;;GA;;;S-1-5-21-<id>)",
+   "sequential": {
+    "calls": 200,
+    "p50_ms": 0.025,
+    "p95_ms": 0.051,
+    "max_ms": 0.13,
+    "busy_retries": 0
+   },
+   "no_retry": [
+    {
+     "calls": 640,
+     "ok": 287,
+     "errors": 353,
+     "error_kinds": {
+      "OSError errno=22": 353
+     },
+     "busy_retries": 353,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 353
+     },
+     "wall_s": 0.014,
+     "p50_ms": 0.35,
+     "p95_ms": 1.15,
+     "p99_ms": 1.75,
+     "max_ms": 1.87
+    },
+    {
+     "calls": 640,
+     "ok": 330,
+     "errors": 310,
+     "error_kinds": {
+      "OSError errno=22": 310
+     },
+     "busy_retries": 310,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 310
+     },
+     "wall_s": 0.014,
+     "p50_ms": 0.31,
+     "p95_ms": 0.83,
+     "p99_ms": 1.21,
+     "max_ms": 1.63
+    },
+    {
+     "calls": 640,
+     "ok": 283,
+     "errors": 357,
+     "error_kinds": {
+      "OSError errno=22": 357
+     },
+     "busy_retries": 357,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 357
+     },
+     "wall_s": 0.013,
+     "p50_ms": 0.31,
+     "p95_ms": 1.09,
+     "p99_ms": 1.63,
+     "max_ms": 1.91
+    }
+   ],
+   "with_retry": [
+    {
+     "calls": 640,
+     "ok": 640,
+     "errors": 0,
+     "error_kinds": {},
+     "busy_retries": 202,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 202
+     },
+     "wall_s": 0.026,
+     "p50_ms": 0.29,
+     "p95_ms": 3.38,
+     "p99_ms": 10.01,
+     "max_ms": 18.62
+    },
+    {
+     "calls": 640,
+     "ok": 640,
+     "errors": 0,
+     "error_kinds": {},
+     "busy_retries": 171,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 171
+     },
+     "wall_s": 0.026,
+     "p50_ms": 0.26,
+     "p95_ms": 2.89,
+     "p99_ms": 6.07,
+     "max_ms": 18.13
+    },
+    {
+     "calls": 640,
+     "ok": 640,
+     "errors": 0,
+     "error_kinds": {},
+     "busy_retries": 183,
+     "busy_kinds": {
+      "OSError errno=22 winerror=None": 183
+     },
+     "wall_s": 0.025,
+     "p50_ms": 0.28,
+     "p95_ms": 2.74,
+     "p99_ms": 9.67,
+     "max_ms": 18.59
+    }
+   ],
+   "acl": [
+    "D:P(A;;FA;;;S-1-5-21-<id>)",
+    "<host>\\<user> | 2032127 | Allow"
+   ]
+  }
+ }
+}

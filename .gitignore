@@ -1,0 +1,5 @@
+# M0a 实验的原始记录：未脱敏，绝不提交（脱敏后的证据放 experiments/evidence/）
+experiments/raw/
+
+__pycache__/
+*.pyc

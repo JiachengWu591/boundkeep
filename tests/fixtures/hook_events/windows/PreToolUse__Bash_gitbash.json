@@ -1,0 +1,14 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000005",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\E--bk-lab\\00000000-0000-4000-8000-000000000005.jsonl",
+  "cwd": "E:\\bk-lab",
+  "prompt_id": "00000000-0000-4000-8000-000000000006",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo BK_D_MARK ✓ 中文 && pwd",
+    "description": "Execute bash command with echo and pwd"
+  },
+  "tool_use_id": "toolu_FIXTURE0002"
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\E--bk-lab\\00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "E:\\bk-lab",
+  "prompt_id": "00000000-0000-4000-8000-000000000004",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "这是一个 hook 行为实验，请严格按下面三步执行，不要做别的事：\n1. 用 PowerShell 工具执行：Write-Output 'BK_A_MARK ✓ 中文'\n2. 用 Read 工具读取当前目录下的 probe.txt\n3. 用 Write 工具创建 out_a.txt，内容为 hi\n完成后只回复 DONE。\n"
+}

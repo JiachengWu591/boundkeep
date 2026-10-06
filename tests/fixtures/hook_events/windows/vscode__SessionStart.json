@@ -1,0 +1,8 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000017",
+  "transcript_path": "C:\\Users\\testuser\\.claude\\projects\\e--bk-lab\\00000000-0000-4000-8000-000000000017.jsonl",
+  "cwd": "e:\\bk-lab",
+  "scratchpad_dir": "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--bk-lab\\00000000-0000-4000-8000-000000000017\\scratchpad",
+  "hook_event_name": "SessionStart",
+  "source": "startup"
+}
