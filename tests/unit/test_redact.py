@@ -18,7 +18,9 @@ from hypothesis import strategies as st
 from boundkeep.redact import REDACTED, TRUNCATED, redact_obj, redact_text
 
 SK_KEY = "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
-AWS_ID = "AKIAIOSFODNN7EXAMPLE"
+# AWS's documented example ids, joined at run time so that secret scanners do not flag the source.
+AWS_ID = "AKIA" + "IOSFODNN7EXAMPLE"
+AWS_TEMP_ID = "ASIA" + "IOSFODNN7EXAMPLE"
 GH_TOKEN = "ghp_" + "a1B2c3D4e5" * 4
 PEM_BODY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7"
 
@@ -62,9 +64,9 @@ PEM_BODY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7"
             id="aws-akia",
         ),
         pytest.param(
-            "ASIAIOSFODNN7EXAMPLE",
+            AWS_TEMP_ID,
             "[REDACTED]",
-            "ASIAIOSFODNN7EXAMPLE",
+            AWS_TEMP_ID,
             id="aws-asia",
         ),
         pytest.param(
