@@ -32,7 +32,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 | `paths.py` | boundkeep 自己的文件放哪（`BOUNDKEEP_HOME` 可改，测试一律用临时目录） |
 | `ipc/endpoint.py`、`ipc/client.py` | 端点描述（`endpoint.json`）与客户端（连接、退避重试、期限） |
 | `ipc/named_pipe.py`、`ipc/winsec.py` | Windows 服务端（ctypes、重叠 I/O）与 ACL/SDDL 辅助 |
-| `ipc/unix.py` | POSIX 服务端（**未在本机验证**，见 §9） |
+| `ipc/unix.py` | POSIX 服务端（只在 Linux 容器里测过，没有宿主验证，见 §9） |
 | `ipc/base.py` | 服务端抽象与工厂 |
 | `daemon/server.py`、`daemon/pipeline.py`、`daemon/lifecycle.py` | 常驻进程、占位判定、单实例锁与停止信号 |
 | `policy/` | M0 的最小策略（`version`、`mode`、`defaults.emit_allow`、`taint.sources`），严格校验 |
@@ -66,7 +66,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
   - 请求交给常驻进程的 asyncio 事件循环处理；关闭服务端时不会因为等待事件循环而死锁。
   - 不用 asyncio 自带的管道服务端：它创建管道时传空安全属性，Everyone 与匿名账户可读（M0a E10 实测）。
 - **客户端**（`ipc/client.py`）：管道不存在、被拒绝、连接过早关闭都是 `DaemonUnavailable`，立即降级；其余 `OSError`（M0a 实测的"管道忙"，errno 22）在预算内指数退避重试。
-- **POSIX**（`ipc/unix.py`）：asyncio 的 Unix 套接字服务；目录 0700 且属于当前用户，套接字 0600；残留的套接字文件（没人监听）会被清理，仍在应答的则拒绝启动。**未在本机运行过。**
+- **POSIX**（`ipc/unix.py`）：asyncio 的 Unix 套接字服务；目录 0700 且属于当前用户，套接字 0600；残留的套接字文件（没人监听）会被清理，仍在应答的则拒绝启动。**在 Linux 容器里的自动测试全部通过，但没有在真实宿主里验证过**（见 §9）。
 
 ## 5. hook 客户端的不变量与降级
 
@@ -134,7 +134,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 ## 9. 已知局限（M0）
 
 - 判定管线是占位，没有规则；`allow` 从不输出。
-- **POSIX 传输只写了、没在本机运行**（开发机是 Windows，标准库在 Windows 上没有 `AF_UNIX`）；`tests/platform/test_unix_socket.py` 全部标 `posix`，在有 Linux 容器之前不得声明 POSIX 支持。
+- **POSIX 传输只在容器里测过**：2026-10-08 在 Linux 容器里跑过（Docker Desktop，`python:3.12`，Linux 6.6 WSL2 内核，非 root 用户，`uv sync --frozen`）：`mypy` 与 `ruff` 无告警，`pytest` 1643 通过、173 跳过（都是 Windows 专用）、0 失败；容器里的 `init`、`serve`、hook 客户端端到端也通过。这只证明代码与测试在 Linux 上成立，**不是宿主验收**：没有在 Linux 上跑过真实的 Claude Code。 审查者从代码里看到两点尚未处理：Unix 套接字服务端没有并发连接数上限（每条连接的读缓冲最多 8 MiB），`os.umask` 的修改跨越了一个 `await`。在有真实 POSIX 宿主的验收之前不得声明 POSIX 支持。
 - 未测：提升权限（UAC）令牌下连管道、杀毒软件的影响（M0a E19 的剩余部分）。
 - 常驻进程需要手动 `boundkeep serve`，没有自启动；它不在时每个工具调用都会 `ask`（失败即关闭）。
 - **M0 没有保护 `~/.boundkeep` 与 settings 文件不被 agent 自己改写**：这是 M1 的 `protect-guard-config` 规则的活（规格 §8）。M0 里 agent 若能写这些文件（例如改 `endpoint.json` 指向别的管道），闸门就可以被绕开；ConfigChange 的自我保护只覆盖 Claude Code 的 settings 文件。

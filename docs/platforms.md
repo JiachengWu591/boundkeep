@@ -11,6 +11,7 @@
 | Windows 11 原生 | CLI 引擎 | PowerShell + Bash（手动设置 `CLAUDE_CODE_GIT_BASH_PATH`，路径含中文） | **已验证**：Bash 与 PowerShell 都触发 | 同上 |
 | Windows 11 原生 | **VS Code 扩展 2.1.292**（`claude-vscode`；M0a 在 2.1.291 上测过触发） | 只有 PowerShell | **已验证**：M0a 13 条记录五类事件都触发；M0 手工验收 A1 到 A7 通过。用户报告的 #92074（v2.1.259）没有复现 | **M0 支持**（见上方范围说明） |
 | Windows 11 原生 | Desktop 应用 | 未知 | 未测（用户报告 #95833、#77708，未核实） | 未测 |
+| Linux（Docker 容器，`python:3.12`，非 root） | **无宿主**（只跑自动测试） | — | 不适用：没有 Claude Code | 自动测试通过（`mypy`、`ruff`、`pytest` 1643 通过、0 失败，2026-10-08）；**不是支持** |
 | WSL 2 | CLI | Bash | 未验证：本机 WSL 里只有 `docker-desktop` 发行版 | 未验证 |
 | macOS / Linux | — | — | 未验证：没有环境 | 未验证 |
 

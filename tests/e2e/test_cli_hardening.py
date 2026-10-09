@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +42,7 @@ def test_a_damaged_endpoint_file_is_replaced_by_init(machine: Machine) -> None:
         result = machine.init()
         assert result.returncode == 0, result.stderr
         _no_traceback(result)
-        assert machine.endpoint().address.startswith("\\\\.\\pipe\\boundkeep")
+        assert "boundkeep" in machine.endpoint().address  # a valid endpoint again
 
 
 def test_init_refuses_a_project_directory_that_does_not_exist(machine: Machine) -> None:
@@ -53,14 +54,19 @@ def test_init_refuses_a_project_directory_that_does_not_exist(machine: Machine) 
     assert not (machine.root / "typo dir").exists()
 
 
-def test_uninstall_on_a_read_only_settings_file_fails_cleanly(machine: Machine) -> None:
+def test_uninstall_when_the_settings_file_cannot_be_replaced_fails_cleanly(
+    machine: Machine,
+) -> None:
     assert machine.init().returncode == 0
     before = machine.settings.read_bytes()
-    os.chmod(machine.settings, stat.S_IREAD)
+    # Windows refuses to replace a read-only file; POSIX only looks at the directory's permissions.
+    target = machine.settings if sys.platform == "win32" else machine.settings.parent
+    mode = target.stat().st_mode
+    os.chmod(target, stat.S_IREAD if sys.platform == "win32" else stat.S_IREAD | stat.S_IEXEC)
     try:
         result = machine.cli("uninstall", "--project-dir", str(machine.project))
     finally:
-        os.chmod(machine.settings, stat.S_IWRITE | stat.S_IREAD)
+        os.chmod(target, mode)
     assert result.returncode == 1
     _no_traceback(result)
     assert machine.settings.read_bytes() == before

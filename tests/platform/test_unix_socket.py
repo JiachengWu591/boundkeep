@@ -183,7 +183,9 @@ def test_silent_oversized_and_failing_clients_do_not_hurt(tmp_path: Path) -> Non
                 assert "secret detail" not in json.dumps(failing)
                 assert protocol.decode_response(await call(path, request_line()), "r1").ok
                 silent.settimeout(5)
-                assert json.loads(silent.recv(4096))["error"] == protocol.ERR_TIMEOUT
+                loop = asyncio.get_running_loop()  # a blocking recv here would stall the server
+                answer = await loop.run_in_executor(None, silent.recv, 4096)
+                assert json.loads(answer)["error"] == protocol.ERR_TIMEOUT
             finally:
                 silent.close()
 
