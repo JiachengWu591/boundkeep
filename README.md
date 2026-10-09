@@ -40,6 +40,31 @@ TODO: a short recording. Without boundkeep, an agent following a hidden instruct
 TODO (planned): `pip install boundkeep` then `boundkeep init`.
 Start in `audit-only` mode to see what it would have done before you let it block anything. No API key is needed for the default setup.
 
+## Development setup
+
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+
+```
+uv sync
+uv run pytest -q          # unit, platform and end-to-end tests: no network, no API keys
+uv run ruff check .
+uv run mypy
+uv run boundkeep --help
+```
+
+Where the project stands (milestone M0): the path from a Claude Code hook to a resident daemon and the audit log works, fails safe (daemon down, timeouts, bad input all degrade to "ask"), and `boundkeep doctor` looks for the ways the gate can be switched off silently. **There are no rules yet**: the placeholder pipeline only blocks shell commands that contain the marker `BOUNDKEEP_CANARY`; real rules arrive in M1. Do not rely on it to protect anything today. Note that while the daemon is not running (`boundkeep serve`), every tool call pops up Claude Code's confirmation box, and in both VS Code and the CLI that box does not show boundkeep's explanation (verified in M0 manual acceptance); run `boundkeep doctor` if you see unexplained confirmations.
+
+To try it in a throwaway directory (never your real project settings):
+
+```
+uv run boundkeep init --project-dir <throwaway-dir>
+uv run boundkeep serve                      # keep this terminal open
+uv run boundkeep doctor --project-dir <throwaway-dir>
+uv run boundkeep uninstall --project-dir <throwaway-dir>
+```
+
+Platform support is stated per platform and host only after it has been run for real (`docs/platforms.md`); until then it is a design goal, not a claim.
+
 ## Results
 
 TODO: filled from `eval/report.md` after the evaluation runs. No numbers are claimed until then.
@@ -66,6 +91,9 @@ It is complementary to static scanners such as cc-audit, which check what you in
 
 - `PROJECT_SPEC.md`: full design, policy format and evaluation plan
 - `IMPLEMENTATION_PROMPTS.md`: step-by-step implementation prompts
+- `docs/architecture.md`: the hook-to-daemon path, protocol, degradation table
+- `docs/hook-behavior.md`: measured Claude Code hook behavior (versioned)
+- `docs/platforms.md`: what has been run on which platform and host
 - `docs/threat-model.md`: TODO
 - `docs/design-origin.md`: TODO
 

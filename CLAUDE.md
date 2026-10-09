@@ -27,7 +27,7 @@ LLM 后端可插拔（OpenAI 兼容接口，DeepSeek 为参考预设），默认
 
 - 失败即关闭：任何出错、超时、解析失败，降级为 `ask`，绝不静默放行。
 - hook 进程自身异常时，退出码只能是 0（并输出合法决定）或 2；非 0 非 2 会被 Claude Code 当成非阻断错误而放行。
-- hook 客户端的 I/O 不依赖代码页或 `PYTHON*` 环境变量：按字节读 stdin、显式 UTF-8 解码，按字节写只含 ASCII 的 JSON。Windows 中文系统默认按 gbk 解码，含中文的事件会抛 `UnicodeDecodeError`，Python 以退出码 1 退出，等于放行（开发机实测，规格 §5.1）。
+- hook 客户端的 I/O 不依赖代码页或 `PYTHON*` 环境变量：按字节读 stdin、显式 UTF-8 解码，按字节写只含 ASCII 的 JSON。Windows 中文系统默认按 gbk 读 stdin：含中文的事件被悄悄读成乱码（`json.load(sys.stdin)` 不抛异常，文本却变了，规则匹配落空；孤立代理项还会在之后编码时崩溃，退出码 1 等于放行）（开发机实测，规格 §5.1；2026-10-07 更正了 M0a 原先"会抛 UnicodeDecodeError"的说法）。所有文本模式的文件读写都显式写 `encoding="utf-8"`。
 - Windows 的 hook 通道是命名管道，由我们用 ctypes 自己创建并设置只授予当前用户的 DACL；标准库默认创建的管道对 Everyone 可读，不得使用。
 - 不确定即灰色：命令解析失败、规则缺失、工具名未知，永远不会自动 allow。
 - 不替用户做决定：判为 ALLOW 时默认返回"无决定"，只有 `defaults.emit_allow` 显式开启才输出 allow。
@@ -47,19 +47,21 @@ LLM 后端可插拔（OpenAI 兼容接口，DeepSeek 为参考预设），默认
 - 不要把 injection-blast-radius 的代码作为依赖引入；需要复用时复制，并在 `docs/design-origin.md` 记录来源 commit。
 - 不要在代码或文档里写死模型名与价格；模型名是配置项。
 
-## 常用命令（骨架完成后补全）
+## 常用命令
 
 ```
 uv sync
-uv run pytest -q                    # 默认不访问网络、不使用密钥；live 测试默认跳过
-uv run ruff check .
-uv run mypy src
-uv run boundkeep test               # 运行策略内置的 tests
+uv run pytest -q                    # 默认不访问网络、不使用密钥；live 测试默认跳过（--live 开启）
+uv run ruff check . ; uv run ruff format --check .
+uv run mypy                         # strict，检查 src/
+uv run boundkeep init --project-dir <一次性目录>   # 只在一次性目录里试，别写真实项目与用户级 settings
+uv run boundkeep serve              # 常驻进程（手动启动；没启动时每个工具调用都会 ask）
 uv run boundkeep doctor             # 检查 hook 配置、常驻进程、策略文件、闸门是否被悄悄关闭
-uv run boundkeep llm check          # 验证已配置的 LLM 后端（需要用户本地的密钥）
-uv run python eval/run_eval.py --config rules-only
+uv run boundkeep mode [enforce|audit-only] ; uv run boundkeep log --tail 20
+uv run python scripts/bench_hook.py        # hook 客户端延迟（真实进程，约 1 分钟）
+uv run python scripts/smoke_claude.py      # 真实 Claude Code 冒烟（claude -p，haiku，几美分；手工运行）
+# 以下从 M1 起才有：boundkeep test、boundkeep llm check、eval/run_eval.py
 ```
-
 ## 约定
 
 - Python 3.11+，类型标注完整，pydantic v2 做 schema。
@@ -72,9 +74,9 @@ uv run python eval/run_eval.py --config rules-only
 
 ## 当前状态
 
-- 阶段：M0a（见 `PROJECT_SPEC.md` §14）。
-- 规格已修订到"修订 3"：在修订 2（LLM 后端可插拔且默认关闭；依据官方 hooks 文档修正了配置、超时、降级与 allow 语义）的基础上，加入 Windows 原生与 WSL2（§5.1、§16-D、M1b）。
-- `IMPLEMENTATION_PROMPTS.md` 已按修订 3 对齐（新增 M1b、E15 到 E24，M0 / M1 / M2 / R / X1 补了 Windows 与平台要求）。
-- M0a 的实验与验收报告已完成，等用户确认（2026-10-06，Claude Code 2.1.291，Windows 11）：E1 到 E24 都有明确状态（已验证 / 部分验证 / 未验证 / 待 M0），结果在 `docs/hook-behavior.md`、`docs/platforms.md`、`docs/related-work.md`，脚本在 `experiments/`，验收报告在 `docs/reports/M0a.md`（结论"有条件通过"）。hook 在 CLI 引擎与 VS Code 扩展里都触发（E15）；Desktop 应用未测。界面操作用户已做完：阻断理由显示在弹窗与工具调用卡片里；hook 出错、超时、崩溃时界面没有任何提示；`/clear` 换新 session_id；打开从未打开过的目录没有弹信任对话框。已重测（均一次目视）：ask 确认框默认视图里不显示 hook 的理由；`python.exe -I -S` 的 exec 写法没有控制台窗口闪现。未验证：E11 的 `bypassPermissions`（`auto` 模式没生效）、E19（待 M0）、E23 的托管设置与 `CLAUDE_CONFIG_DIR`、E24 的其他平台。
-- M0a 期间我直接改了规格与提示词（违反"M0a 不直接改规格"），用户已审阅并接受报告第 7 节的 10 条变更，同意提交脱敏证据与夹具，并要求复现（我已按 README 重跑 E3、E6、E10、E15 通过）。
-- 下一步：进入 M0：先读 M0 提示词、出实施计划，等用户说"继续"再写代码。M0 手工验收时补看：ask 确认框折叠箭头展开后是否有理由、`.exe` 启动器在 VS Code 里是否闪窗、`bypassPermissions`。
+- 阶段：**M0 已实现并通过手工验收，待你确认后提交**（计划 2026-10-07 获批；M0a 已验收并提交，标签 `m0a-done`，报告 `docs/reports/M0a.md`）。
+- 规格是"修订 3"加上 M0a 的 10 条已接受变更；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，只指"闸门可靠到达并失败即关闭"，真正的规则在 M1；其余平台与宿主都不是"支持"。
+- M0 已实现并通过自动测试：协议、IPC（Windows 命名管道；POSIX 套接字**只写了未运行**）、hook 客户端、常驻进程与占位判定（只拦含 `BOUNDKEEP_CANARY` 的 shell 命令）、审计日志与脱敏、策略、`init` / `uninstall` / `serve` / `mode` / `log` / `doctor`、ConfigChange 自我保护。结构见 `docs/architecture.md`。
+- M0 中发现并已更正：M0a 以为"文本模式读 stdin 会因 gbk 崩溃"，实测是**悄悄读成乱码**（`docs/hook-behavior.md` E18）。
+- 独立审查（三路）的发现已修复并有回归测试，真实 Claude Code 冒烟已重跑，`docs/reports/M0.md` 已写，用户手工验收已于 2026-10-08 完成（`docs/manual-acceptance-m0.md` 末尾有记录）。手工验收的发现：ask 的理由在两个宿主的确认框里都不显示；hook 配置在会话启动时固定；VS Code 里没有控制台窗口闪现。`bypassPermissions` 仍未测。待用户决定的事项见 M0 报告第 8 节。
+- 所有改动在用户确认前不提交。
