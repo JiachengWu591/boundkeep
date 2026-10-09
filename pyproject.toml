@@ -1,0 +1,103 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "boundkeep"
+version = "0.0.0.dev0"
+description = "Runtime guardrail for coding agents (Claude Code first): rules, session taint tracking and an optional LLM task-intent audit."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+  "claude-code", "claude code hooks", "ai agents", "coding agents",
+  "agent security", "llm security", "prompt injection", "guardrails",
+  "policy as code", "audit log", "pretooluse",
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Security",
+  "Topic :: Software Development",
+  "Typing :: Typed",
+]
+# boundkeep-hook (the hook client) uses the standard library only; these are for the daemon and CLI.
+dependencies = [
+  "pydantic>=2",
+  "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+anthropic = []  # decided in M3a; left empty until then
+
+[project.scripts]
+boundkeep = "boundkeep.cli:main"
+boundkeep-hook = "boundkeep.hook_client:entry"  # entry() ends with os._exit, see hook_client.py
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "hypothesis>=6",
+  "ruff",
+  "mypy",
+  "pre-commit",
+  "types-PyYAML",
+  "pytest-cov>=7.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/boundkeep"]
+
+# The default policy lives at policies/default.yaml (spec section 13); the wheel carries a copy
+# so `boundkeep init` can write it. Source checkouts read it from policies/ directly.
+[tool.hatch.build.targets.wheel.force-include]
+"policies/default.yaml" = "boundkeep/data/default.yaml"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+# M0a experiment scripts are historical artifacts that produced committed evidence; never reformat.
+extend-exclude = ["experiments"]
+
+[tool.ruff.lint]
+# PLW1514 is still a preview rule; explicit-preview-rules keeps every OTHER preview rule off.
+preview = true
+explicit-preview-rules = true
+select = [
+  "E", "W", "F", "I", "UP", "B", "C4", "SIM", "PT", "RUF",
+  "S",    # bandit-style checks: this is security code
+  "BLE",  # blind except: every catch-all must be deliberate and say why
+  "T20",  # no print(): hook stdout is a protocol channel, CLI output goes through console.py
+  "PLW1514",  # text-mode open()/read_text() must name an encoding: the default is the ANSI code
+  #             page (gbk here) and silently misreads UTF-8 Chinese text (M0a E18, corrected)
+]
+ignore = [
+  "S101",  # assert is fine in tests; src does not use it for validation
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/e2e/test_cli_hardening.py" = ["F811"]  # imports the `machine` fixture
+"tests/**" = ["S101", "S105", "S106", "S108", "S603", "S607", "S404", "BLE001", "T20"]
+"scripts/**" = ["S404", "S603", "S607", "BLE001", "T20", "SIM115", "PLW1514", "UP031", "B904", "E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "windows: needs Windows (skipped elsewhere)",
+  "posix: needs POSIX (skipped on Windows)",
+  "live: real external services or a real Claude Code; skipped unless --live is given",
+  "e2e: spawns real processes (daemon plus hook client)",
+]

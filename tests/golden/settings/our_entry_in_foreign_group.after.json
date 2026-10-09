@@ -1,0 +1,91 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo first-foreign"
+          },
+          {
+            "type": "command",
+            "command": "echo last-foreign"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\张三\\My Tools\\.venv\\Scripts\\python.exe",
+            "args": [
+              "-I",
+              "-S",
+              "C:\\Users\\张三\\My Tools\\boundkeep\\src\\boundkeep\\hook_client.py",
+              "pre"
+            ],
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "WebFetch|WebSearch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo foreign-post"
+          },
+          {
+            "type": "command",
+            "command": "C:\\Users\\张三\\My Tools\\.venv\\Scripts\\python.exe",
+            "args": [
+              "-I",
+              "-S",
+              "C:\\Users\\张三\\My Tools\\boundkeep\\src\\boundkeep\\hook_client.py",
+              "post"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\张三\\My Tools\\.venv\\Scripts\\python.exe",
+            "args": [
+              "-I",
+              "-S",
+              "C:\\Users\\张三\\My Tools\\boundkeep\\src\\boundkeep\\hook_client.py",
+              "prompt"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\张三\\My Tools\\.venv\\Scripts\\python.exe",
+            "args": [
+              "-I",
+              "-S",
+              "C:\\Users\\张三\\My Tools\\boundkeep\\src\\boundkeep\\hook_client.py",
+              "config"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

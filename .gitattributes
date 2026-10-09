@@ -1,0 +1,7 @@
+# Fixtures and golden files are compared byte-for-byte; keep LF on every platform (Windows checkouts included).
+* text=auto eol=lf
+tests/fixtures/** text eol=lf
+tests/golden/** text eol=lf
+*.png binary
+*.ico binary
+*.exe binary

@@ -1,0 +1,14 @@
+{
+  "model": "opus",
+  "env": {
+    "项目名称": "守界 \u2713",
+    "PROJECT_DIR": "D:\\项目\\我的 应用",
+    "GREETING": "你好，世界 😀"
+  },
+  "permissions": {
+    "allow": ["Read(./文档/**)", "PowerShell(Get-Content 说明.txt)"],
+    "deny": ["Read(./私密/**)"]
+  },
+  "companyAnnouncements": ["欢迎使用 Claude Code", "请先阅读 README"],
+  "outputStyle": "简洁"
+}

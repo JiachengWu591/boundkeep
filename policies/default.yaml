@@ -1,0 +1,15 @@
+# boundkeep policy. In M0 only the keys below exist; rules, tests and the full schema arrive in M1.
+version: 1
+
+# enforce:    decisions are returned to Claude Code.
+# audit-only: decisions are only recorded; Claude Code's normal permission flow is untouched.
+mode: enforce
+
+defaults:
+  # Keep false: boundkeep returns "no decision" for allowed actions instead of approving them on
+  # your behalf (a hook "allow" skips Claude Code's own confirmation prompt).
+  emit_allow: false
+
+# Tools whose results mark the session as tainted (used from M3a). A name ending in "*" is a prefix.
+taint:
+  sources: [WebFetch, WebSearch, "mcp__*"]

@@ -1,0 +1,1 @@
+{"model":"haiku","permissions":{"allow":["Read"],"deny":[]},"hooks":{"Notification":[{"hooks":[{"type":"command","command":"echo notified"}]}]}}

@@ -1,5 +1,26 @@
 # M0a 实验的原始记录：未脱敏，绝不提交（脱敏后的证据放 experiments/evidence/）
 experiments/raw/
 
+# Python
 __pycache__/
 *.pyc
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# Secrets and local state never belong in the repo
+.env
+.env.*
+!.env.example
+
+# A Claude Code settings file that 'boundkeep init' wrote here by mistake holds absolute paths of this machine
+.claude/

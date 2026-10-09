@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "echo first-foreign" },
+          {
+            "type": "command",
+            "command": "C:\\Users\\dev\\proj\\.venv\\Scripts\\python.exe",
+            "args": ["-I", "-S", "C:\\Users\\dev\\proj\\src\\boundkeep\\hook_client.py", "pre"],
+            "timeout": 15
+          },
+          { "type": "command", "command": "echo last-foreign" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "WebFetch|WebSearch|mcp__.*",
+        "hooks": [
+          { "type": "command", "command": "echo foreign-post" },
+          {
+            "type": "command",
+            "command": "C:\\Users\\dev\\proj\\.venv\\Scripts\\python.exe",
+            "args": ["-I", "-S", "C:\\Users\\dev\\proj\\src\\boundkeep\\hook_client.py", "post"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

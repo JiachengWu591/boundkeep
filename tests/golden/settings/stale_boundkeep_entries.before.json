@@ -1,0 +1,67 @@
+{
+  "model": "opus",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "D:\\old\\.venv\\Scripts\\python.exe",
+            "args": ["-I", "-S", "D:\\old\\boundkeep\\src\\boundkeep\\hook_client.py", "prompt"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "echo user-hook-before" }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "D:\\old\\.venv\\Scripts\\python.exe",
+            "args": ["-I", "-S", "D:\\old\\boundkeep\\src\\boundkeep\\hook_client.py", "pre"],
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          { "type": "command", "command": "echo user-hook-after" }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\dev\\Scripts\\boundkeep-hook.exe",
+            "args": ["pre"],
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          { "type": "command", "command": "echo user-post-hook" },
+          {
+            "type": "command",
+            "command": "D:\\old\\.venv\\Scripts\\python.exe",
+            "args": ["-I", "-S", "D:\\old\\boundkeep\\src\\boundkeep\\hook_client.py", "post"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

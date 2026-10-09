@@ -1,0 +1,28 @@
+{
+    "env": {
+        "CLAUDE_CODE_GIT_BASH_PATH": "C:\\Program Files\\Git\\bin\\bash.exe",
+        "DISABLE_TELEMETRY": "1",
+        "HTTPS_PROXY": "http://127.0.0.1:7890"
+    },
+    "statusLine": {
+        "type": "command",
+        "command": "powershell -NoProfile -File C:\\Users\\张三\\bin\\statusline.ps1",
+        "padding": 0
+    },
+    "model": "sonnet",
+    "includeCoAuthoredBy": false,
+    "permissions": {
+        "allow": [
+            "Read",
+            "Write"
+        ],
+        "ask": [
+            "PowerShell(Remove-Item *)"
+        ],
+        "additionalDirectories": [
+            "D:\\共享\\文档"
+        ]
+    },
+    "effortLevel": null,
+    "spinnerTipsEnabled": true
+}

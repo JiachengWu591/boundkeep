@@ -1,0 +1,136 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\tools\\audit\\audit.exe",
+            "args": [
+              "--log",
+              "D:\\logs\\bash.log"
+            ],
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node ./scripts/check-bash.js"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prettier --check",
+            "timeout": 20
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\张三\\My Tools\\.venv\\Scripts\\python.exe",
+            "args": [
+              "-I",
+              "-S",
+              "C:\\Users\\张三\\My Tools\\boundkeep\\src\\boundkeep\\hook_client.py",
+              "pre"
+            ],
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npm run lint --silent",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch|WebSearch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\张三\\My Tools\\.venv\\Scripts\\python.exe",
+            "args": [
+              "-I",
+              "-S",
+              "C:\\Users\\张三\\My Tools\\boundkeep\\src\\boundkeep\\hook_client.py",
+              "post"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -Command \"[console]::beep(800,200)\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\张三\\My Tools\\.venv\\Scripts\\python.exe",
+            "args": [
+              "-I",
+              "-S",
+              "C:\\Users\\张三\\My Tools\\boundkeep\\src\\boundkeep\\hook_client.py",
+              "prompt"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\张三\\My Tools\\.venv\\Scripts\\python.exe",
+            "args": [
+              "-I",
+              "-S",
+              "C:\\Users\\张三\\My Tools\\boundkeep\\src\\boundkeep\\hook_client.py",
+              "config"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "echo ready"
+  }
+}
