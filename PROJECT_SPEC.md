@@ -182,7 +182,7 @@ Claude Code
 - **命名管道可行**：纯标准库客户端 `open(r"\\.\pipe\...", "r+b", buffering=0)` 即可完成一次请求 / 应答；管道不存在时立刻得到 `FileNotFoundError`；服务端接受连接却不应答时，客户端用"工作线程 + `join` 超时"可以在预算内脱身。
 - **"管道忙"是真实竞态**：并发客户端会在没有空闲管道实例的瞬间得到 `OSError`（`errno=22`，`winerror` 为空：`open()` 不暴露 Windows 错误码）。退避重试可以消化：4 并发 × 50 次与 32 并发 × 20 次、三种服务端各 3 轮，共 7560 次调用全部成功；不重试时，单实例服务端在 4 并发下有 76% 到 85% 的首次连接遇到"管道忙"，预建 8 个实例后降到 2% 到 4%，32 并发的 p99 也从 34 ms 以上降到 6 到 10 ms（原型基准，本机一次性测量；见 `docs/hook-behavior.md` E10 与 `experiments/evidence/pipe_concurrency_*.json`）。
 - **默认安全属性不够**：标准库 asyncio 的 Proactor 管道服务端创建管道时传空安全属性；实测默认 DACL 对 Everyone 与匿名账户授予读权限，也没有 `PIPE_REJECT_REMOTE_CLIENTS`。用 ctypes 自己调 `CreateNamedPipeW` 的原型实测通过：DACL 只含当前用户 SID，拒绝远程客户端，首实例标志与多实例池都可用。
-- **编码是"静默放行"陷阱**：开发机全局设置了 `PYTHONIOENCODING=utf-8:surrogateescape`，掩盖了默认行为；清除后，Python 默认用 gbk 读 stdin，收到含中文的 UTF-8 JSON 时 `json.load(sys.stdin)` 抛 `UnicodeDecodeError`，进程以退出码 1 结束——按官方语义是非阻断，闸门悄悄放行；打印 `✓` 一类字符同样抛 `UnicodeEncodeError`。
+- **编码是"静默损坏"陷阱**（2026-10-07 更正：M0a 原先写成"抛 `UnicodeDecodeError`、退出码 1、闸门放行"，那是 M0a 的 `BK_NAIVE` 用严格解码得出的，不是天真写法的真实表现）：开发机全局设置了 `PYTHONIOENCODING=utf-8:surrogateescape`，掩盖了默认行为；清除后，Python 在代码页 936 下把 stdin 当 gbk 读（3.11、3.12、3.13 实测一致），而 `sys.stdin` 与 `sys.stdout` 的错误处理器是 `surrogateescape`：`json.load(sys.stdin)` 不抛异常、退出码 0，但文本被悄悄读坏——`你好世界` 变成 `浣犲ソ涓栫晫`，`✓` 变成 `鉁\udc93`（带孤立代理项）。后果比崩溃更隐蔽：含中文的路径或命令在规则里匹配不上（规则悄悄失效），孤立代理项在之后编码或写日志时才崩溃（那时才是退出码 1，非阻断，闸门悄悄放行）。证据：`experiments/probe_stdin_encoding.py`、`experiments/evidence/stdin_encoding.txt`。所以测试要断言转发的文本与原文逐字一致，且代码库里所有文本模式的文件读写都显式写 `encoding="utf-8"`。
 - **路径**：`os.path.realpath` 对存在的路径能展开 8.3 短名、还原大小写、去掉尾随的点与空格和 `::$DATA`；但保留 `\\?\` 前缀；`NUL` 被当作存在的路径；`C:foo`（驱动器相对路径）的含义取决于进程在该驱动器上的当前目录。所以需要显式的规范化层。
 - **工具链**：`python`、`claude` 都经过 mise 的 shim，其中 `claude` 的 shim 报了 `cannot find binary path`；shim 多一层间接，出错时 Claude Code 只会得到非阻断提示。Git 装在 `D:\新建文件夹\Git`（路径含中文），PATH 上的 `bash` 是 WSL 启动器而不是 Git Bash，shell 环境里没有 `CLAUDE_CODE_GIT_BASH_PATH`（未检查 settings 的 `env` 块）；当前会话的 shell 工具只有 `PowerShell`（与 Git Bash 未被找到是否有因果关系，M0a 确认）。WSL 里只有 `docker-desktop` 发行版，没有可用的 Linux 开发环境。
 
@@ -190,9 +190,9 @@ Claude Code
 
 - **hook 在 Windows 上触发**：SessionStart、UserPromptSubmit、PreToolUse、PostToolUse、Stop 都触发；`PowerShell`、`Read`、`Write` 工具都触发，设置 `CLAUDE_CODE_GIT_BASH_PATH` 后 `Bash` 也触发。同一事件上的多个 hook 同一毫秒并行启动。VS Code 扩展宿主（2.1.291）里同样触发（五类事件，PowerShell / Read / Write 工具），#92074 没有复现；Desktop 应用未测。
 - **exec 形式可用**：`command` 为 `python.exe` 绝对路径、`args` 为数组，不经过 shell。
-- **语义与设计一致**：退出码 2 与 deny JSON 阻断，理由（含 `\u` 转义的中文与 ✓）回传给模型；退出码 1、崩溃（含编码异常）、超时（`timeout` 单位为秒，被终止并记为 `cancelled`）都非阻断，命令照常执行；`ask` 在无人批准的 `-p` 下被自动拒绝。
+- **语义与设计一致**：退出码 2 与 deny JSON 阻断，理由（含 `\u` 转义的中文与 ✓）回传给模型；退出码 1、崩溃、超时（`timeout` 单位为秒，被终止并记为 `cancelled`）都非阻断，命令照常执行；`ask` 在无人批准的 `-p` 下被自动拒绝。
 - **Windows 的 stdin 形式**：`cwd`、`transcript_path`、`file_path`、`CLAUDE_PROJECT_DIR` 全是反斜杠加大写盘符；`UserPromptSubmit` 的提示字段是 `prompt`；`PowerShell` 与 `Bash` 的 `tool_input` 是 `{command, description}`。盘符大小写不稳定：VS Code 扩展里 `CLAUDE_PROJECT_DIR` 与 `file_path` 是小写 `e:\...`，`cwd` 在同一会话里既有 `e:\...` 也有 `E:\...`，所以路径比较必须不区分大小写。
-- **编码陷阱被证实**：环境变量原样传入 hook；Python 默认按 gbk 解码 UTF-8 的 stdin，含中文的事件（带中文的用户提示词、含非 ASCII 的 PowerShell 命令）会让文本模式的 hook 崩溃并因此放行；开发机 shell 里全局的 `PYTHONIOENCODING` 掩盖了这一点；VS Code 扩展宿主的 hook 环境里没有它，不带 `-I` 的 hook 在真实宿主里也是 gbk。hook 进程的环境里有 `CLAUDE_CODE_MESSAGING_TOKEN`，所以绝不记录环境变量的值。
+- **编码陷阱被证实（形式已更正，见上一条"静默损坏"）**：环境变量原样传入 hook；Python 默认按 gbk 读 UTF-8 的 stdin，含中文的事件（带中文的用户提示词、含非 ASCII 的 PowerShell 命令）会被文本模式的 hook 悄悄读成乱码；开发机 shell 里全局的 `PYTHONIOENCODING` 掩盖了这一点；VS Code 扩展宿主的 hook 环境里没有它，不带 `-I` 的 hook 在真实宿主里也是 gbk。hook 进程的环境里有 `CLAUDE_CODE_MESSAGING_TOKEN`，所以绝不记录环境变量的值。
 - `-p` 不弹信任对话框、项目级 hook 照常运行，但项目 settings 里的 `permissions.allow` 被忽略；`--safe-mode` 与 `--bare` 会让 hook 不运行。
 - Git 装在非标准路径（含中文）时，Claude Code 不会自动发现 Git Bash，`Bash` 工具不注册；指定 `CLAUDE_CODE_GIT_BASH_PATH` 后可用。
 - **起不来、崩溃、超时的 hook 都不阻断**（命令不存在、`.cmd` 垫片、Microsoft Store 的 `python.exe` 占位符退出 49、退出码 1 / 3 / 127），**非法 JSON 与非 UTF-8 输出被当作"无决定"**；deny JSON 配退出码 1 反而仍被执行，旧式 `decision: block` 仍被接受。shell 形式的 hook 在没有 Git Bash 时由 PowerShell 执行，带引号的路径不写成 `& "path"` 会解析失败（静默放行）；所以 `init` 用 exec 形式。
@@ -217,8 +217,8 @@ Claude Code
 **实现约束**
 
 - **hook 客户端 I/O（所有平台）**：按字节读 stdin、显式按 UTF-8 解码；按字节写 stdout，输出的 JSON 只含 ASCII（`ensure_ascii`，非 ASCII 用 `\u` 转义）；不用 `print` 与文本层；不依赖 `PYTHONIOENCODING`、`PYTHONUTF8` 或系统代码页。最外层捕获所有异常（含 `BaseException`），输出 `ask` 并以 0 退出，绝不以 1 退出。事件类型以 stdin 里的 `hook_event_name` 为准，命令行参数（`pre` / `post` / `prompt`）只作交叉检查；缺参数（较早版本的 Claude Code 可能丢弃 `args`）或两者不一致 → 输出 `ask` 并说明原因；`doctor` 检查 Claude Code 版本。
-- **hook 命令**：`init` 写入解析后的真实可执行文件（当前环境 `Scripts` 目录里的 `boundkeep-hook.exe`），不写 PATH 上的 shim（mise、pyenv-win、uv 的 shim 都多一层间接）。`init` 自检与 `doctor` 按 exec 形式原样启动它，喂入含中文的 UTF-8 样例事件，并在清除 `PYTHON*` 环境变量的条件下再来一遍，校验输出是合法决定。exec 写法的选择（E10 实测）：默认 `python.exe -I -S <独立脚本>`（不经过 shell、忽略 `PYTHON*` 环境变量、比 `.exe` 启动器快约 17 ms），`.exe` 启动器作备选（路径更短，但慢、首次运行要过杀毒软件）；最终以 M0 在真实 Claude Code 里的实测为准。
-- **`ConfigChange` hook**（E12）：`init` 同时注册一个，拦下会引入 `disableAllHooks` 或移除 boundkeep 自身 hook 的 settings 变更（退出码 2；托管策略来源拦不了）。它拦不住"会话开始前文件里就已经有 `disableAllHooks`"，那种情况由 `doctor` 与 SessionStart 时的自检补。
+- **hook 命令**：`init` 写入解析后的真实可执行文件（当前环境 `Scripts` 目录里的 `boundkeep-hook.exe`），不写 PATH 上的 shim（mise、pyenv-win、uv 的 shim 都多一层间接）。`init` 自检与 `doctor` 按 exec 形式原样启动它，喂入含中文的 UTF-8 样例事件，并在清除 `PYTHON*` 环境变量的条件下再来一遍，校验输出是合法决定。exec 写法的选择（E10 实测）：默认 `python.exe -I -S <独立脚本>`（不经过 shell、忽略 `PYTHON*` 环境变量、比 `.exe` 启动器快约 17 ms），`.exe` 启动器作备选（路径更短，但慢、首次运行要过杀毒软件）。**M0 实测**（`scripts/bench_hook.py`，开发机，每项 60 次，结果文件 `scripts/bench_hook_result.json`）：用**基础解释器**的 `python.exe -I -S hook_client.py`，带常驻进程时 p50 约 41 ms、p95 约 48 ms（空进程约 21 ms）；用虚拟环境的 `python.exe`（uv 的跳板，会再起一个子进程）p50 约 60 ms；`boundkeep-hook.exe` 启动器 p50 约 87 ms；常驻进程一侧处理一个请求约 0.1 ms，开销全在 Python 进程启动与导入（`json` 约 9 ms）。所以默认写**基础解释器**，`init` 拒绝 shim、Microsoft Store 别名与 `.cmd` / `.bat`；主脚本 `hook_client.py` 只有几行（主脚本每次都要重新编译，被导入的模块走字节码缓存），逻辑在 `hook_main.py`。
+- **`ConfigChange` hook**（E12）：`init` 同时注册一个，拦下会引入 `disableAllHooks` 或移除 boundkeep 自身 hook 的 settings 变更（退出码 2；托管策略来源拦不了）。它拦不住"会话开始前文件里就已经有 `disableAllHooks`"，那种情况由 `doctor` 与 SessionStart 时的自检补。M0 的规则（hook 客户端本地判断，不依赖常驻进程，**失败即关闭**）：变更后的文件读不了或不是合法 JSON → 阻断；`disableAllHooks` 取任何不是 `null` / `false` 的值 → 阻断；对 `init` 在安装清单（`~/.boundkeep/installs.json`）里记录过的文件，被删除、boundkeep 的条目被删或指向别处、被加上 `if` 等额外字段、`timeout` 短到来不及应答、PreToolUse 的 matcher 被收窄，都阻断；来源是托管策略（`policy_settings`）时放行（Claude Code 不让 hook 阻断它）。**M0 真实宿主实测**（`scripts/smoke_claude.py`，Claude Code 2.1.292，Windows 11，CLI 引擎，各一次观察）：会话中途有人写入 `disableAllHooks: true`，被拒绝，之后的 PreToolUse 照常触发；会话中途把 `hooks` 整个清空（连 ConfigChange 自己的条目一起删），也被否决，之后的命令仍然经过闸门。VS Code 界面里未测。
 - **IPC（`ipc/`）**：POSIX 与 Windows 两个传输实现同一接口。Windows 服务端用 ctypes 调 `CreateNamedPipeW`：管道名含 `init` 生成的随机令牌（令牌存在用户配置目录）；DACL 只授予当前用户 SID；`PIPE_REJECT_REMOTE_CLIENTS`；首实例带 `FILE_FLAG_FIRST_PIPE_INSTANCE`（创建失败即报错，`doctor` 提示管道名被占用）；预建多个实例。不用 asyncio 的管道服务端（无法指定安全属性）；asyncio 在 Windows 上也没有 Unix 套接字服务、不支持 `loop.add_signal_handler`。客户端：`FileNotFoundError` 表示常驻进程没起，立即降级 `ask`；其他 `OSError` 视为"管道忙"，在总预算内退避重试；总预算从进程启动起算、覆盖读 stdin 与 IPC 全程，由"工作线程 + `join` 超时 + `os._exit`"实现，且小于 settings 里的 `timeout`。
 - **路径规范化**分两层，以便跨平台测试（设计原则 10）：
   - **词法层**（纯函数，不碰文件系统；显式使用 `ntpath` / `PureWindowsPath` / `posixpath`，不用当前平台默认的 `os.path`）：展开 `~`、`%VAR%`、`$env:VAR`、`$HOME` 等已知变量（无法解析的变量 → 灰色）；统一分隔符；去掉 `\\?\` 与 `\\.\` 前缀；去掉 NTFS 备用数据流后缀（`:stream`、`::$DATA`）与尾随的点和空格；折叠 `..`；识别驱动器相对路径、UNC 与设备名（`NUL`、`CON`、`COMn` 等，设备名不算项目内）；MSYS 路径（`/c/Users/...`、`/cygdrive/c/...`）与 WSL 的 `/mnt/<盘>/...` 翻译为 Windows 路径；Git Bash 的 `/`、`/usr`、`/tmp` 等无法可靠映射，一律按项目外处理。
@@ -537,7 +537,7 @@ if tainted and action 命中 sensitive_tags 且 final == ALLOW:  final = ASK
 | 策略文件解析失败 | `ask`；`boundkeep doctor` 报错 |
 | 命令无法解析 / 工具名未知 | 灰色地带 |
 | `mode: audit-only` | 只记录判决，不向 Claude Code 返回决定，沿用其原有权限流程 |
-| hook 脚本自身异常 | 退出码 2 阻断，或输出 `ask`；不得以非 0 非 2 的退出码退出（会被当成非阻断错误而放行）。典型诱因：Windows 中文系统上默认按 gbk 解码 stdin，含中文的 UTF-8 JSON 会抛 `UnicodeDecodeError`，Python 以退出码 1 结束；所以 I/O 一律按字节与显式 UTF-8（§5.1） |
+| hook 脚本自身异常 | 退出码 2 阻断，或输出 `ask`；不得以非 0 非 2 的退出码退出（会被当成非阻断错误而放行）。典型诱因：任何未捕获的异常（含孤立代理项在之后编码时抛的 `UnicodeEncodeError`）都让 Python 以退出码 1 结束；另外 Windows 中文系统上默认按 gbk 读 stdin，含中文的事件被悄悄读成乱码（不崩溃，规则匹配落空，§5.1）；所以 I/O 一律按字节与显式 UTF-8 |
 | hook 命令路径错误 / 不可执行 | Claude Code 只会给出非阻断提示，闸门**悄悄失效**。`init` 写入绝对路径并自检，`doctor` 必须检查可执行性。Windows 上的常见诱因：shim 找不到底层二进制、用了 `.cmd` / `.bat` 垫片（exec 形式无法启动）、`python` 解析到 Microsoft Store 占位符（退出码 49，实测）、杀毒软件隔离了 `.exe`（未测）。这些在 CLI 引擎与 VS Code 界面里都不阻断，也没有任何提示（M0a 实测），用户自己看不出闸门失效 |
 | hook 输出非法 JSON 或非 UTF-8 字节（退出 0） | Claude Code 当作"无决定"而放行（实测）。客户端的 stdout 必须总是 `json.dumps` 生成的合法 JSON，且只含 ASCII；不得用 `print` 拼接 |
 | hook 命令超时 | 非阻断（官方默认 600 秒）。客户端必须有自己的总超时预算，小于 settings 里的 `timeout`，并在预算内输出降级决定 |
@@ -550,6 +550,7 @@ if tainted and action 命中 sensitive_tags 且 final == ALLOW:  final = ASK
 - 发送给 LLM 后端的内容：工具名、归一化后的命令 / 路径 / 域名、任务意图摘要（只取用户自己输入的文字，宿主拼进来的 IDE 上下文先剥离，见 §9.2）、污染来源名。**不发**文件内容与工具原始输出。
 - 数据流向由所选后端决定：`backend: none` 时没有任何数据离开本机；使用第三方服务时，上述元数据会发往该服务，必须在 `docs/privacy.md` 按后端分别写明，并链接其数据保留与训练条款（我们不替它们做承诺）。默认不启用任何后端。
 - 发送与写日志之前统一脱敏：`sk-*` 前缀的常见密钥、`AKIA*`、`ghp_*`、`-----BEGIN * PRIVATE KEY-----`、`Bearer *`、名称含 `KEY|TOKEN|SECRET|PASSWORD` 的环境变量赋值（不区分大小写；含 Windows 写法：`$env:NAME = ...`、`set NAME=...`、`setx NAME ...`、`[Environment]::SetEnvironmentVariable(...)`）。
+  - 范围说明（M0 实测）：脱敏是尽力而为，不是保证。上面的形态之外，M0 还覆盖 `xox*-`、`AIza`、`sk_live_`、`npm_`、`glpat-`、JWT、`X-*-Key/Token/Auth` 头、`--pass` 类参数；**不覆盖位置参数里的口令**（`curl -u user:pw`、`mysql -pSECRET`、`sshpass -p`、`docker login -p`）与 `PASS=` / `PWD=` / `AUTH=` 类赋值。日志文件只有当前用户能读；发往后端的内容必须另走白名单（`send_gate`），不能只靠脱敏。
 - LLM 审计层不读原始网页 / 文件内容，因此不会被其中的注入文本直接操控；它依据的是"动作与任务是否吻合"。
 - **密钥处理**：只通过环境变量读取，不写入配置、日志、错误信息、缓存或评测报告；开发 agent 不持有、不读取密钥；不读取 `ANTHROPIC_API_KEY`；`doctor` 在检测到该变量时给出警告（它会让 Claude Code 改用 API 计费）。
 - **后端地址（`base_url`）是用户可配置的出站目标**：只允许 https（本机回环地址除外）；不跟随跨域重定向；限制响应体积与超时；错误信息不回显请求体。
@@ -615,14 +616,23 @@ boundkeep/
 ├── .env.example                 # BOUNDKEEP_LLM_API_KEY=（留空，仅示例）
 ├── .gitignore
 ├── src/boundkeep/
-│   ├── cli.py                   # init / uninstall / serve / log / test / explain / doctor / mode / llm / policy
-│   ├── hook_client.py           # boundkeep-hook：仅标准库，按字节读写 + 显式 UTF-8，转发 + 降级
+│   ├── cli.py                   # init / uninstall / serve / log / test / explain / doctor / mode / llm / policy（M0：init、uninstall、serve、mode、log、doctor）
+│   ├── hook_client.py           # boundkeep-hook 的入口脚本：只有几行（主脚本每次重新编译），放包路径后调用 hook_main
+│   ├── hook_main.py             # boundkeep-hook 的逻辑：仅标准库，按字节读写 + 显式 UTF-8，转发 + 降级 + ConfigChange 本地检查
+│   ├── protocol.py              # 线路格式（客户端与常驻进程共用，仅标准库）
+│   ├── ownhook.py               # 在 settings 里认出 boundkeep 自己的 hook 条目（仅标准库）
+│   ├── paths.py                 # boundkeep 自己的文件放哪（BOUNDKEEP_HOME）
+│   ├── hookcmd.py               # 选择并校验 hook 要启动的解释器
+│   ├── install.py、settings_io.py、claude_settings.py   # settings 读写、合并与移除条目、自检、安装清单
+│   ├── doctor.py、console.py    # 检查项；UTF-8 安全的控制台输出
+│   ├── fsperm.py                # 目录与文件的私有性检查（POSIX 模式位 / Windows ACL）
 │   ├── daemon/
-│   │   ├── server.py            # IPC 服务（经 ipc/）：/pre /post /prompt
+│   │   ├── server.py            # 请求处理、策略热加载、审计记录、serve（经 ipc/）
+│   │   ├── lifecycle.py         # 单实例锁、pid 文件、停止信号
 │   │   └── pipeline.py          # normalize → rules → taint → llm → verdict
-│   ├── ipc/                     # 传输抽象：base.py、unix.py（POSIX）、named_pipe.py（Windows，ctypes）
+│   ├── ipc/                     # 传输：base.py（服务端抽象）、client.py、endpoint.py（客户端，仅标准库）、unix.py（POSIX）、named_pipe.py + winsec.py（Windows，ctypes）
 │   ├── normalize/               # hook JSON → Action：bash.py、powershell.py（M1b）、paths.py（词法层 + 文件系统层）、domains.py
-│   ├── policy/                  # schema(pydantic)、loader、matcher
+│   ├── policy/                  # schema(pydantic)、loader、matcher（M0：只有 version / mode / defaults.emit_allow / taint.sources 四个键，未知键报错；`mode` 存在 ~/.boundkeep/policy.yaml）
 │   ├── audit/
 │   │   ├── backends/            # base.py（协议）、openai_compatible.py、anthropic.py（可选）、fake.py
 │   │   ├── prompts/audit_system.md
@@ -641,12 +651,16 @@ boundkeep/
 │   ├── datasets/benign/
 │   ├── run_eval.py
 │   └── report.md                # 评测结果（生成物）
+├── scripts/                     # bench_hook.py（hook 客户端延迟）、smoke_claude.py（真实 Claude Code 冒烟，claude -p，仅观察）
 ├── web/                         # v0.5+
 ├── docs/
 │   ├── design-origin.md         # 与 injection-blast-radius 的关系、复制来源 commit
 │   ├── threat-model.md
 │   ├── hook-behavior.md         # M0a 产出（按平台分节）
 │   ├── platforms.md             # 各平台支持等级与实测记录（§5.1）
+│   ├── architecture.md          # M0：通路、协议、降级表、磁盘文件
+│   ├── manual-acceptance-m0.md  # M0 的手工验收步骤（用户做）
+│   ├── reports/                 # 每个里程碑的验收报告
 │   ├── llm-backends.md          # 各后端配置、已测版本、一致性测试结果
 │   └── privacy.md
 └── tests/                       # unit / contract（后端一致性）/ platform（按 windows、posix 标记）/ e2e / fixtures

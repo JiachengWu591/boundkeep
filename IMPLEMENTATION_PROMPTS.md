@@ -75,7 +75,7 @@ boundkeep（守界）是编码 agent 的运行时动作审查层，首先支持 
 
 # 不可违反的不变量
 - 失败即关闭：任何出错、超时、解析失败，降级为 ask，绝不静默放行。hook 进程自身异常时，退出码只能是 0（并输出合法决定）或 2，不得是其他值（非 0 非 2 会被 Claude Code 当成非阻断错误而放行）。
-- hook 客户端的 I/O 不依赖代码页或 PYTHON* 环境变量：按字节读 stdin、显式 UTF-8 解码，按字节写只含 ASCII 的 JSON；事件类型以 stdin 的 hook_event_name 为准。Windows 中文系统默认按 gbk 解码，含中文的事件会让 Python 以退出码 1 退出，等于放行。
+- hook 客户端的 I/O 不依赖代码页或 PYTHON* 环境变量：按字节读 stdin、显式 UTF-8 解码，按字节写只含 ASCII 的 JSON；事件类型以 stdin 的 hook_event_name 为准。Windows 中文系统默认按 gbk 读 stdin：含中文的事件被悄悄读成乱码（不崩溃，规则匹配落空），孤立代理项还会在之后编码时崩溃（退出码 1，等于放行）。所有文本模式的文件读写都显式写 encoding="utf-8"。
 - 不确定即灰色：命令解析失败、规则缺失、工具名未知，永远不会自动 allow。
 - 不替用户做决定：判为 ALLOW 时默认不向 Claude Code 返回 allow，而是返回"无决定"，交还原有权限流程；只有 defaults.emit_allow 显式开启才输出 allow。
 - LLM 的输出不被直接信任，最终判决由代码按 PROJECT_SPEC.md §9.5 计算。
@@ -247,7 +247,7 @@ hook 客户端到常驻进程往返的 p95，以及冷启动 p95，对照 M0a �
 - `uv run pytest -q` 全绿；`uv run ruff check .` 与 `uv run mypy src` 无告警。
 - 端到端测试：启动常驻进程，用 M0a 的真实夹具（按平台分目录；Windows 含 PowerShell 的 canary）驱动 boundkeep-hook，断言 canary 命令被 deny、普通命令不被拦、日志里有对应记录。
 - 降级测试：常驻进程未运行、进程被杀、套接字文件残留但无人监听、响应超时、响应非法，各自输出合法的 ask 与正确的退出码。Windows 另测：管道忙（并发 ≥ 32 个 hook 客户端，请求不丢）、管道名被占用（服务端拒绝启动并报错）。
-- 编码测试：清除 PYTHON* 环境变量（Windows 上在代码页 936 的环境里）、输入含中文与 ✓ 的 UTF-8 事件，hook 仍输出合法决定且退出码为 0；缺命令行参数时输出 ask。
+- 编码测试：清除 PYTHON* 环境变量（Windows 上在代码页 936 的环境里）、输入含中文与 ✓ 的 UTF-8 事件，hook 仍输出合法决定且退出码为 0，**并且转发给常驻进程、写进审计日志的文本与事件原文逐字一致**（M0a 原先以为天真写法会崩溃，实际是悄悄读成乱码，见 docs/hook-behavior.md E18 的更正，所以只断言'没崩溃'不够）；缺命令行参数时输出 ask。
 - 输出测试（属性测试）：任意降级路径与任意输入下，stdout 要么为空，要么是 json.dumps 生成的合法 JSON 且只含 ASCII（M0a E6 实测：非法 JSON 会被当作"无决定"而放行）。
 - ConfigChange 测试：会话中改动 settings 引入 disableAllHooks，被拦下且之后的 hook 照常触发；会话前已存在 disableAllHooks 时 doctor 报警。
 - init 幂等：连续执行两次结果相同；对复杂的既有 settings.json 做黄金文件测试；uninstall 后与安装前一致。

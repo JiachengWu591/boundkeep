@@ -1,0 +1,26 @@
+ANSI code page / locale encoding of the machine: cp936
+environment: PYTHON* variables removed, interpreter flags -I -S, stdin is a pipe
+
+== Python 3.11.13: stdin encoding gbk, stdin errors surrogateescape, stdout errors surrogateescape, utf8_mode 0
+  ascii          M0a model (strict decode): ok      | json.load(sys.stdin): exit 0 | text unchanged: True
+  chinese        M0a model (strict decode): ok      | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'prompt': '\u6d63\u72b2\u30bd\u6d93\u682b\u666b'}
+  check-mark     M0a model (strict decode): FAILS   | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'command': 'echo \u9241\udc93 done'}
+  chinese+check  M0a model (strict decode): FAILS   | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'command': 'echo \u6d63\u72b2\u30bd \u9241\udc93 done'}
+
+== Python 3.12.11: stdin encoding gbk, stdin errors surrogateescape, stdout errors surrogateescape, utf8_mode 0
+  ascii          M0a model (strict decode): ok      | json.load(sys.stdin): exit 0 | text unchanged: True
+  chinese        M0a model (strict decode): ok      | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'prompt': '\u6d63\u72b2\u30bd\u6d93\u682b\u666b'}
+  check-mark     M0a model (strict decode): FAILS   | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'command': 'echo \u9241\udc93 done'}
+  chinese+check  M0a model (strict decode): FAILS   | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'command': 'echo \u6d63\u72b2\u30bd \u9241\udc93 done'}
+
+== Python 3.13.4: stdin encoding gbk, stdin errors surrogateescape, stdout errors surrogateescape, utf8_mode 0
+  ascii          M0a model (strict decode): ok      | json.load(sys.stdin): exit 0 | text unchanged: True
+  chinese        M0a model (strict decode): ok      | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'prompt': '\u6d63\u72b2\u30bd\u6d93\u682b\u666b'}
+  check-mark     M0a model (strict decode): FAILS   | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'command': 'echo \u9241\udc93 done'}
+  chinese+check  M0a model (strict decode): FAILS   | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'command': 'echo \u6d63\u72b2\u30bd \u9241\udc93 done'}
+
+== Python 3.12.7: stdin encoding gbk, stdin errors surrogateescape, stdout errors surrogateescape, utf8_mode 0
+  ascii          M0a model (strict decode): ok      | json.load(sys.stdin): exit 0 | text unchanged: True
+  chinese        M0a model (strict decode): ok      | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'prompt': '\u6d63\u72b2\u30bd\u6d93\u682b\u666b'}
+  check-mark     M0a model (strict decode): FAILS   | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'command': 'echo \u9241\udc93 done'}
+  chinese+check  M0a model (strict decode): FAILS   | json.load(sys.stdin): exit 0 | text unchanged: False   read as: {'command': 'echo \u6d63\u72b2\u30bd \u9241\udc93 done'}

@@ -28,14 +28,14 @@
 | E9 并发与会话 | 部分验证 | resume / continue / compact 前后 session_id 不变；项目、local、`--settings` 三处 hook 合并；`/clear` 换新 session_id（SessionStart 的 `source` 为 `clear`）；并行工具调用没能让模型发出 |
 | E10 性能 | 已验证（本机微基准） | `python -I -S` 的 hook 进程约 30 ms；`.exe` 启动器 +17 ms；mise shim +64 ms；每次工具调用 hook 增量约 95 ms |
 | E11 allow 语义与权限模式 | 部分验证 | **hook 的 allow 会替用户跳过确认**，但压不过 ask / deny 规则；bypassPermissions 未测；auto 模式未生效 |
-| E12 配置篡改 | 已验证（CLI 引擎） | `disableAllHooks` 一旦生效 hook 全停；会话中改动立刻生效；`ConfigChange` hook 能拦下这类改动 |
+| E12 配置篡改 | 已验证（CLI 引擎；M0 在真实实现上复测，见下方“M0 补充”） | `disableAllHooks` 一旦生效 hook 全停；会话中改动立刻生效；`ConfigChange` hook 能拦下这类改动，**包括把 boundkeep 自己的条目（连同 ConfigChange 的）一起删掉的编辑** |
 | E13 覆盖面 | 部分验证 | 子 agent、MCP、WebFetch、WebSearch、ToolSearch 都触发；`@` 引用绕过 hook |
 | E14 prompt / agent hook | 已验证（实验性） | PreToolUse 上可用；不能替代 command hook |
 | E15 hook 是否触发 | CLI 引擎与 VS Code 扩展已验证；Desktop 未测 | 见下 |
 | E16 exec 形式 | 部分验证 | 绝对路径 `python.exe` + `args`、`.exe` 启动器、含空格与中文的路径都可用；VS Code 里 `python.exe -I -S` 的 exec 写法没有出现黑色控制台窗口（用户目视一次；`.exe` 启动器未测） |
 | E17 Windows 的 stdin 形式 | 部分验证 | 路径全是反斜杠；盘符大小写不稳定；`Bash` 命令里的路径写法未测 |
-| E18 环境与编码 | 已验证 | 默认 gbk 解码会让含中文的事件崩溃，崩溃即放行；环境变量原样传入 hook |
-| E19 命名管道的真实行为 | 待 M0 | 要在 M0 的真实实现与真实 Claude Code 下补做；原型的并发与 DACL 基准见 E10（`bench_pipe_concurrency.py`） |
+| E18 环境与编码 | 已验证（2026-10-07 更正） | Python 默认按 gbk 读 stdin；**不是崩溃，而是悄悄把文本读坏**（M0a 原先写的"抛 UnicodeDecodeError、退出码 1"不成立，见下）；环境变量原样传入 hook |
+| E19 命名管道的真实行为 | 部分验证（M0，2026-10-08） | 真实实现下 96 个并发 hook 进程不丢请求；守护进程被杀后 hook 降级为 ask、重启后恢复；名字被占用时拒绝启动。提升权限（UAC）令牌与杀毒软件的影响未测。见下方“M0 补充” |
 | E20 PowerShell 解析 | 部分验证 | 5.1 下 AST 解析器可用；**约束语言模式下不可用** |
 | E21 路径规范化的边界 | 部分验证 | 见下 |
 | E22 工具链解析 | 已验证 | 命令不存在、`.cmd` 垫片、Store 占位符等都是非阻断的静默失效 |
@@ -223,8 +223,10 @@ PreToolUse 上挂 `type: "prompt"` 的 hook（提示词要求：命令含 `BK_PR
 
 - **环境变量原样传入 hook**：CLI 引擎里外层设置的 `PYTHONIOENCODING` 能在 hook 里看到；清除后看不到。**VS Code 扩展宿主的 hook 环境里没有它**（它只设在开发机的 shell 环境里）。
 - hook 进程还会得到 Claude Code 自己设置的 `CLAUDECODE`、`CLAUDE_CODE_ENTRYPOINT`、`CLAUDE_CODE_SESSION_ID`、`CLAUDE_PROJECT_DIR`、`CLAUDE_CODE_MESSAGING_SOCKET`、`CLAUDE_CODE_MESSAGING_TOKEN` 等。**`CLAUDE_CODE_MESSAGING_TOKEN` 是令牌**：hook 与日志绝不能记录环境变量的值。
-- **stdin 是 UTF-8 字节**。Python 在没有 `PYTHONIOENCODING`、也没开 UTF-8 模式时按 gbk 解码：含非 ASCII 的事件（带中文的 `UserPromptSubmit`、含 `✓` 或中文的 `PowerShell` 命令及其 `PostToolUse`）按文本模式读 stdin 会抛 `UnicodeDecodeError`，纯 ASCII 的事件没事；`print` 非 ASCII 到 stdout 同样失败；崩溃的 hook 退出码为 1，非阻断，命令照常执行（`BK_NAIVE`）——闸门悄悄放行。
-- 对设计：规格 §5.1 的"hook 客户端 I/O"约束（按字节读写、显式 UTF-8、ASCII-only JSON、最外层捕获所有异常）被真实事件证实；用户提示词含中文是常态，所以 `UserPromptSubmit` 最先出问题。
+- **stdin 是 UTF-8 字节**。Python 在没有 `PYTHONIOENCODING`、也没开 UTF-8 模式时把它当 gbk 读（`sys.stdin.encoding` 是 gbk）。
+- **更正（2026-10-07，M0 实现时发现）**：M0a 原先写的"按文本模式读 stdin 会抛 `UnicodeDecodeError`、退出码 1"**不成立**。`BK_NAIVE` 写的是 `raw.decode(sys.stdin.encoding)`，那是**严格解码**，不是天真写法的真实表现；真实的写法（`json.load(sys.stdin)`、`sys.stdin.read()`）走 `sys.stdin` 的文本层，而在这台机器上（代码页 936、清除 `PYTHON*`、`-I -S`、stdin 是管道；Python 3.11.13、3.12.11、3.13.4、anaconda 3.12.7 结果一致）`sys.stdin` 与 `sys.stdout` 的错误处理器是 `surrogateescape`：**不抛异常，退出码 0，但文本被悄悄读坏**。`你好世界` 读成 `浣犲ソ涓栫晫`，`✓` 读成 `鉁\udc93`（带一个孤立代理项）；纯 ASCII 的事件不受影响。M0a 的严格解码只在含 `✓` 的事件上失败，纯中文的事件也解得出（乱码）。证据：`experiments/probe_stdin_encoding.py`、`experiments/evidence/stdin_encoding.txt`。
+- 所以真实的风险是**静默的文本损坏**，比崩溃更隐蔽：含中文的路径或命令（例如 `D:\新建文件夹\...`）在规则里匹配不上，规则悄悄失效；孤立代理项则在之后编码为 UTF-8 或写日志时才崩溃，那时才是退出码 1（非阻断，命令照常执行）。崩溃的 hook 非阻断这一点仍然成立（`BK_NAIVE` 的退出码 1 实测过）。
+- 对设计：规格 §5.1 的"hook 客户端 I/O"约束（按字节读写、显式 UTF-8、ASCII-only JSON、最外层捕获所有异常）仍然必要，理由改为"文本被读坏"而不只是"崩溃"；它还要求测试断言**转发出去的文本与事件原文逐字一致**，不能只断言"没崩溃"。用户提示词含中文是常态，所以 `UserPromptSubmit` 最先受影响。整个代码库里所有文本模式的文件读写都必须显式写 `encoding="utf-8"`（代码页 936 下默认编码同样会读坏 UTF-8 的中文）。
 
 ## E20 PowerShell（部分验证）
 
@@ -253,6 +255,25 @@ PreToolUse 上挂 `type: "prompt"` 的 hook（提示词要求：命令含 `BK_PR
 - **VS Code 扩展里打开从未打开过的目录**（`E:\bk-lab-matchers`）：没有弹出任何信任对话框，该目录项目级的 SessionStart hook 随会话启动照常运行。`~/.claude.json` 里 `e:/bk-lab` 的 `hasTrustDialogAccepted` 是 false，hook 却照常运行；VS Code 的工作区信任没有被关闭（用户设置里只有 `untrustedFiles: open`），没弹对话框的原因未明（可能是父目录已被信任）。官方文档"接受信任前不运行 settings 里的 hook"在这个宿主与配置下没有观察到。工具类 hook 在未信任目录里是否运行没能测（你只打开了目录，没发消息，也没有信任对话框可以拒绝）。
 - 对设计：项目级 hook 配置在新克隆的目录里随会话启动立即生效（利于"策略进仓库、克隆即生效"），反过来也意味着不可信仓库自带的 hook 也会在没有对话框的情况下运行——那是 Claude Code 与 VS Code 的问题，boundkeep 的 `doctor` 只需如实报告信任状态。
 - 未测：托管设置（`allowManagedHooksOnly`，需要管理员权限，不改机器级配置）、`CLAUDE_CONFIG_DIR`（换目录会丢登录态）、CLI 交互会话里的信任行为。
+
+## M0 补充（2026-10-08，Claude Code 2.1.292，Windows 11，CLI 引擎 `claude -p`，haiku；`scripts/smoke_claude.py`）
+
+M0 做完后用真实的 boundkeep（真常驻进程、`init` 写的 settings、真 hook 客户端）在真实 Claude Code 里跑了一遍。**版本说明**：这次 VS Code 扩展自带的 Claude Code 是 **2.1.292**，M0a 是 2.1.291，结论没有因版本不同而改变，但记录要分开。判断"命令有没有执行"用的是 Claude Code 自己输出流里的 `tool_result`（未报错且含标记才算执行了），不是模型的转述；冒烟的第一版曾用"副作用文件是否出现"来判断，那是空洞的检查（`-p` 下写文件命令会被 Claude Code 自己的权限系统拒绝，与 boundkeep 无关），所以改了。每一项都只有一次观察。
+
+- **E15 / E1（触发与理由回传）**：PreToolUse、UserPromptSubmit、ConfigChange 在这个版本的 CLI 引擎里都触发；canary 命令被拒绝，理由以工具错误的形式回到模型：`PreToolUse:PowerShell hook error: boundkeep: blocked (M0 canary rule: the command contains BOUNDKEEP_CANARY)`。
+- **E18（编码，正面证据）**：含中文与 ✓ 的命令（`Write-Output "你好 ✓ …"`）由真实 hook 进程（代码页 936、清除 `PYTHON*`）转发，常驻进程日志里的命令文本与原文逐字一致；命令正常执行。这是 M0a 的更正（文本模式会读成乱码）的反面：按字节读写没有这个问题。
+- **E8 / E6（常驻进程不在）**：常驻进程被杀后，PreToolUse hook 回答 `ask`，理由里写明 `boundkeep daemon is not running; start it with 'boundkeep serve'`；`-p` 下 `ask` 被自动拒绝，命令没有执行。
+- **E12（ConfigChange，真实实现）**：会话进行中，外部进程把 `{"disableAllHooks": true}` 写进 `.claude/settings.local.json`：ConfigChange hook 拒绝（日志 `local_decision=deny`，理由 `the change sets disableAllHooks`），**之后的命令仍然经过 PreToolUse 闸门**。另一次：会话中把 `settings.json` 的 `hooks` 整个清空（包括 ConfigChange 自己的条目），也被否决（理由 `boundkeep's UserPromptSubmit hook was removed or altered`），之后的命令仍然经过闸门——也就是 Claude Code 在评估这次变更时仍然运行了我们的 ConfigChange hook。VS Code 界面里未测。
+- **audit-only**：命令照常执行，日志里 `mode=audit-only`、`would_be=deny`。
+- **E19（命名管道，M0 实现）**：96 个并发的真实 hook 进程（32 个线程同时起），全部得到正确答案，日志里 96 条各不相同；守护进程被杀（模拟崩溃）后 hook 在 5 秒内降级为 `ask`，遗留的 pid 文件与已失效的锁不影响重启；第二个 `serve` 被拒绝；Ctrl+Break 能让守护进程清理退出。管道的 DACL 回读只有当前用户。**未测**：提升权限（UAC）令牌下的连接、杀毒软件干扰。
+
+## M0 手工验收补充（2026-10-08，Claude Code 2.1.292，VS Code 扩展与交互式 CLI，用户肉眼观察）
+
+均为单次或少数几次观察，细节见 `docs/manual-acceptance-m0.md`。
+
+- **ask 的理由不显示（两个宿主都是）**：hook 回答 `ask` 并带理由 `boundkeep daemon is not running; start it with 'boundkeep serve'`，两个宿主都弹出确认框，框里没有这句理由（VS Code 展开折叠箭头后也没有；CLI 三次一致）。这与 M0a 在 VS Code 里的观察一致，现在 CLI 里也确认了。设计含义：`ask` 的理由不能当作唯一的解释渠道；`deny` 的理由则会显示（A1、B1）。
+- **hook 配置在会话启动时固定**：把 settings 里 PreToolUse 的命令改坏后，同一会话里原来的 hook 仍然生效（canary 仍被拦），新会话才用新配置。与 E12 的 `disableAllHooks` 不同（那个在会话中改动立即生效）。所以"改坏 hook 路径"这类静默失效要到**下一个会话**才发作，`doctor` 要在那之前发现它。
+- **没有控制台窗口闪现**：VS Code 扩展里 `python.exe -I -S` 的写法执行命令时没有看到黑色窗口（一次目视观察，M0a 的同一结论）。`.exe` 启动器在 VS Code 里仍未测。
 
 ## 与官方文档的差异
 
