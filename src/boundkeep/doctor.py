@@ -14,6 +14,7 @@ import functools
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -110,15 +111,36 @@ def check_endpoint(home: str) -> tuple[list[Check], Endpoint | None]:
 def check_policy(home: str) -> list[Check]:
     path = paths.policy_file(home)
     try:
-        policy = load_policy(path)
+        policy = load_policy(path, home=os.path.expanduser("~"))
     except PolicyError as exc:
         return [
             Check("policy", FAIL, str(exc), f"fix {path} or delete it and run 'boundkeep init'")
         ]
-    detail = f"{path} (mode: {policy.mode})"
-    if policy.mode != "enforce":
-        return [Check("policy", WARN, detail, "run 'boundkeep mode enforce' to block again")]
-    return [Check("policy", OK, detail)]
+    detail = f"{path} (mode: {policy.mode}, {len(policy.rules)} rules)"
+    checks: list[Check] = []
+    if not policy.rules:
+        checks.append(
+            Check(
+                "policy",
+                WARN,
+                f"{detail}: the policy has no rules (an M0 policy file), so every shell command "
+                "asks for confirmation",
+                "run 'boundkeep init --reset-policy' (keeps a backup and your mode)",
+            )
+        )
+    elif policy.mode != "enforce":
+        checks.append(Check("policy", WARN, detail, "run 'boundkeep mode enforce' to block again"))
+    if policy.defaults.emit_allow:
+        checks.append(
+            Check(
+                "policy",
+                WARN,
+                "defaults.emit_allow is on: boundkeep tells Claude Code to run what the rules "
+                "allow without asking, which can be looser than your own permission settings",
+                "set emit_allow: false unless you want that",
+            )
+        )
+    return checks or [Check("policy", OK, detail)]
 
 
 def check_daemon(endpoint: Endpoint | None) -> list[Check]:
@@ -144,9 +166,59 @@ def check_daemon(endpoint: Endpoint | None) -> list[Check]:
     elapsed_ms = (time.monotonic() - started) * 1000
     status = WARN if "policy error" in response.reason else OK
     checks = [Check("daemon", status, f"running ({response.reason}); ping {elapsed_ms:.1f} ms")]
+    checks += check_config_dir(response.reason)
     if endpoint.transport == TRANSPORT_NAMED_PIPE and sys.platform == "win32":
         checks += _check_pipe_acl(endpoint)
     return checks
+
+
+_STATUS_CONFIG_DIR = re.compile(r"(?:^|; )config_dir=(.*?)(?:; policy error:|$)", re.DOTALL)
+
+
+def _daemon_config_dir(status: str) -> tuple[bool, str | None]:
+    """``(known, value)`` of CLAUDE_CONFIG_DIR in a daemon's ping text (old daemons: unknown)."""
+    found = _STATUS_CONFIG_DIR.search(status)
+    if found is None:
+        return False, None
+    value = found.group(1)
+    return True, None if value == "-" else value
+
+
+def check_config_dir(daemon_status: str) -> list[Check]:
+    """CLAUDE_CONFIG_DIR moves the Claude Code settings the daemon has to protect; it reads it from
+    its OWN environment, which may differ from the one Claude Code runs in (the hook client only
+    forwards CLAUDE_PROJECT_DIR)."""
+    mine = os.environ.get("CLAUDE_CONFIG_DIR") or None
+    known, theirs = _daemon_config_dir(daemon_status)
+    checks: list[Check] = []
+    if mine is not None:
+        checks.append(
+            Check(
+                "config-dir",
+                INFO,
+                f"CLAUDE_CONFIG_DIR is set in this environment ({mine}): start 'boundkeep serve' "
+                "with the same value, so that the settings files there are protected too",
+            )
+        )
+    if known and not _same_optional(mine, theirs):
+        checks.append(
+            Check(
+                "config-dir",
+                WARN,
+                f"the daemon sees CLAUDE_CONFIG_DIR={theirs or '(not set)'} but this environment "
+                f"has {mine or '(not set)'}: the settings files of the directory Claude Code "
+                "really uses may not be protected",
+                "stop the daemon and start it again from an environment with the same "
+                "CLAUDE_CONFIG_DIR as Claude Code's",
+            )
+        )
+    return checks
+
+
+def _same_optional(a: str | None, b: str | None) -> bool:
+    if a is None or b is None:
+        return a is None and b is None
+    return paths_same(a, b)
 
 
 def _check_pipe_acl(endpoint: Endpoint) -> list[Check]:
@@ -332,9 +404,50 @@ def _check_own_hooks(
                     name, FAIL, f"{path}: hook command {command}: {problem}", "run 'boundkeep init'"
                 )
             )
+    checks += _check_pinned_home(name, path, own)
     if not any(c.status in (FAIL, WARN) for c in checks):
         checks.append(Check(name, OK, f"{path}: all {len(present)} boundkeep hooks are in place"))
     return checks
+
+
+def _check_pinned_home(
+    name: str, path: str, own: list[tuple[str, str | None, dict[str, Any]]]
+) -> list[Check]:
+    """The hook must talk to the same home that ``boundkeep serve`` and this command use."""
+    current = paths.home_dir()
+    checks: list[Check] = []
+    unpinned = 0
+    for _event, _matcher, hook in own:
+        args = hook.get("args")
+        pinned = hookcmd.pinned_home(args) if isinstance(args, list) else None
+        if pinned is None:
+            unpinned += 1
+        elif not paths_same(pinned, current):
+            checks.append(
+                Check(
+                    name,
+                    FAIL,
+                    f"{path}: the hook is pinned to {pinned} but boundkeep uses {current}: the "
+                    "hook would talk to a daemon (or none) that is not the one you run",
+                    "run 'boundkeep init' again with the home you want",
+                )
+            )
+            break
+    if unpinned:
+        checks.append(
+            Check(
+                name,
+                WARN,
+                f"{path}: {unpinned} hook entries do not pin the boundkeep home (installed by "
+                "M0): a changed BOUNDKEEP_HOME or USERPROFILE could redirect them",
+                "run 'boundkeep init' again",
+            )
+        )
+    return checks
+
+
+def paths_same(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
 
 
 def check_hook_command_self_test(layers: list[Layer]) -> list[Check]:
@@ -355,7 +468,8 @@ def check_hook_command_self_test(layers: list[Layer]) -> list[Check]:
             continue  # reported above; do not try to launch what cannot start
         with tempfile.TemporaryDirectory(prefix="boundkeep-doctor-") as scratch:
             results = install.run_self_check(
-                install.HookCommand(command, base_args), env={**os.environ, paths.HOME_ENV: scratch}
+                install.HookCommand(command, hookcmd.with_home(base_args, scratch)),
+                env={**os.environ, paths.HOME_ENV: scratch},
             )
         bad = [r for r in results if not r.ok]
         if bad:

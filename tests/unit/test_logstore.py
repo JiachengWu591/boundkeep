@@ -752,3 +752,98 @@ def test_files_are_closed_after_every_append(log_path: str) -> None:
     os.remove(log_path)
     assert log.append({"a": 2})
     assert [r["a"] for r in log.tail()] == [2]
+
+
+# --------------------------------------------------------------------------------------------
+# Write-only appends (a read open costs 20-80 ms under real-time antivirus scanning)
+# --------------------------------------------------------------------------------------------
+
+
+def test_the_append_handle_is_write_only(log_path: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opening for read made every append cost tens of milliseconds under Windows Defender."""
+    real_open = logstore._open_append
+    readable: list[bool] = []
+
+    def spy(path: str) -> int:
+        fd = real_open(path)
+        try:
+            os.read(fd, 1)
+        except OSError:
+            readable.append(False)
+        else:
+            readable.append(True)
+        return fd
+
+    monkeypatch.setattr(logstore, "_open_append", spy)
+    log = AuditLog(log_path)
+    assert log.append({"i": 1})
+    assert log.append({"i": 2})
+    assert readable == [False, False]
+    assert [r["i"] for r in log.tail()] == [1, 2]
+
+
+def test_the_tail_of_the_file_is_checked_once_not_on_every_append(
+    log_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_check = logstore._ends_cleanly
+    checks: list[str] = []
+
+    def spy(path: str) -> bool:
+        checks.append(path)
+        return real_check(path)
+
+    monkeypatch.setattr(logstore, "_ends_cleanly", spy)
+    log = AuditLog(log_path, max_bytes=300, backups=2)
+    _fill(log, 3)
+    assert len(checks) == 1  # at the first append, never again
+    _fill(log, 30, start=3)
+    assert os.path.exists(log_path + ".1")  # rotated, so the new file was checked again
+    rotations = len([p for p in (log_path + ".1", log_path + ".2") if os.path.exists(p)])
+    assert rotations >= 1
+    assert 2 <= len(checks) < 30  # once per file, not once per append
+    assert read_ids(log_path + ".1")  # all lines intact
+
+
+def test_a_torn_last_line_from_a_crash_never_swallows_the_next_record(log_path: str) -> None:
+    os.makedirs(os.path.dirname(log_path))
+    with open(log_path, "wb") as handle:
+        handle.write(b'{"i":0}\n{"i":1,"pad":"half writ')  # a crash in the middle of a record
+    log = AuditLog(log_path)  # a new process: it has to look at the file once
+    _fill(log, 2, start=2)
+    assert [r["i"] for r in log.tail(10)] == [0, 2, 3]
+    lines = read_lines(log_path)
+    assert lines[1] == b'{"i":1,"pad":"half writ'
+    assert json.loads(lines[2])["i"] == 2
+
+
+def test_a_failed_write_makes_the_next_append_look_at_the_tail_again(
+    log_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_write = os.write
+    state = {"fail": False}
+
+    def torn_write(fd: int, data: Any) -> int:
+        if state["fail"]:
+            real_write(fd, bytes(data[:5]))  # a short write, then the disk is full
+            raise OSError(28, "No space left on device")
+        return real_write(fd, data)
+
+    log = AuditLog(log_path)
+    assert log.append({"i": 0})
+    monkeypatch.setattr(os, "write", torn_write)
+    state["fail"] = True
+    assert log.append({"i": 1}) is False
+    state["fail"] = False
+    assert log.append({"i": 2})
+    monkeypatch.undo()
+    assert [r["i"] for r in log.tail(10)] == [0, 2]
+
+
+def test_the_log_is_still_usable_when_the_file_is_deleted_and_after_purge(log_path: str) -> None:
+    log = AuditLog(log_path)
+    _fill(log, 2)
+    os.remove(log_path)
+    _fill(log, 1, start=2)
+    assert log.purge() == 1
+    _fill(log, 1, start=3)
+    assert read_ids(log_path) == [3]

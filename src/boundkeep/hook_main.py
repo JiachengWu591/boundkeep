@@ -68,6 +68,7 @@ ELIDE_KEYS = ("content", "new_string", "old_string", "new_source")
 MAX_ENTRY_TIMEOUT_S = 3600.0
 MAX_SETTINGS_BYTES = 4 * 1024 * 1024
 CONFIG_NOTIFY_BUDGET_S = 1.0
+MAX_PROJECT_DIR_CHARS = 4096
 
 _FALLBACK_ASK = (
     b'{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask",'
@@ -96,7 +97,7 @@ class _BadInput(Exception):
 
 
 def render_pre_decision(decision: str, reason: str) -> bytes:
-    """The PreToolUse hook output for ``ask`` or ``deny``; ASCII-only JSON built by json.dumps."""
+    """The PreToolUse hook output for ask, deny or allow: ASCII-only ``json.dumps`` output."""
     body = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -184,6 +185,23 @@ def _prepare_payload(event: dict[str, Any], raw_size: int) -> dict[str, Any]:
             size = raw_size
         if size > ELIDE_ABOVE_CHARS:
             out["tool_response"] = {"_elided_chars": size}
+    return out
+
+
+def _with_project_dir(payload: dict[str, Any]) -> dict[str, Any]:
+    """Add ``project_dir`` (from CLAUDE_PROJECT_DIR) to the forwarded payload.
+
+    The daemon needs the project root to decide "inside the project", and the event only carries
+    ``cwd``. This is the ONLY environment variable ever forwarded: the hook environment also holds
+    tokens (CLAUDE_CODE_MESSAGING_TOKEN), so nothing else may leave this process. The value is
+    ours to set: a ``project_dir`` key inside the event is overwritten (or dropped).
+    """
+    value = os.environ.get("CLAUDE_PROJECT_DIR")
+    out = dict(payload)
+    if value and len(value) <= MAX_PROJECT_DIR_CHARS:
+        out["project_dir"] = value
+    else:
+        out.pop("project_dir", None)
     return out
 
 
@@ -417,7 +435,7 @@ def process(sub: str | None, data: bytes, deadline: float) -> Outcome:
         return _handle_config(event, deadline)
     try:
         endpoint = ipc_endpoint.read_endpoint(paths.endpoint_file())
-        payload = _prepare_payload(event, len(data))
+        payload = _with_project_dir(_prepare_payload(event, len(data)))
         request_id = protocol.new_request_id()
         line = protocol.encode_request(kind, payload, request_id)
         response = protocol.decode_response(
@@ -516,6 +534,11 @@ def main(argv: list[str] | None = None, *, t0: float | None = None) -> int:
         if args == ["--version"]:
             _write_all(1, f"boundkeep-hook {__version__}\n".encode("ascii", "replace"))
             return 0
+        if len(args) >= 3 and args[0] == "--home":
+            # init pins the home it used into the hook command: the environment cannot redirect us.
+            if os.path.isabs(args[1]):
+                paths.pin_home(args[1])
+            args = args[2:]
         sub = args[0] if args else None
         hard_end = started + _budget_for(sub)
         deadline = hard_end - EXIT_RESERVE_S

@@ -29,7 +29,8 @@ from boundkeep.policy import (
     write_default_policy,
 )
 from boundkeep.policy import loader as loader_module
-from boundkeep.policy.schema import Defaults, Taint
+from boundkeep.policy.glob import compile_glob
+from boundkeep.policy.schema import Defaults, Taint, escape_glob_literal
 
 REPO_DEFAULT = Path(__file__).resolve().parents[2] / "policies" / "default.yaml"
 
@@ -615,8 +616,9 @@ def test_homoglyph_source_names_are_shown_escaped() -> None:
     assert str(err).isascii()
 
 
-def test_rules_key_is_unknown_in_m0() -> None:
-    fails("version: 1\nrules: []\n", "unknown key", "rules")
+def test_rules_key_is_valid_since_m1_and_a_misspelling_is_not() -> None:
+    assert parse_policy_text("version: 1\nrules: []\n").rules == ()
+    fails("version: 1\nrule: []\n", "unknown key", "rule")
 
 
 def test_missing_version() -> None:
@@ -749,7 +751,9 @@ def test_set_mode_keeps_crlf(tmp_path: Path) -> None:
 
 
 def test_set_mode_keeps_mixed_line_endings(tmp_path: Path) -> None:
-    text = "version: 1\r\nmode: enforce\n# tail\rdefaults: {}\n"
+    text = (
+        "version: 1\r\nmode: enforce\n# tail\r\ndefaults: {}\n"  # a lone CR is refused, see below
+    )
     path = write(tmp_path / "p.yaml", text)
     set_mode(path, "audit-only")
     assert Path(path).read_bytes() == text.replace("enforce", "audit-only").encode()
@@ -1095,9 +1099,9 @@ def test_default_policy_text_equals_the_repo_file_and_parses() -> None:
     assert policy.taint.sources == ("WebFetch", "WebSearch", "mcp__*")
 
 
-def test_default_file_has_exactly_the_four_keys() -> None:
+def test_default_file_has_the_four_m0_keys_plus_the_m1_ones() -> None:
     raw = yaml.safe_load(REPO_DEFAULT.read_bytes().decode("utf-8"))
-    assert set(raw) == {"version", "mode", "defaults", "taint"}
+    assert set(raw) == {"version", "mode", "defaults", "taint", "llm_audit", "rules", "tests"}
     assert set(raw["defaults"]) == {"emit_allow"}
     assert set(raw["taint"]) == {"sources"}
 
@@ -1395,3 +1399,57 @@ def test_arbitrary_sources_are_validated_without_other_exceptions(entries: list[
         return
     assert matcher
     assert "\n" not in matcher
+
+
+# --------------------------------------------------------------------------- review fixes (loader)
+
+
+def test_a_lone_carriage_return_is_refused_because_yaml_and_line_tools_disagree_on_it() -> None:
+    """PyYAML ends a comment at a lone CR, so a mode line could hide in a 'comment'."""
+    err = fails("version: 1\n# harmless note\rmode: audit-only\n", "U+000D", "carriage return")
+    assert err.line == 2
+    fails("version: 1\rmode: audit-only\n", "carriage return")
+    fails("version: 1\n\rmode: audit-only\n", "carriage return")
+    fails("version: 1\r\r\nmode: audit-only\n", "carriage return")
+    fails("version: 1\nmode: enforce\r", "carriage return")
+    assert parse_policy_text("version: 1\r\nmode: audit-only\r\n").mode == "audit-only"
+    assert parse_policy_text("version: 1\r\n\r\nmode: audit-only\r\n").mode == "audit-only"
+
+
+def test_a_lone_carriage_return_is_refused_when_loading_and_editing_a_file(tmp_path: Path) -> None:
+    text = "version: 1\n# note\rmode: audit-only\n"
+    path = write(tmp_path / "p.yaml", text)
+    with pytest.raises(PolicyError, match="carriage return"):
+        load_policy(path)
+    with pytest.raises(PolicyError, match="carriage return"):
+        set_mode(path, "enforce")
+    assert Path(path).read_bytes() == text.encode()
+
+
+_BACKSLASH_RULE = (
+    "version: 1\nrules:\n  - {id: r, action: deny, reason: x, match: {path_glob: ['~/.ssh/**']}}\n"
+)
+
+
+def test_a_posix_home_with_a_backslash_does_not_disable_the_policy() -> None:
+    """Linux allows a backslash in a directory name; the glob language has no escape for it."""
+    policy = parse_policy_text(_BACKSLASH_RULE, home="/home/we\\ird")
+    (pattern,) = policy.rules[0].match.path_glob or ()
+    glob = compile_glob(pattern)
+    assert glob.match("/home/we\\ird/.ssh/id_rsa")  # the real directory
+    assert glob.match("/home/we\\ird/.ssh")
+    assert not glob.match("/home/other/.ssh/id_rsa")
+    assert not glob.match("/home/we/ird/.ssh/id_rsa")  # a backslash is never a separator
+
+
+def test_a_home_ending_in_a_backslash_or_holding_glob_characters_is_literal() -> None:
+    policy = parse_policy_text(_BACKSLASH_RULE, home="/home/a\\b[c]*?")
+    (pattern,) = policy.rules[0].match.path_glob or ()
+    glob = compile_glob(pattern)
+    assert glob.match("/home/a\\b[c]*?/.ssh/x")
+    assert not glob.match("/home/a\\bcc/.ssh/x")
+
+
+def test_escape_glob_literal_neutralises_every_metacharacter() -> None:
+    assert escape_glob_literal("a*b?c[d\\e") == "a[*]b[?]c[[]d?e"
+    assert compile_glob(escape_glob_literal("/x/a*b?c[d\\e")).match("/x/a*b?c[d\\e")

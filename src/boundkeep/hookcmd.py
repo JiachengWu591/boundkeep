@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Sequence
 
 import boundkeep
 from boundkeep.install import HookCommand
@@ -31,6 +32,31 @@ STYLE_PYTHON = "python"
 STYLE_LAUNCHER = "launcher"
 _PROBE = "import sys; print(sys.version_info[0], sys.version_info[1])"
 _PROBE_TIMEOUT_S = 15.0
+
+
+HOME_FLAG = "--home"
+
+
+def pinned_home(args: Sequence[str]) -> str | None:
+    """The home directory pinned into a hook command's arguments, or None (an M0 install)."""
+    for index, arg in enumerate(args[:-1]):
+        if arg == HOME_FLAG and index + 1 < len(args) - 1:
+            return args[index + 1]
+    return None
+
+
+def with_home(base_args: Sequence[str], home: str) -> tuple[str, ...]:
+    """``base_args`` with ``--home <home>`` (replacing an earlier one); the subcommand follows."""
+    kept: list[str] = []
+    skip = 0
+    for index, arg in enumerate(base_args):
+        if skip:
+            skip -= 1
+        elif arg == HOME_FLAG and index + 1 < len(base_args):
+            skip = 1
+        else:
+            kept.append(arg)
+    return (*kept, HOME_FLAG, home)
 
 
 class HookCommandError(Exception):

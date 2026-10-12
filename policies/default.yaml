@@ -1,4 +1,23 @@
-# boundkeep policy. In M0 only the keys below exist; rules, tests and the full schema arrive in M1.
+# boundkeep default policy (schema version 1). Reference: PROJECT_SPEC.md section 8 and
+# docs/policy-reference.md.
+#
+# How a rule fires: an action (one tool call, or one simple command of a command line) is checked
+# against every rule; the strictest matching rule wins (deny > ask > allow). An action no rule
+# matches is "gray": with llm_audit.backend: none it becomes an ask. Fields inside `match` are
+# ANDed, entries of a list are ORed. path_glob is matched against the canonical path key
+# (forward slashes, case-insensitive, "~/" is your home directory); `access: write` also fires
+# when a path's access is unknown (the command may read or write it): possibly-a-match is a match.
+# A rule with path_glob and path_outside_project needs ONE path that is both. An allow rule never
+# matches a gray action or one behind sudo/env/nohup/... (wrappers).
+#
+# Path rules have no `tool:` filter on purpose: Read, Grep, Glob, Bash and the others all carry
+# paths, and a rule that names only some tools leaves the others a way around it. The credential
+# and persistence rules have no `platform:` filter either: their globs cannot match on a machine
+# that has no such path, and a Windows path seen from WSL (/mnt/c/Users/x) is matched by the
+# home-independent **/users/*/... patterns.
+#
+# Every rule below says why it exists. The reasons are about what the action can do, not about
+# any particular attack or data set.
 version: 1
 
 # enforce:    decisions are returned to Claude Code.
@@ -10,6 +29,680 @@ defaults:
   # your behalf (a hook "allow" skips Claude Code's own confirmation prompt).
   emit_allow: false
 
+llm_audit:
+  backend: none            # none | openai_compatible | anthropic (M3; none = gray actions ask)
+  timeout_ms: 4000
+  on_failure: ask          # ask | deny, never allow: a failing auditor must not wave things through
+  send_task_intent: true
+  cache_ttl_s: 600
+  # To use a backend, set `backend` and add its block, for example:
+  # openai_compatible:
+  #   base_url: https://llm.example.com/v1   # https only (plain http only for localhost)
+  #   model: your-model-name
+  #   api_key_env: BOUNDKEEP_LLM_API_KEY      # the NAME of an environment variable, never the key
+
 # Tools whose results mark the session as tainted (used from M3a). A name ending in "*" is a prefix.
 taint:
   sources: [WebFetch, WebSearch, "mcp__*"]
+
+rules:
+  # ---- protecting the guard itself -----------------------------------------------------------
+  - id: protect-guard-config
+    # If the agent can edit the hook registration or boundkeep's own files, every other rule can be
+    # switched off by the thing it is meant to constrain (including disableAllHooks). Writes to
+    # these paths are therefore refused outright, whichever tool performs them. Rules on paths
+    # have no `tool:` filter: whatever tool carries a path is covered.
+    match:
+      path_glob:
+        - "**/.claude/settings*.json"
+        - "**/.boundkeep/**"
+        - "~/.claude/settings*.json"
+      access: write
+    action: deny
+    reason: "writing hook settings or boundkeep's own files is not allowed"
+  - id: ask-agent-exec-config
+    # These files decide what Claude Code (or an MCP client) runs, or is told to do, next session:
+    # MCP servers, hook scripts, slash commands, sub-agents, skills and CLAUDE.md instructions.
+    # Changing them changes the agent's future behaviour outside this review, so a person should see the change.
+    match:
+      path_glob:
+        - "**/.mcp.json"
+        - "~/.claude.json"
+        - "**/.claude/hooks/**"
+        - "**/.claude/commands/**"
+        - "**/.claude/agents/**"
+        - "**/.claude/skills/**"
+        - "**/CLAUDE.md"
+        - "**/CLAUDE.local.md"
+      access: write
+    action: ask
+    reason: "this file configures what Claude Code will run or be told to do"
+  - id: ask-repo-exec-config
+    # Files inside a repository that run commands when someone does something ordinary: git hooks
+    # on commit and push, .envrc on cd (direnv), husky on commit, VS Code tasks/launch/settings
+    # when the folder is opened, workflow files on a CI server (with its secrets), a devcontainer
+    # on open. .git/config can name a program for git to run (core.sshCommand, aliases, filters).
+    # A line added there is code that runs later, outside this session, so a person should see it.
+    match:
+      path_glob:
+        - "**/.git/hooks/**"
+        - "**/.git/config"
+        - "**/.envrc"
+        - "**/.husky/**"
+        - "**/.vscode/tasks.json"
+        - "**/.vscode/settings.json"
+        - "**/.vscode/launch.json"
+        - "**/.github/workflows/**"
+        - "**/.devcontainer/**"
+      access: write
+    action: ask
+    reason: "this file makes git, an editor or CI run commands later"
+  - id: ask-user-config-write
+    # Per-user tool configuration that decides where code and credentials come from or go to: git
+    # (aliases and credential helpers run commands), npm and pip (registry and index URLs: a
+    # changed one serves different packages), netrc (credentials), the docker config (credential
+    # helpers). One edited line redirects every later install or push, so a person should see it.
+    match:
+      path_glob:
+        - "~/.gitconfig"
+        - "~/.config/git/config"
+        - "~/.npmrc"
+        - "~/.pypirc"
+        - "~/.config/pip/pip.conf"
+        - "~/.pip/pip.conf"
+        - "~/.netrc"
+        - "~/_netrc"
+        - "~/.docker/config.json"
+      access: write
+    action: ask
+    reason: "this file redirects where packages, credentials or commits go"
+  # ---- secrets and credentials (read) --------------------------------------------------------
+  - id: no-secret-read
+    # Environment files, private keys, certificates, Terraform state and variable files, service
+    # account keys, the shadow files and a process's environment exist to hold secrets; nothing the
+    # agent does in a coding task needs their contents, and anything it reads can end up in its
+    # context and from there in a prompt, a log or a network request. "**/.env" does not match
+    # .envrc or "xenv"; the ".env.*" variants do include templates such as .env.example. The
+    # rule has no `tool:` filter on purpose: Grep, Glob, Bash and the rest read files too, and a
+    # rule for Read alone would leave every one of them a way around it.
+    match:
+      path_glob:
+        - "**/.env"
+        - "**/.env.*"
+        - "**/.ssh/**"
+        - "**/*.pem"
+        - "**/*.key"
+        - "**/*.jks"
+        - "**/*.keystore"
+        - "**/*.tfstate*"
+        - "**/*.tfvars"
+        - "**/*.tfvars.json"
+        - "**/service-account*.json"
+        - "**/credentials.json"
+        - "/etc/shadow*"
+        - "/etc/gshadow*"
+        - "/etc/sudoers"
+        - "/etc/sudoers.d/**"
+        - "/etc/ssh/ssh_host_*"
+        - "/proc/*/environ"
+      access: read
+    action: deny
+    reason: "reading secrets and credential files is not allowed"
+  - id: no-credential-store-read
+    # Tool configuration files that cache tokens or passwords in plain text (cloud and container
+    # CLIs, package-registry auth, the git credential store and remote URLs with embedded tokens,
+    # database and S3 clients, password-manager and Vault state, GPG keyrings) and standalone
+    # private-key files. Same reasoning as no-secret-read: the content is the credential. Patterns
+    # start with **/ so another user's home (/root, /home/bob, a Windows drive mounted in WSL) is
+    # covered as well as this user's.
+    match:
+      path_glob:
+        - "**/.aws/**"
+        - "**/.azure/**"
+        - "**/.config/gcloud/**"
+        - "**/.config/gh/**"
+        - "**/.config/op/**"
+        - "**/.config/doctl/**"
+        - "**/.config/rclone/**"
+        - "**/rclone.conf"
+        - "**/.kube/config"
+        - "**/.docker/config.json"
+        - "**/.dockercfg"
+        - "**/.gnupg/**"
+        - "**/.git-credentials"
+        - "**/.gitconfig"
+        - "**/.git/config"
+        - "**/.netrc"
+        - "**/_netrc"
+        - "**/.npmrc"
+        - "**/.pypirc"
+        - "**/.pgpass"
+        - "**/.my.cnf"
+        - "**/.s3cfg"
+        - "**/.boto"
+        - "**/.vault-token"
+        - "**/.cargo/credentials*"
+        - "**/.gem/credentials"
+        - "**/.m2/settings.xml"
+        - "**/.terraform.d/credentials.tfrc.json"
+        - "**/appdata/roaming/github cli/**"
+        - "**/appdata/roaming/gcloud/**"
+        - "**/id_rsa"
+        - "**/id_dsa"
+        - "**/id_ecdsa"
+        - "**/id_ed25519"
+        - "**/*.p12"
+        - "**/*.pfx"
+        - "**/*.ppk"
+      access: read
+    action: deny
+    reason: "reading credential stores and private keys is not allowed"
+  - id: no-agent-state-read
+    # Claude Code's own state: the login credentials, the account file (which also holds MCP
+    # server settings and their tokens), session transcripts (everything every earlier session
+    # read, ran and printed, secrets included), prompt history, shell snapshots and the IDE lock
+    # files (they hold a connection token). An agent has no task that needs them.
+    match:
+      path_glob:
+        - "**/.claude/.credentials.json"
+        - "**/.claude.json"
+        - "**/.claude/projects/**"
+        - "**/.claude/history.jsonl"
+        - "**/.claude/shell-snapshots/**"
+        - "**/.claude/ide/**"
+      access: read
+    action: deny
+    reason: "reading Claude Code credentials, transcripts and session state is not allowed"
+  - id: no-history-read
+    # Shell, database and REPL history files record everything typed, including passwords given on
+    # a command line, connection strings and tokens in URLs. They are a collection of secrets in
+    # all but name.
+    match:
+      path_glob:
+        - "**/.bash_history"
+        - "**/.zsh_history"
+        - "**/.zhistory"
+        - "**/.sh_history"
+        - "**/.history"
+        - "**/.python_history"
+        - "**/.psql_history"
+        - "**/.mysql_history"
+        - "**/.sqlite_history"
+        - "**/.node_repl_history"
+        - "**/.irb_history"
+        - "**/.rediscli_history"
+        - "**/.local/share/fish/fish_history"
+        - "**/.zsh_sessions/**"
+        - "**/psreadline/consolehost_history.txt"
+      access: read
+    action: deny
+    reason: "reading shell and REPL history files is not allowed"
+  - id: no-windows-credential-read
+    # Windows keeps saved passwords, certificates and the keys that unlock them in per-user folders
+    # (Credential Manager, DPAPI master keys, the vault) and keeps the account database and
+    # registry hives under System32\config. Reading them hands over every saved login. No
+    # `platform:` filter: the home-independent patterns (**/users/*/...) also catch a Windows drive
+    # seen from WSL (/mnt/c/Users/x), and they cannot match on a pure Linux machine.
+    match:
+      path_glob:
+        - "~/AppData/Roaming/Microsoft/Credentials/**"
+        - "~/AppData/Local/Microsoft/Credentials/**"
+        - "~/AppData/Roaming/Microsoft/Protect/**"
+        - "~/AppData/Roaming/Microsoft/Vault/**"
+        - "~/AppData/Local/Microsoft/Vault/**"
+        - "~/NTUSER.DAT*"
+        - "**/users/*/appdata/roaming/microsoft/credentials/**"
+        - "**/users/*/appdata/local/microsoft/credentials/**"
+        - "**/users/*/appdata/roaming/microsoft/protect/**"
+        - "**/users/*/appdata/roaming/microsoft/vault/**"
+        - "**/users/*/appdata/local/microsoft/vault/**"
+        - "**/users/*/ntuser.dat*"
+        - "**/programdata/microsoft/crypto/**"
+        - "**/programdata/microsoft/vault/**"
+        - "**/windows/system32/config/**"
+        - "**/windows/repair/**"
+      access: read
+    action: deny
+    reason: "reading Windows credential stores is not allowed"
+  - id: no-browser-profile-read
+    # A browser profile holds saved passwords, cookies and session tokens (and the key that
+    # decrypts them is next to them): with those, an attacker is already logged in as the user.
+    # The Windows, Linux and macOS locations are all listed, with no `platform:` filter, so the same
+    # file is covered when it is reached from another system (WSL sees C:\Users\x as /mnt/c/Users/x).
+    match:
+      path_glob:
+        - "~/AppData/Local/Google/Chrome/User Data/**"
+        - "~/AppData/Local/Microsoft/Edge/User Data/**"
+        - "~/AppData/Local/BraveSoftware/Brave-Browser/User Data/**"
+        - "~/AppData/Local/Vivaldi/User Data/**"
+        - "~/AppData/Roaming/Opera Software/**"
+        - "~/AppData/Roaming/Mozilla/Firefox/Profiles/**"
+        - "**/users/*/appdata/local/google/chrome/user data/**"
+        - "**/users/*/appdata/local/microsoft/edge/user data/**"
+        - "**/users/*/appdata/local/bravesoftware/**"
+        - "**/users/*/appdata/local/vivaldi/**"
+        - "**/users/*/appdata/roaming/opera software/**"
+        - "**/users/*/appdata/roaming/mozilla/firefox/**"
+        - "~/.config/google-chrome/**"
+        - "~/.config/chromium/**"
+        - "~/.config/BraveSoftware/**"
+        - "~/.config/microsoft-edge/**"
+        - "~/.mozilla/firefox/**"
+        - "~/Library/Application Support/Google/Chrome/**"
+        - "~/Library/Application Support/Firefox/**"
+        - "~/Library/Application Support/Microsoft Edge/**"
+        - "~/Library/Safari/**"
+        - "~/Library/Cookies/**"
+        - "~/Library/Keychains/**"
+      access: read
+    action: deny
+    reason: "reading browser profiles, cookies and keychains is not allowed"
+  - id: no-raw-disk-access
+    # A raw disk or memory device is the whole machine's storage: writing it destroys every
+    # filesystem on it (dd of=/dev/sda, cat > /dev/sda, mkfs), and reading it exposes every file
+    # regardless of permissions. Ordinary devices (/dev/null, /dev/zero, ttys) are not listed.
+    match:
+      path_glob:
+        - "/dev/sd*"
+        - "/dev/hd*"
+        - "/dev/vd*"
+        - "/dev/xvd*"
+        - "/dev/nvme*"
+        - "/dev/mmcblk*"
+        - "/dev/loop*"
+        - "/dev/md*"
+        - "/dev/dm-*"
+        - "/dev/mapper/**"
+        - "/dev/disk*"
+        - "/dev/rdisk*"
+        - "/dev/mem"
+        - "/dev/kmem"
+        - "//./physicaldrive*"
+    action: deny
+    reason: "reading or writing a raw disk or memory device is not allowed"
+  # ---- persistence and remote access (write) -------------------------------------------------
+  - id: protect-windows-persistence
+    # Anything placed in a PowerShell profile or a Startup folder runs the next time the user logs
+    # in or opens a shell, with the user's rights and without anyone launching it. Writes need a person's eyes.
+    # Documents may be redirected by OneDrive: the **/documents/... patterns cover that, and
+    # the home-independent ones cover a Windows drive seen from WSL. [to be verified on a real
+    # OneDrive-redirected machine]
+    match:
+      path_glob:
+        - "~/Documents/WindowsPowerShell/**"
+        - "~/Documents/PowerShell/**"
+        - "~/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/**"
+        - "**/documents/windowspowershell/**"
+        - "**/documents/powershell/**"
+        - "**/appdata/roaming/microsoft/windows/start menu/programs/startup/**"
+        - "**/programdata/microsoft/windows/start menu/programs/startup/**"
+        - "**/windows/system32/windowspowershell/**"
+        - "**/program files/powershell/**"
+        - "**/windows/system32/tasks/**"
+        - "~/.config/powershell/**"
+      access: write
+    action: ask
+    reason: "writing a PowerShell profile, startup folder or scheduled-task file (persistence)"
+  - id: windows-persistence-commands
+    # Scheduled tasks, services and registry edits are the other ways to make code run at logon
+    # or boot without the user starting it. The command line is not parsed deeper than the
+    # program name, so read-only uses (reg query, sc query) ask as well. No `platform:` filter:
+    # WSL runs reg.exe and schtasks.exe through interop.
+    tool: [Bash, PowerShell]
+    match:
+      program:
+        - schtasks
+        - schtasks.exe
+        - Register-ScheduledTask
+        - New-Service
+        - sc
+        - sc.exe
+        - reg
+        - reg.exe
+        - regedit
+        - regedit.exe
+        - bcdedit
+    action: ask
+    reason: "scheduled tasks, services and registry edits can run code at logon or boot"
+  - id: protect-shell-startup-files
+    # Shell startup files, autostart entries, user services, launch agents and directories early in
+    # PATH (~/.local/bin, ~/bin) run on every login or new shell, or in place of a real program. A
+    # line or a file added there is code that survives the session, so writes ask.
+    match:
+      path_glob:
+        - "~/.bashrc"
+        - "~/.bash_profile"
+        - "~/.bash_login"
+        - "~/.bash_logout"
+        - "~/.profile"
+        - "~/.zshrc"
+        - "~/.zshenv"
+        - "~/.zprofile"
+        - "~/.zlogin"
+        - "~/.zlogout"
+        - "~/.xprofile"
+        - "~/.xinitrc"
+        - "~/.pam_environment"
+        - "~/.config/fish/config.fish"
+        - "~/.config/fish/conf.d/**"
+        - "~/.config/autostart/**"
+        - "~/.config/systemd/user/**"
+        - "~/.config/environment.d/**"
+        - "~/Library/LaunchAgents/**"
+        - "~/.local/bin/**"
+        - "~/bin/**"
+      access: write
+    action: ask
+    reason: "writing a shell startup file, autostart entry or PATH directory (persistence)"
+  - id: ask-system-config-write
+    # System configuration (/etc: profile scripts, cron, systemd, sudoers, ld.so.preload; launch
+    # daemons; cron spool; /usr/local/bin; the boot partition) changes every user's machine and
+    # survives reboots. It normally needs root, so a write that gets this far is either a mistake
+    # or something a person should confirm.
+    match:
+      path_glob:
+        - "/etc/**"
+        - "/Library/LaunchDaemons/**"
+        - "/Library/LaunchAgents/**"
+        - "/var/spool/cron/**"
+        - "/usr/local/bin/**"
+        - "/usr/local/sbin/**"
+        - "/boot/**"
+      access: write
+    action: ask
+    reason: "writing system configuration (/etc, launch daemons, cron) affects the whole machine"
+  - id: ask-scheduled-jobs
+    # cron, at and systemd timers run commands later, unattended, so what they run is not what was
+    # reviewed now.
+    tool: [Bash, PowerShell]
+    match:
+      program:
+        - crontab
+        - at
+        - batch
+        - anacron
+        - systemd-run
+    action: ask
+    reason: "scheduling a job runs code later without review"
+  - id: ask-user-services
+    # `systemctl --user enable` and `launchctl load` register a program to start at every login or
+    # boot without anyone launching it: the same persistence as an autostart file, through a
+    # service manager.
+    tool: [Bash, PowerShell]
+    match:
+      program: [systemctl]
+      flags_any: ["--user"]
+    action: ask
+    reason: "enabling or starting a service registers code to run at login or boot"
+  - id: ask-launchctl
+    # launchctl load, bootstrap and submit register a launch agent or daemon: code that starts at
+    # login or boot on macOS without anyone launching it.
+    tool: [Bash, PowerShell]
+    match:
+      program: [launchctl]
+    action: ask
+    reason: "launchctl registers code to run at login or boot"
+  - id: ask-ssh-write
+    # authorized_keys grants remote login, config can redirect connections through another
+    # host, known_hosts can hide a changed server. Writing here changes who can log in, or where.
+    match:
+      path_glob:
+        - "**/.ssh/**"
+      access: write
+    action: ask
+    reason: "writing under .ssh changes who can log in or where connections go"
+  - id: ask-privilege-escalation
+    # su, sudo, doas and pkexec run what follows with other users' rights (usually root). Where the
+    # parser can see through sudo/doas the inner command is reviewed on its own; this rule catches
+    # the forms it cannot (su, an interactive shell, an unknown option) so they never pass quietly.
+    tool: [Bash, PowerShell]
+    match:
+      program:
+        - su
+        - sudo
+        - doas
+        - pkexec
+        - runas
+        - gsudo
+    action: ask
+    reason: "running a command with other users' privileges needs confirmation"
+  # ---- destructive and outward-facing commands -----------------------------------------------
+  - id: rm-outside-project
+    # Deleting recursively is the one file operation that cannot be undone and whose blast radius
+    # is chosen by a path. Inside the project it is routine (build output, caches) and a
+    # version-controlled tree is recoverable; outside it nothing recovers it. A path that cannot
+    # be shown to be inside counts as outside.
+    tool: [Bash, PowerShell]
+    match:
+      program: [rm, Remove-Item]     # PowerShell aliases (rm, del, ri) are restored to Remove-Item
+      flags_any: ["-r", "-R", "-rf", "-fr", "--recursive", "-Recurse"]
+      path_outside_project: true
+    action: deny
+    reason: "recursive delete of paths outside the project"
+  - id: ask-delete-outside-project
+    # A non-recursive delete outside the project is smaller but equally unrecoverable (a single
+    # file, or an empty directory); a person should confirm it.
+    tool: [Bash, PowerShell]
+    match:
+      program: [rm, rmdir, unlink, shred, Remove-Item]
+      path_outside_project: true
+    action: ask
+    reason: "delete of paths outside the project"
+  - id: git-force-push
+    # A forced push, a mirror push or a remote-branch delete rewrites or removes history that
+    # other people (and the remote's backups) rely on, and cannot be undone from the local side.
+    tool: [Bash, PowerShell]
+    match:
+      program: git
+      subcommand: push
+      flags_any:
+        - "--force"
+        - "-f"
+        - "--force-with-lease"
+        - "--force-if-includes"
+        - "--mirror"
+        - "--delete"
+        - "-d"
+    action: ask
+    reason: "force push, mirror push or remote branch delete needs confirmation"
+  - id: ask-git-reset-hard
+    # `git reset --hard` throws away every uncommitted change in the working tree and index; the
+    # only copy of that work is gone (committed work stays in the reflog).
+    tool: [Bash, PowerShell]
+    match:
+      program: git
+      subcommand: reset
+      flags_any: ["--hard"]
+    action: ask
+    reason: "git reset --hard discards uncommitted work"
+  - id: ask-git-clean-force
+    # `git clean -f` deletes untracked files (new work not yet added, local configuration): they
+    # are in no commit, so nothing recovers them. Without -f git refuses to delete anything.
+    tool: [Bash, PowerShell]
+    match:
+      program: git
+      subcommand: clean
+      flags_any: ["-f", "--force"]
+    action: ask
+    reason: "git clean -f deletes untracked files for good"
+  - id: ask-git-discard-paths
+    # `git checkout -- <path>`, `git checkout .` and `git restore <path>` overwrite working-tree
+    # files with the committed version: uncommitted edits to them are lost. Only forms that name a
+    # path match (`git checkout main` switches branches and names none).
+    tool: [Bash, PowerShell]
+    match:
+      program: git
+      subcommand: checkout
+      path_glob: ["**"]
+      access: write
+    action: ask
+    reason: "git checkout/restore of paths discards uncommitted edits"
+  - id: ask-git-branch-force-delete
+    # `git branch -D` deletes a branch whether or not it was merged: commits only that branch
+    # holds become unreachable (recoverable from the reflog for a while, then gone).
+    tool: [Bash, PowerShell]
+    match:
+      program: git
+      subcommand: branch
+      flags_any: ["-D"]
+    action: ask
+    reason: "git branch -D deletes unmerged work"
+  - id: ask-git-rewrite-history
+    # filter-branch and filter-repo rewrite every commit of a history: the old objects survive only
+    # in the reflog, and anyone who cloned has history that no longer matches.
+    tool: [Bash, PowerShell]
+    match:
+      program: git
+      subcommand: [filter-branch, filter-repo]
+    action: ask
+    reason: "rewriting the whole history needs confirmation"
+  - id: ask-docker-prune
+    # `docker system prune` (and image, volume, container prune) deletes stopped containers, unused
+    # images, networks and, with a flag, volumes: data that lives only in a volume is lost.
+    tool: [Bash, PowerShell]
+    match:
+      program: docker
+      subcommand: prune
+    action: ask
+    reason: "docker prune deletes containers, images or volumes"
+  - id: ask-find-delete
+    # `find ... -delete` removes every match without a prompt or a trash can, and a wrong
+    # expression or a wrong starting directory removes far more than intended. Outside the project (or
+    # where that cannot be shown) it asks; inside, a cleanup such as *.pyc is routine.
+    tool: [Bash, PowerShell]
+    match:
+      program: find
+      flags_any: ["-delete"]
+      path_glob: ["**"]
+      access: write
+      path_outside_project: true
+    action: ask
+    reason: "find -delete removes everything it matches"
+  - id: ask-disk-tools
+    # Formatting, partitioning and wiping tools destroy a filesystem or a partition table in one
+    # command. The raw-device rule above already refuses named devices; this one catches the tool
+    # itself (mkfs on an image file, a variable that expands to a device, diskpart scripts).
+    tool: [Bash, PowerShell]
+    match:
+      program:
+        - mkfs
+        - mkfs.ext2
+        - mkfs.ext3
+        - mkfs.ext4
+        - mkfs.xfs
+        - mkfs.btrfs
+        - mkfs.vfat
+        - mkfs.fat
+        - mkfs.ntfs
+        - mkfs.exfat
+        - mke2fs
+        - mkswap
+        - wipefs
+        - fdisk
+        - sfdisk
+        - gdisk
+        - sgdisk
+        - parted
+        - diskpart
+        - Format-Volume
+        - Clear-Disk
+        - Initialize-Disk
+        - Remove-Partition
+    action: ask
+    reason: "formatting and partitioning tools destroy filesystems"
+  - id: ask-recursive-permission-change
+    # chmod -R, chown -R and chgrp -R rewrite the permissions of a whole tree. In the project that
+    # is a (visible, version-controlled) mistake; outside it, on /etc, /usr or the home directory,
+    # it can lock the user out or open every file to everyone. A path not shown to be inside the project counts as outside.
+    tool: [Bash, PowerShell]
+    match:
+      program: [chmod, chown, chgrp]
+      flags_any: ["-R", "--recursive"]
+      path_outside_project: true
+    action: ask
+    reason: "recursive permission or ownership change needs confirmation"
+  # ---- network -------------------------------------------------------------------------------
+  - id: net-allowlist
+    # Anything that talks to a host outside a short list can carry data out (an upload, a query
+    # string, a clone of a hostile repository) or bring code in. The list holds the package and
+    # source hosts a coding task usually needs; everything else asks, and so does a network
+    # command whose destination could not be determined.
+    match:
+      network: true
+      domain_not_in: ["pypi.org", "files.pythonhosted.org", "github.com", "registry.npmjs.org"]
+    action: ask
+    reason: "network access to a host outside the allowlist"
+  # ---- the only allow rule -------------------------------------------------------------------
+  - id: read-inside-project
+    # Reading files the project already contains is what a coding assistant is for. Allowed only
+    # when every path is shown to be inside the project; a deny or ask rule above still wins. An
+    # allow rule never matches an action with wrappers (sudo, env, nohup ...) or a gray one.
+    tool: [Read, Glob, Grep]
+    match:
+      path_inside_project: true
+    action: allow
+
+# Regression tests, run by `boundkeep test` through the whole pipeline (normalizer included).
+# `expect: gray` means "the rule layer must not decide": it guards against rules that are too broad.
+tests:
+  - { tool: Bash,  input: { command: "rm -rf /" },                    expect: deny }
+  - { tool: Read,  input: { file_path: "~/.ssh/id_rsa" },             expect: deny }
+  - { tool: Bash,  input: { command: "git push --force origin main" }, expect: ask }
+  - { tool: Bash,  input: { command: "pytest -q" },                   expect: gray }   # no rule matches: gray area
+  - { tool: Read,  input: { file_path: "./src/app.py" },              expect: allow }
+  - { tool: Read,       platform: [windows], input: { file_path: "~\\.SSH\\id_rsa" },                  expect: deny }   # backslashes and case variants
+  # M1b (PowerShell normalization) will make the next case deny. Until then every PowerShell
+  # command is gray, and this test pins that.
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-Item -Recurse -Force C:\\" }, expect: gray }   # M1b: deny
+  # Secrets and credentials, through every tool that carries a path.
+  - { tool: Read,  input: { file_path: "~/.aws/credentials" },        expect: deny }
+  - { tool: Bash,  input: { command: "cat ~/.ssh/id_ed25519" },       expect: deny }
+  - { tool: Bash,  input: { command: "cat ~/.config/gh/hosts.yml" },  expect: deny }
+  - { tool: Grep,  input: { pattern: ".", path: ".env" },             expect: deny }   # Grep must not be a way around Read
+  - { tool: Grep,  input: { pattern: ".", path: "~/.ssh" },           expect: deny }
+  - { tool: Glob,  input: { pattern: "~/.ssh/*" },                    expect: deny }
+  - { tool: Read,  input: { file_path: "~/.claude/.credentials.json" }, expect: deny }
+  - { tool: Read,  input: { file_path: "~/.claude/projects/p/s.jsonl" }, expect: deny }
+  - { tool: Bash,  input: { command: "cat ~/.bash_history" },         expect: deny }
+  - { tool: Bash,  input: { command: "cat ~/.git-credentials" },      expect: deny }
+  - { tool: Read,  input: { file_path: "infra/terraform.tfstate" },   expect: deny }
+  - { tool: Read,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/.env" },        expect: deny }
+  - { tool: Read,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/certs/a.pem" }, expect: deny }
+  - { tool: Read,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/.envrc" },      expect: allow }   # not an env file
+  - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "cat .envrc" },                    expect: gray }
+  - { tool: Read,  platform: [posix], input: { file_path: "/etc/shadow" },                  expect: deny }
+  - { tool: Read,  platform: [windows], input: { file_path: "~\\AppData\\Roaming\\Microsoft\\Credentials\\ABCDEF" }, expect: deny }
+  - { tool: Read,  platform: [windows], input: { file_path: "~\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data" }, expect: deny }
+  # A Windows drive seen from a POSIX host (WSL): the home-independent patterns catch it.
+  - { tool: Bash,  input: { command: "cat /mnt/c/Users/someone/.ssh/config" }, expect: deny }
+  - { tool: Bash,  input: { command: "cat /mnt/c/Users/someone/AppData/Roaming/Microsoft/Credentials/X" }, expect: deny }
+  # The guard's own files.
+  - { tool: Write, platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/.claude/settings.json", content: "{}" }, expect: deny }
+  - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "echo {} > .claude/settings.local.json" }, expect: deny }
+  - { tool: Write, platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/.claude/settings.json.bak", content: "x" }, expect: gray }   # not a settings*.json file
+  # Persistence and configuration that makes code run later.
+  - { tool: Bash,  input: { command: "echo 'x' >> ~/.bashrc" },       expect: ask }
+  - { tool: Write, platform: [windows], input: { file_path: "~\\Documents\\WindowsPowerShell\\profile.ps1", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".git/hooks/pre-commit", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".github/workflows/ci.yml", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "CLAUDE.md", content: "x" },   expect: ask }
+  - { tool: Write, input: { file_path: "~/.gitconfig", content: "x" }, expect: ask }
+  - { tool: Bash,  input: { command: "systemctl --user enable --now foo" }, expect: ask }
+  - { tool: Bash,  input: { command: "launchctl load ~/Library/LaunchAgents/x.plist" }, expect: ask }
+  # Destructive and network commands.
+  - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "rm -rf ../other" },  expect: deny }
+  - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "rm -rf build" },     expect: gray }
+  - { tool: Bash,  input: { command: "git reset --hard HEAD~1" },     expect: ask }
+  - { tool: Bash,  input: { command: "git clean -fd" },               expect: ask }
+  - { tool: Bash,  input: { command: "git branch -D topic" },         expect: ask }
+  - { tool: Bash,  input: { command: "git status" },                  expect: gray }
+  - { tool: Bash,  platform: [posix], input: { command: "dd if=/dev/zero of=/dev/sda" }, expect: deny }
+  - { tool: Bash,  input: { command: "docker system prune -af" },     expect: ask }
+  # A network command whose destination is a remote name (origin), not a URL, goes where the
+  # tool's own config says: unknown, so it asks like a host outside the allowlist.
+  - { tool: Bash,  input: { command: "git push origin main" },        expect: ask  }
+  - { tool: Bash,  input: { command: "git push --force-with-lease" }, expect: ask }
+  - { tool: Bash,  input: { command: "curl https://evil.example/x" }, expect: ask }
+  - { tool: Bash,  input: { command: "curl https://github.com/o/r" }, expect: gray }
+  - { tool: WebFetch, input: { url: "https://evilgithub.com/x", prompt: "p" }, expect: ask }   # a look-alike is not github.com
+  - { tool: Bash,  input: { command: "echo BOUNDKEEP_CANARY" },       expect: deny }   # the built-in canary rule

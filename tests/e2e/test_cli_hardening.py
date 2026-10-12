@@ -144,3 +144,33 @@ def test_the_hardened_init_is_still_idempotent(machine: Machine) -> None:
     assert again.returncode == 0
     assert "already installed" in again.stdout
     assert machine.settings.read_bytes() == first
+
+
+def test_init_pins_the_home_into_every_hook_entry(machine: Machine) -> None:
+    assert machine.init().returncode == 0
+    settings = json.loads(machine.settings.read_text(encoding="utf-8"))
+    for event, groups in settings["hooks"].items():
+        args = groups[0]["hooks"][0]["args"]
+        assert args[-3:-1] == ["--home", str(machine.home)], (event, args)
+        assert args[-1] in ("prompt", "pre", "post", "config")
+
+
+def test_doctor_warns_for_an_m0_install_without_a_pinned_home_and_fails_on_a_mismatch(
+    machine: Machine,
+) -> None:
+    assert machine.init().returncode == 0
+    settings = json.loads(machine.settings.read_text(encoding="utf-8"))
+    for groups in settings["hooks"].values():
+        args = groups[0]["hooks"][0]["args"]
+        i = args.index("--home")
+        del args[i : i + 2]  # what an M0 installation looked like
+    machine.settings.write_text(json.dumps(settings), encoding="utf-8")
+    unpinned = machine.cli("doctor", "--project-dir", str(machine.project), "--json")
+    assert "do not pin the boundkeep home" in unpinned.stdout
+    settings = json.loads(machine.settings.read_text(encoding="utf-8"))
+    for groups in settings["hooks"].values():
+        args = groups[0]["hooks"][0]["args"]
+        args[-1:-1] = ["--home", str(machine.root / "another-home")]
+    machine.settings.write_text(json.dumps(settings), encoding="utf-8")
+    mismatch = machine.cli("doctor", "--project-dir", str(machine.project), "--json")
+    assert "is pinned to" in mismatch.stdout

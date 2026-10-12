@@ -10,7 +10,7 @@ Request (client -> daemon), one line::
 
 Response (daemon -> client), one line::
 
-    {"v":1,"id":"<hex>","ok":true,"decision":"deny|ask|none","reason":"..."}
+    {"v":1,"id":"<hex>","ok":true,"decision":"deny|ask|allow|none","reason":"..."}
     {"v":1,"id":"<hex>","ok":false,"error":"<code>","detail":"..."}
 
 ``decision`` is abstract: the client owns the Claude Code output format (so everything it prints
@@ -48,8 +48,11 @@ EVENTS = HOOK_EVENTS | {EVENT_PING}
 
 DECISION_DENY = "deny"
 DECISION_ASK = "ask"
+# "allow" is only sent when the policy sets defaults.emit_allow (off by default). An older client
+# that does not know it fails the strict response check and degrades to ask: the safe direction.
+DECISION_ALLOW = "allow"
 DECISION_NONE = "none"
-DECISIONS = frozenset({DECISION_DENY, DECISION_ASK, DECISION_NONE})
+DECISIONS = frozenset({DECISION_DENY, DECISION_ASK, DECISION_ALLOW, DECISION_NONE})
 
 ERR_BAD_REQUEST = "bad_request"
 ERR_TOO_LARGE = "too_large"

@@ -156,7 +156,7 @@ _FAILURES: list[tuple[str, dict[str, Any], str]] = [
     ("wrong-id", {"raw": b'{"v":1,"id":"zzz","ok":true,"decision":"none","reason":""}'}, "invalid"),
     (
         "allow-is-not-a-decision",
-        {"raw": b'{"v":1,"id":"x","ok":true,"decision":"allow"}'},
+        {"raw": b'{"v":1,"id":"x","ok":true,"decision":"approve"}'},
         "invalid",
     ),
 ]
@@ -871,3 +871,35 @@ def test_budgets_stay_below_the_timeouts_that_init_writes() -> None:
 
 def test_the_env_override_name_is_not_inherited_from_the_developer_shell() -> None:
     assert "BOUNDKEEP_HOOK_BUDGET_S" not in os.environ
+
+
+def test_only_the_project_dir_variable_is_forwarded_and_it_cannot_be_spoofed(
+    fake_daemon: Callable[..., list[bytes]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent = fake_daemon("none")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "E:\\proj")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "secret-token-value")
+    event = dict(PRE_EVENT, project_dir="C:\\evil")  # an event cannot set it
+    hc.process("pre", _bytes(event), _deadline())
+    payload = json.loads(sent[0])["payload"]
+    assert payload["project_dir"] == "E:\\proj"
+    assert "secret-token-value" not in sent[0].decode("ascii")
+
+
+def test_no_project_dir_variable_means_no_project_dir_field(
+    fake_daemon: Callable[..., list[bytes]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent = fake_daemon("none")
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    hc.process("pre", _bytes(dict(PRE_EVENT, project_dir="C:\\evil")), _deadline())
+    assert "project_dir" not in json.loads(sent[0])["payload"]
+
+
+def test_an_allow_decision_from_the_daemon_is_rendered_as_an_explicit_allow(
+    fake_daemon: Callable[..., list[bytes]],
+) -> None:
+    fake_daemon("allow", reason="rule x says fine")
+    out = hc.process("pre", _bytes(PRE_EVENT), _deadline())
+    decision = _decision_json(out)
+    assert decision["permissionDecision"] == "allow"
+    assert decision["permissionDecisionReason"] == "rule x says fine"

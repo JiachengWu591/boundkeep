@@ -144,3 +144,20 @@ def test_purge_reports_what_it_could_not_remove(tmp_path: Path) -> None:
         held.close()
     assert log.purge() >= 1
     assert not os.path.exists(path + ".1")
+
+
+def test_an_append_is_cheap_because_the_handle_asks_for_no_read_access(tmp_path: Path) -> None:
+    """Read access on the append handle cost 20-80 ms per open under Defender real-time scans
+    (measured on the development machine); write-only costs well under a millisecond. The bound
+    is loose on purpose: it catches the regression, not the scheduler."""
+    import time
+
+    log = AuditLog(str(tmp_path / "audit.jsonl"), max_bytes=100_000_000)
+    _fill(log, 0, 5)
+    samples = []
+    for i in range(5, 105):
+        started = time.perf_counter()
+        assert log.append({"i": i, "pad": "p" * 700})
+        samples.append((time.perf_counter() - started) * 1000)
+    samples.sort()
+    assert samples[50] < 10.0, f"median append {samples[50]:.2f} ms"

@@ -1,5 +1,9 @@
 """Real Claude Code smoke test of the M0 path (observation only; it is NOT an audit backend).
 
+Since M1 the default policy asks for every PowerShell command (it is not parsed until M1b), so the
+'allowed' scenario runs in audit-only mode (the hooks still fire and log, nothing is returned to
+Claude Code); the M1 rules are exercised by scripts/smoke_claude_m1.py.
+
 Runs a handful of tiny ``claude -p`` sessions (cheap model, a few cents in total) in a throwaway
 directory against a throwaway boundkeep home, with a real daemon, and checks what Claude Code
 actually did: whether a command ran is decided from the TOOL RESULTS in Claude Code's own output
@@ -239,6 +243,7 @@ def main():
     try:
         # ---- canary ----------------------------------------------------------------------
         print("\n[allowed] a normal command and a Chinese one must run; the log must hold the text")
+        lab.cli("mode", "audit-only")  # M1: PowerShell commands would ask under the default policy
         cn_marker = "BK_CN_MARK"
         result = run_claude(
             lab, a.claude,
@@ -256,6 +261,7 @@ def main():
         )
         report.check("allowed", "the Chinese command ran", ran(results, cn_marker))
         logged = [str(r.get("command")) for r in lab.records() if r.get("event") == "pre"]
+        lab.cli("mode", "enforce")
         report.check(
             "allowed", "the log holds the Chinese command text exactly",
             any(f"你好 ✓ {cn_marker}" in c for c in logged), "(real host, code page 936)",

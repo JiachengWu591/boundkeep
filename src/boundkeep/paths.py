@@ -22,9 +22,21 @@ import os
 
 HOME_ENV = "BOUNDKEEP_HOME"
 
+_home_pinned: str | None = None
+
+
+def pin_home(path: str | None) -> None:
+    """Make ``home_dir`` return ``path`` whatever the environment says (the hook client does this
+    with the ``--home`` argument that ``init`` wrote into the hook command, so a changed
+    environment cannot point it at another daemon)."""
+    global _home_pinned
+    _home_pinned = path
+
 
 def home_dir() -> str:
     """The boundkeep home directory (not created here). ``~/.boundkeep`` unless overridden."""
+    if _home_pinned:
+        return _home_pinned
     override = os.environ.get(HOME_ENV)
     if override:
         return os.path.abspath(override)

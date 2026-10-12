@@ -425,3 +425,42 @@ def test_the_import_failure_answer_is_the_same_as_the_internal_error_answer() ->
     from boundkeep import hook_client, hook_main
 
     assert hook_client._ASK == hook_main._FALLBACK_ASK
+
+
+def test_a_pinned_home_beats_the_environment(
+    fixture_bytes: Any, tmp_path: Path, hook_env: dict[str, str]
+) -> None:
+    """--home in the hook command wins over BOUNDKEEP_HOME: the environment cannot redirect it."""
+    pinned = tmp_path / "pinned-home"
+    pinned.mkdir()
+    # The pinned home has an endpoint (nobody listens: "not running"); the env home has none.
+    endpoint = ipc_endpoint.new_endpoint(str(pinned))
+    ipc_endpoint.write_endpoint(str(pinned / "endpoint.json"), endpoint)
+    argv = [sys.executable, "-I", "-S", str(HOOK), "--home", str(pinned), "pre"]
+    proc = subprocess.run(
+        argv,
+        input=fixture_bytes("PreToolUse__PowerShell"),
+        capture_output=True,
+        env=hook_env,  # BOUNDKEEP_HOME points at an empty directory
+        timeout=30,
+        check=False,
+    )
+    reason = decision_of(proc)["permissionDecisionReason"]
+    assert "not running" in reason  # it read the pinned home's endpoint, not the environment's
+
+
+def test_a_relative_pinned_home_is_ignored(
+    fixture_bytes: Any, tmp_path: Path, hook_env: dict[str, str]
+) -> None:
+    argv = [sys.executable, "-I", "-S", str(HOOK), "--home", "relative-dir", "pre"]
+    proc = subprocess.run(
+        argv,
+        input=fixture_bytes("PreToolUse__PowerShell"),
+        capture_output=True,
+        env=hook_env,
+        timeout=30,
+        check=False,
+    )
+    assert (
+        "boundkeep init" in decision_of(proc)["permissionDecisionReason"]
+    )  # env home, no endpoint

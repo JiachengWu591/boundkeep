@@ -161,3 +161,21 @@ def test_command_problems_checks_the_script_too(tmp_path: Path) -> None:
     assert any("hook script" in p and "does not exist" in p for p in problems)
     script = make_file(tmp_path, "boundkeep2", "hook_client.py", content=b"pass\n")
     assert hookcmd.command_problems(BASE_PYTHON, ["-I", "-S", script, "pre"]) == []
+
+
+def test_with_home_appends_and_replaces_the_pinned_home() -> None:
+    base = ("-I", "-S", "hook_client.py")
+    pinned = hookcmd.with_home(base, "C:\\h1")
+    assert pinned == (*base, "--home", "C:\\h1")
+    assert hookcmd.with_home(pinned, "C:\\h2") == (
+        *base,
+        "--home",
+        "C:\\h2",
+    )  # replaced, not stacked
+
+
+def test_pinned_home_reads_the_value_before_the_subcommand() -> None:
+    assert hookcmd.pinned_home(["-I", "-S", "x.py", "--home", "C:\\h", "pre"]) == "C:\\h"
+    assert hookcmd.pinned_home(["-I", "-S", "x.py", "pre"]) is None
+    assert hookcmd.pinned_home(["-I", "-S", "x.py", "--home", "pre"]) is None  # no value
+    assert hookcmd.pinned_home([]) is None

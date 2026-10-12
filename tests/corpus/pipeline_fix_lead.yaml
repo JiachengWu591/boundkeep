@@ -1,0 +1,5 @@
+# Entries added while integrating the review fixes (Grep's glob parameter).
+- {id: grep-glob-names-env, tool: Grep, input: {pattern: KEY, path: ".", glob: ".env"}, expect: deny, adv: true}
+- {id: grep-glob-names-pem-recursive, tool: Grep, input: {pattern: x, glob: "**/*.pem"}, expect: deny, adv: true}
+- {id: grep-glob-ordinary, tool: Grep, input: {pattern: x, path: src, glob: "*.py"}, expect: allow}
+- {id: grep-no-glob, tool: Grep, input: {pattern: x}, expect: allow}

@@ -23,6 +23,7 @@ from boundkeep.ipc.base import ServerStartError
 from boundkeep.ipc.endpoint import EndpointError, new_endpoint, read_endpoint, write_endpoint
 from boundkeep.logstore import AuditLog
 from boundkeep.policy import (
+    Mode,
     PolicyError,
     default_policy_text,
     load_policy,
@@ -51,6 +52,12 @@ def _printable(text: str) -> str:
     return "".join(ch if ch.isprintable() else "?" for ch in text)
 
 
+def printable(text: str, limit: int | None = None) -> str:
+    """:func:`_printable` for text of any length: cut to ``limit`` characters (with ``...``)."""
+    shown = text if limit is None or len(text) <= limit else text[:limit] + "..."
+    return _printable(shown)
+
+
 def _project_dir(args: argparse.Namespace) -> str:
     return os.path.abspath(args.project_dir or os.getcwd())
 
@@ -69,6 +76,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         for problem in exc.problems:
             console.err(f"  - {problem}")
         return EXIT_PROBLEM
+    command = install.HookCommand(command.command, hookcmd.with_home(command.base_args, home))
     try:
         if args.scope == "project" and not os.path.isdir(_project_dir(args)):
             return _fail(f"the project directory {_project_dir(args)} does not exist")
@@ -80,15 +88,23 @@ def cmd_init(args: argparse.Namespace) -> int:
     except (SettingsError, ValueError) as exc:
         return _fail(str(exc))
     policy_path = paths.policy_file(home)
+    old_problem: str | None = None
     try:
-        policy = (
-            load_policy(policy_path)
-            if os.path.exists(policy_path)
-            else parse_policy_text(default_policy_text())
-        )
+        if args.reset_policy:
+            # The file in place is about to be replaced, so it does not have to load: whatever is
+            # wrong with it is what --reset-policy is for. The new policy's taint sources count.
+            policy = parse_policy_text(default_policy_text())
+            old_problem = _policy_problem(policy_path)
+        elif os.path.exists(policy_path):
+            policy = load_policy(policy_path)
+        else:
+            policy = parse_policy_text(default_policy_text())
         post_matcher = taint_sources_to_matcher(policy.taint.sources)
     except PolicyError as exc:
-        return _fail(f"policy: {exc}")
+        return _fail(
+            f"policy: {exc}\n  fix {policy_path} by hand, or run 'boundkeep init --reset-policy' "
+            "to replace it with the default policy (a backup is kept)"
+        )
     try:
         groups = install.build_hook_groups(command, post_matcher=post_matcher)
         merged, report = install.merge_hooks(doc.data, groups)
@@ -98,7 +114,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     # Launch the hook exactly as Claude Code will, in a scratch home so the check neither needs
     # nor writes to the real one. A hook that cannot work would leave the gate silently open.
     with tempfile.TemporaryDirectory(prefix="boundkeep-selfcheck-") as scratch:
-        results = install.run_self_check(command, env={**os.environ, paths.HOME_ENV: scratch})
+        scratch_command = install.HookCommand(
+            command.command, hookcmd.with_home(command.base_args, scratch)
+        )
+        results = install.run_self_check(
+            scratch_command, env={**os.environ, paths.HOME_ENV: scratch}
+        )
     failed = [r for r in results if not r.ok]
     if failed:
         console.err("boundkeep init: the hook command failed its self check; nothing was written:")
@@ -121,6 +142,13 @@ def cmd_init(args: argparse.Namespace) -> int:
     if doc.had_bom:
         console.out("note         : the settings file had a UTF-8 BOM; it is rewritten without one")
     if args.dry_run:
+        if args.reset_policy and os.path.exists(policy_path):
+            mode = _current_mode(policy_path)
+            why = f"; the current file does not load: {old_problem}" if old_problem else ""
+            console.out(
+                f"policy       : would be reset to the default policy (mode {mode}{why}); "
+                "a backup is kept"
+            )
         console.out("dry run      : nothing was written")
         return EXIT_OK
 
@@ -158,8 +186,19 @@ def _apply_init(
         write_endpoint(endpoint_path, new_endpoint(home))
     fsperm.ensure_private_file(endpoint_path)
     policy_path = paths.policy_file(home)
-    if write_default_policy(policy_path):
+    if args.reset_policy and os.path.exists(policy_path):
+        _reset_policy(policy_path, home)
+    elif write_default_policy(policy_path):
         console.out(f"policy       : wrote the default policy to {policy_path}")
+    else:
+        try:
+            if not load_policy(policy_path, home=os.path.expanduser("~")).rules:
+                console.out(
+                    "policy       : your policy has no rules (written by M0), so every shell "
+                    "command asks; run 'boundkeep init --reset-policy' to install the default rules"
+                )
+        except PolicyError:
+            pass  # doctor reports an unusable policy
     fsperm.ensure_private_file(policy_path)
 
     if not unchanged:
@@ -187,11 +226,70 @@ def _apply_init(
     console.out(f"ipc endpoint : {endpoint.address}")
     console.out("")
     console.out("Next: start the daemon with 'boundkeep serve', then run 'boundkeep doctor'.")
-    console.out(
-        "M0 only blocks commands that contain BOUNDKEEP_CANARY; real rules arrive in M1. "
-        "Until the daemon runs, every tool call asks for confirmation (fail closed)."
-    )
+    for line in _epilogue(policy_path):
+        console.out(line)
     return EXIT_OK
+
+
+def _epilogue(policy_path: str) -> list[str]:
+    """What the user should know after init, as true of the policy that is now in place."""
+    try:
+        policy = load_policy(policy_path, home=os.path.expanduser("~"))
+    except (PolicyError, OSError) as exc:
+        summary = (
+            f"Policy: it could not be loaded ({exc}); every shell command asks until it is "
+            "fixed ('boundkeep doctor' says what is wrong)."
+        )
+    else:
+        summary = (
+            f"Policy: {len(policy.rules)} rules loaded (mode: {policy.mode}). Every command or "
+            "tool call that no rule decides asks for confirmation. To watch what boundkeep "
+            "would do before it asks or blocks anything, run 'boundkeep mode audit-only' first "
+            "(decisions are then only logged; 'boundkeep mode enforce' switches back)."
+        )
+    return [
+        summary,
+        "PowerShell commands are not parsed until M1b, so no rule can judge them: every "
+        "PowerShell command asks for confirmation.",
+        "See what the rules do with 'boundkeep test' (the policy's own tests) and "
+        "'boundkeep explain <event.json>' (why one event got its verdict).",
+        "Until the daemon runs, every tool call asks for confirmation (fail closed).",
+    ]
+
+
+def _policy_problem(policy_path: str) -> str | None:
+    """Why the policy file does not load, or None when it is fine or does not exist."""
+    if not os.path.exists(policy_path):
+        return None
+    try:
+        load_policy(policy_path, home=os.path.expanduser("~"))
+    except PolicyError as exc:
+        return str(exc).splitlines()[0] if str(exc) else "invalid"
+    return None
+
+
+def _current_mode(policy_path: str) -> Mode:
+    """The mode of the policy in place, 'enforce' when it does not load."""
+    try:
+        return load_policy(policy_path, home=os.path.expanduser("~")).mode
+    except PolicyError:
+        return "enforce"
+
+
+def _reset_policy(policy_path: str, home: str) -> None:
+    """Replace the policy with the shipped default, keeping a backup and the current mode.
+
+    Works on a policy that does not load: the old file is the backup, the mode falls back to
+    enforce.
+    """
+    problem = _policy_problem(policy_path)
+    mode = _current_mode(policy_path)
+    backup = settings_io.backup_file(policy_path, paths.backups_dir(home))
+    write_default_policy(policy_path, overwrite=True)
+    if mode != "enforce":
+        set_mode(policy_path, mode)
+    why = f"; the old file did not load: {problem}" if problem else ""
+    console.out(f"policy       : reset to the default policy (mode {mode}{why}); backup: {backup}")
 
 
 def _utc_now() -> str:
@@ -318,12 +416,26 @@ def cmd_mode(args: argparse.Namespace) -> int:
 
 
 def _summary(record: dict[str, object]) -> str:
+    """What the text log line shows after the tool: matched rules, then the command or the reason.
+
+    ``--json`` has every field; this is the quick view (rule ids tell you WHY at a glance).
+    """
+    head = ""
+    rules = record.get("rules")
+    if isinstance(rules, list) and rules:
+        head = "[" + ",".join(_printable(str(r))[:40] for r in rules[:3]) + "] "
     for key in ("command", "reason", "local_reason"):
         value = record.get(key)
         if isinstance(value, str) and value:
-            return _printable(value)[:100]
+            return head + _printable(value)[:100]
+    gray = record.get("gray_reasons")
+    if isinstance(gray, list) and gray:
+        return head + "gray: " + _printable("; ".join(str(g) for g in gray[:3]))[:100]
     chars = record.get("prompt_chars")
-    return f"prompt of {chars} characters" if isinstance(chars, int) else ""
+    if isinstance(chars, int):
+        return f"prompt of {chars} characters"
+    verdict = record.get("verdict")
+    return head + (f"({_printable(str(verdict))})" if isinstance(verdict, str) else "")
 
 
 def cmd_log(args: argparse.Namespace) -> int:
@@ -343,6 +455,18 @@ def cmd_log(args: argparse.Namespace) -> int:
     if log.last_error:
         console.err(f"boundkeep: warning: {log.last_error}")
     return EXIT_OK
+
+
+def cmd_test(args: argparse.Namespace) -> int:
+    from boundkeep import policycli
+
+    return policycli.cmd_test(args)
+
+
+def cmd_explain(args: argparse.Namespace) -> int:
+    from boundkeep import policycli
+
+    return policycli.cmd_explain(args)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -397,6 +521,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--rotate-endpoint", action="store_true", help="generate a new random pipe or socket name"
     )
+    p.add_argument(
+        "--reset-policy",
+        action="store_true",
+        help="replace policy.yaml with the shipped default rules (keeps a backup and the mode)",
+    )
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("uninstall", help="remove boundkeep's hook entries from a settings file")
@@ -416,6 +545,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="one JSON object per line")
     p.add_argument("--purge", action="store_true", help="delete the audit log")
     p.set_defaults(func=cmd_log)
+
+    p = sub.add_parser(
+        "test", help="run the policy's built-in tests (the real pipeline, fake machine)"
+    )
+    p.add_argument("--policy", help="a policy file (default: the shipped default policy)")
+    p.add_argument(
+        "--platform",
+        choices=("windows", "posix", "all"),
+        default="all",
+        help="run the lexical tests with Windows or POSIX semantics (default: both)",
+    )
+    p.set_defaults(func=cmd_test)
+
+    p = sub.add_parser("explain", help="explain the verdict for one hook event (a JSON file or -)")
+    p.add_argument("event", help="a PreToolUse event as JSON; '-' reads stdin")
+    p.add_argument("--policy", help="a policy file (default: the active policy)")
+    p.set_defaults(func=cmd_explain)
 
     p = sub.add_parser("doctor", help="check that the gate is installed and cannot be silently off")
     p.add_argument("--project-dir", help="the project to check (default: current directory)")

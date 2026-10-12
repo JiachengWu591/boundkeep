@@ -16,8 +16,12 @@ Rules this module enforces (spec section 11, CLAUDE.md):
   that is ``O_APPEND``. On Windows the C runtime emulates ``O_APPEND`` with a seek followed by a
   write, which two processes can interleave (we measured lost lines), so there the file is opened
   with ``CreateFileW`` and ``FILE_APPEND_DATA`` only, which makes the kernel append atomically.
+* The append handle is WRITE-ONLY. Asking for read access made every open cost 20 to 80 ms under
+  Windows Defender real-time scanning (measured: 26 ms median, against 0.35 ms without it).
 * A torn last line (crash, ``ENOSPC`` after a short write) never swallows the next record: the
-  new record starts on a fresh line.
+  new record starts on a fresh line. Whether the file ends with a newline is looked at once, by a
+  separate read open, at the first append of the process and again after a rotation, a purge or a
+  failed write; in between it is remembered (every record we write ends with a newline).
 * ``tail`` reads backwards in blocks and skips corrupt or half-written lines.
 
 Standard library plus :mod:`boundkeep.redact`.
@@ -68,7 +72,6 @@ if sys.platform == "win32":
     import msvcrt
     from ctypes import wintypes
 
-    _FILE_READ_DATA = 0x0001
     _FILE_APPEND_DATA = 0x0004  # without FILE_WRITE_DATA: every write goes to the end, atomically
     _FILE_READ_ATTRIBUTES = 0x0080
     _SYNCHRONIZE = 0x00100000
@@ -92,13 +95,13 @@ if sys.platform == "win32":
     _kernel32.CloseHandle.restype = wintypes.BOOL
 
     def _open_append(path: str) -> int:
-        """File descriptor whose writes append atomically (see the module docstring)."""
+        """Write-only file descriptor whose writes append atomically (see the module docstring)."""
         if "\x00" in path:
             # ctypes would silently cut the path at the NUL and open a different file.
             raise ValueError("embedded null character in path")
         handle = _kernel32.CreateFileW(
             path,
-            _FILE_APPEND_DATA | _FILE_READ_DATA | _FILE_READ_ATTRIBUTES | _SYNCHRONIZE,
+            _FILE_APPEND_DATA | _FILE_READ_ATTRIBUTES | _SYNCHRONIZE,
             _FILE_SHARE_ALL,
             None,
             _OPEN_ALWAYS,
@@ -121,25 +124,28 @@ else:
 
     def _open_append(path: str) -> int:
         """File descriptor whose writes append atomically (O_APPEND), mode 0600 when created."""
-        return os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+        return os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
 
 
-def _line_separator(fd: int) -> bytes:
-    """``b"\\n"`` when the file is not empty and does not end with a newline, else ``b""``.
+def _ends_cleanly(path: str) -> bool:
+    """True when the file is missing, empty, or ends with a newline; False otherwise.
 
     After a crash or a short write the last line has no terminator; the next record would be
-    glued onto it and both would be lost to ``tail``. When we cannot tell, a separator is added:
-    an extra blank line is harmless (readers skip it), a glued record is not.
+    glued onto it and both would be lost to ``tail``. When we cannot tell, the answer is False: an
+    extra blank line is harmless (readers skip it), a glued record is not. This is a separate read
+    open (never the append handle) and runs rarely, see :class:`AuditLog`.
     """
     try:
-        size = os.fstat(fd).st_size
-        if size == 0:
-            return b""
-        os.lseek(fd, size - 1, os.SEEK_SET)
-        last = os.read(fd, 1)
-    except OSError:
-        return b"\n"
-    return b"" if last == b"\n" else b"\n"
+        with open(path, "rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            if size == 0:
+                return True
+            handle.seek(size - 1)
+            return handle.read(1) == b"\n"
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 class _Budget:
@@ -197,6 +203,8 @@ class AuditLog:
         self._last_error: str | None = None
         # Earliest clock() value at which a failed rotation may be retried; None = no failure.
         self._next_rotation: float | None = None
+        # Does the file end with a newline? None = not looked at yet (or must be looked at again).
+        self._tail_clean: bool | None = None
 
     @property
     def path(self) -> str:
@@ -406,6 +414,8 @@ class AuditLog:
         return redacted if isinstance(redacted, str) else repr(redacted)
 
     def _write(self, data: bytes) -> None:
+        if self._tail_clean is None:
+            self._tail_clean = _ends_cleanly(self._path)
         try:
             fd = _open_append(self._path)
         except FileNotFoundError:
@@ -415,12 +425,17 @@ class AuditLog:
         try:
             # One buffer, one os.write: the separator (if any) must not become a second write,
             # or another process could slip its line in between.
-            view = memoryview(_line_separator(fd) + data)
-            while view:
-                written = os.write(fd, view)
-                if written <= 0:
-                    raise OSError("os.write wrote no bytes")
-                view = view[written:]
+            view = memoryview((b"" if self._tail_clean else b"\n") + data)
+            try:
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        raise OSError("os.write wrote no bytes")
+                    view = view[written:]
+            except BaseException:
+                self._tail_clean = None  # part of a line may be on disk: look again next time
+                raise
+            self._tail_clean = True  # every record ends with a newline
         finally:
             os.close(fd)
 
@@ -451,6 +466,7 @@ class AuditLog:
             self._next_rotation = now + self._retry_seconds
         else:
             self._next_rotation = None
+            self._tail_clean = None  # a new file: look at it again before the next write
 
     def _rotate(self) -> None:
         """audit.jsonl -> .1 -> ... -> .<backups>; the oldest file is overwritten (dropped).
@@ -575,6 +591,7 @@ class AuditLog:
                     continue
                 removed += 1
             self._next_rotation = None
+            self._tail_clean = None
         return removed
 
 

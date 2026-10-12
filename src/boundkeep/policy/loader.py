@@ -21,7 +21,8 @@ YAML hardening, all in ``_StrictLoader`` and ``parse_policy_text``:
   some inputs, for example ``1:1:1:...``), and multi-document streams are errors;
 * U+0085, U+2028 and U+2029 are refused: YAML treats them as line breaks, so they can end a
   comment and let a ``mode: audit-only`` hide inside what every line-based tool shows as a
-  comment. A U+FEFF anywhere but the very start is refused for the same hiding-place reason.
+  comment. A lone CR (not followed by LF) is a line break to PyYAML but not to line-based tools:
+  refused too. A U+FEFF anywhere but the very start is refused for the same hiding-place reason.
 
 The loader is cheap for a real policy but not free for a hostile one near the size limit; the
 daemon already re-reads the file only when its mtime or size changes, and it must keep doing so.
@@ -44,8 +45,13 @@ import yaml
 from pydantic import ValidationError
 
 from boundkeep.policy.schema import MAX_TAINT_SOURCES, Mode, Policy, check_taint_source
+from boundkeep.policy.secretscan import find_secret, skip_policy_test_inputs
 
 MAX_POLICY_BYTES = 256 * 1024
+
+# ``set_mode`` and the shipped-default check validate a policy without caring where "~" points;
+# a fixed stand-in keeps them independent of the environment (and equal across two parses).
+_NEUTRAL_HOME = "/home/boundkeep-policy-check"
 
 _MAX_DEPTH = 32
 _MAX_SCALAR_CHARS = 1024  # the longest legitimate value is a 128-character taint source
@@ -63,6 +69,7 @@ _DEFAULT_RESOURCE_NAME = "data/default.yaml"
 # Characters PyYAML treats as line breaks although a line-based tool does not (see module docs).
 _HIDDEN_BREAKS = re.compile(r"[\x85\u2028\u2029]")
 _ANY_LINE_BREAK = re.compile(r"\r\n|\n|\r")
+_LONE_CR = re.compile(r"\r(?!\n)")
 
 # os.replace over a file that another process has open fails on Windows (Python opens files
 # without FILE_SHARE_DELETE). Readers (the daemon, an editor, a virus scanner) hold files only
@@ -231,19 +238,27 @@ def _format_loc(loc: Sequence[Any]) -> str:
 
 
 def _describe_validation_error(exc: ValidationError, root: yaml.Node) -> PolicyError:
-    """Short messages from pydantic: location and message only, never the offending input."""
-    errors = exc.errors(include_input=False, include_url=False, include_context=False)
+    """Short messages from pydantic: location and message only, never the offending input.
+
+    A custom schema error may carry an ``at`` context: a path below ``loc`` (a list index, a key)
+    that pins the error to the exact entry, for the field path and for the line number.
+    """
+    errors = exc.errors(include_input=False, include_url=False, include_context=True)
     parts: list[str] = []
     first_line: int | None = None
     for index, err in enumerate(errors[:_MAX_REPORTED_ERRORS]):
-        loc = err["loc"]
+        loc = tuple(err["loc"])
+        extra = (err.get("ctx") or {}).get("at")
+        if isinstance(extra, tuple):
+            loc = loc + extra
         line = _node_line(root, loc)
         if index == 0:
             first_line = line
+        message = err["msg"].removeprefix("Value error, ")
         if err["type"] == "extra_forbidden":
             text = f"unknown key '{_format_loc(loc)}'"
         else:
-            text = f"{_format_loc(loc)}: {_clean(err['msg'], 160)}"
+            text = f"{_format_loc(loc)}: {_clean(message, 260)}"
         if index > 0 and line is not None:
             text += f" (line {line})"
         parts.append(text)
@@ -276,10 +291,24 @@ def _refuse_hidden_line_breaks(text: str) -> None:
             "the character U+FEFF is not allowed inside a policy",
             line=len(_ANY_LINE_BREAK.findall(text, 0, bom)) + 1,
         )
+    lone = _LONE_CR.search(text)
+    if lone is not None:
+        raise PolicyError(
+            "a lone carriage return (U+000D not followed by a line feed) is a YAML line break "
+            "that line-based tools do not show as one; use LF or CRLF line endings",
+            line=len(_ANY_LINE_BREAK.findall(text, 0, lone.start())) + 1,
+        )
 
 
-def parse_policy_text(text: str) -> Policy:
-    """Parse and validate a policy. Raises only ``PolicyError`` for any input."""
+def parse_policy_text(text: str, *, home: str | None = None) -> Policy:
+    """Parse and validate a policy. Raises only ``PolicyError`` for any input.
+
+    ``home`` is the user's home directory (any native spelling); a leading ``~`` in a ``path_glob``
+    is replaced by its key while loading. ``None`` means the current user's home directory
+    (``os.path.expanduser``); a policy with no ``~`` glob never needs it. Errors name the line
+    and the field path (``rules[2].match.path_glob[0]``); a string that looks like a secret is
+    reported by location only, never echoed.
+    """
     if not isinstance(text, str):
         # PyYAML would happily sniff the encoding of bytes (UTF-16 included); never let it.
         raise PolicyError("the policy text must be a string")
@@ -312,10 +341,22 @@ def parse_policy_text(text: str) -> Policy:
             # the daemon fails closed on PolicyError only. Only the exception's class name is
             # kept, never its text, which may echo file content.
             raise PolicyError(f"invalid YAML: {_clean(type(exc).__name__)}") from None
+        secret = find_secret(data, skip=skip_policy_test_inputs)
+        if secret is not None:
+            location, kind = secret
+            raise PolicyError(
+                f"invalid policy: {_format_loc(location)}: looks like {kind}; never put secrets "
+                "in a policy (name an environment variable with api_key_env)",
+                line=_node_line(root, location),
+            )
         try:
-            return Policy.model_validate(data)
+            return Policy.model_validate(data, context={"home": home})
         except ValidationError as exc:
             raise _describe_validation_error(exc, root) from None
+        except Exception as exc:  # noqa: BLE001 - the contract is "PolicyError or a Policy"
+            # A validator bug or an exotic input must still fail closed as a PolicyError; only the
+            # class name is kept, since the text may echo file content.
+            raise PolicyError(f"invalid policy: {_clean(type(exc).__name__)}") from None
     finally:
         if loader is not None:
             loader.dispose()
@@ -364,11 +405,14 @@ def _decode(data: bytes, path: str) -> tuple[str, str]:
     return bom, text
 
 
-def load_policy(path: str) -> Policy:
-    """Read and validate the policy at ``path`` (a UTF-8 BOM is tolerated)."""
+def load_policy(path: str, *, home: str | None = None) -> Policy:
+    """Read and validate the policy at ``path`` (a UTF-8 BOM is tolerated).
+
+    ``home`` is passed on to ``parse_policy_text`` (it expands ``~`` in ``path_glob``).
+    """
     _, text = _decode(_read_policy_bytes(path), path)
     try:
-        return parse_policy_text(text)
+        return parse_policy_text(text, home=home)
     except PolicyError as exc:
         raise exc.with_path(path) from None
 
@@ -483,9 +527,9 @@ def set_mode(path: str, mode: Mode) -> None:
         raise PolicyError(f"unknown mode {_clean(repr(mode), 40)}; expected one of {_MODES}")
     bom, text = _decode(_read_policy_bytes(path), path)
     try:
-        current = parse_policy_text(text)
+        current = parse_policy_text(text, home=_NEUTRAL_HOME)
         new_text = _replace_mode_line(text, mode)
-        updated = parse_policy_text(new_text)
+        updated = parse_policy_text(new_text, home=_NEUTRAL_HOME)
         if updated != current.model_copy(update={"mode": mode}):
             raise PolicyError("the edit would change more than 'mode'; refusing")
     except PolicyError as exc:
@@ -532,7 +576,7 @@ def default_policy_text() -> str:
     _, text = _decode(data, "default policy")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     try:
-        parse_policy_text(text)
+        parse_policy_text(text, home=_NEUTRAL_HOME)
     except PolicyError as exc:
         raise PolicyError(f"the shipped default policy is invalid: {exc.reason}") from None
     return text

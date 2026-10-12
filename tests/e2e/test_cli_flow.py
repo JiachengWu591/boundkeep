@@ -76,7 +76,7 @@ class Machine:
             self.hook_argv(event),
             input=payload,
             capture_output=True,
-            env=self.env,
+            env={**self.env, "CLAUDE_PROJECT_DIR": str(self.project)},  # as Claude Code sets it
             timeout=timeout,
             check=False,
         )
@@ -87,6 +87,14 @@ class Machine:
         )
         event["tool_name"] = tool
         event["tool_input"] = {"command": command, "description": "e2e"}
+        return json.dumps(event, ensure_ascii=False).encode("utf-8")
+
+    def read_event(self, name: str) -> bytes:
+        """A Read of a file inside the project: the default policy allows it (no decision)."""
+        event = json.loads((FIXTURES_DIR / "PreToolUse__Read.json").read_text(encoding="utf-8"))
+        event["tool_input"] = {"file_path": str(self.project / name)}
+        event["tool_use_id"] = f"toolu_read_{name}"
+        event["cwd"] = str(self.project)
         return json.dumps(event, ensure_ascii=False).encode("utf-8")
 
     def endpoint(self) -> ipc_endpoint.Endpoint:
@@ -308,16 +316,20 @@ def test_the_hook_blocks_the_canary_lets_the_rest_through_and_everything_is_logg
     bash = decision_of(machine.hook("PreToolUse", machine.pre_event(f"echo {CANARY}", tool="Bash")))
     assert bash["permissionDecision"] == "deny"
 
-    harmless = machine.hook("PreToolUse", machine.pre_event("Get-ChildItem"))
+    harmless = machine.hook("PreToolUse", machine.read_event("a.py"))
     assert (harmless.returncode, harmless.stdout) == (0, b"")
 
+    # M1 does not parse PowerShell, so an ordinary command is gray: the hook asks
     command = 'Write-Output "你好，世界 ✓"'  # noqa: RUF001 - Chinese punctuation on purpose
-    assert machine.hook("PreToolUse", machine.pre_event(command)).stdout == b""
+    gray = decision_of(machine.hook("PreToolUse", machine.pre_event(command)))
+    assert gray["permissionDecision"] == "ask"
 
     records = machine.log_records()
     by_command = {r.get("command"): r for r in records if r.get("event") == "pre"}
     assert by_command[f"echo {CANARY}"]["decision"] == "deny"
-    assert by_command["Get-ChildItem"]["decision"] == "none"
+    read_record = next(r for r in records if r.get("tool_name") == "Read")
+    assert (read_record["decision"], read_record["verdict"]) == ("none", "allow")
+    assert by_command[command]["decision"] == "ask"
     # what the log holds is exactly what the event said, not text the hook misread
     assert command in by_command
     assert by_command[command]["session_id"]
@@ -364,8 +376,10 @@ def test_32_hook_processes_at_once_lose_no_request(machine: Machine, daemon: Run
 
     def one(i: int) -> tuple[int, bool, bytes]:
         blocked = i % 2 == 0
-        command = f"echo {CANARY} {i}" if blocked else f"echo plain {i}"
-        proc = machine.hook("PreToolUse", machine.pre_event(command), timeout=60)
+        event = (
+            machine.pre_event(f"echo {CANARY} {i}") if blocked else machine.read_event(f"f{i}.py")
+        )
+        proc = machine.hook("PreToolUse", event, timeout=60)
         return (
             i,
             blocked,
@@ -381,7 +395,7 @@ def test_32_hook_processes_at_once_lose_no_request(machine: Machine, daemon: Run
             assert out == b"", (i, out)
     logged = [r for r in machine.log_records() if r.get("event") == "pre"]
     assert len(logged) == 96
-    assert len({r["command"] for r in logged}) == 96
+    assert len({r.get("command") or r["tool_use_id"] for r in logged}) == 96
 
 
 def test_a_killed_daemon_makes_the_hook_ask_and_a_new_one_takes_over(
@@ -445,7 +459,7 @@ def test_log_command_shows_records_in_both_formats_and_purges(
     assert "deny" in text.stdout
     as_json = machine.cli("log", "--json", "--tail", "50")
     parsed = [json.loads(line) for line in as_json.stdout.splitlines()]
-    assert any(r.get("decided_by") == "canary" for r in parsed)
+    assert any(r.get("decided_by") == "rule:m0-canary" for r in parsed)
     assert machine.cli("log", "--purge").returncode == 0
 
 
@@ -607,7 +621,7 @@ def test_everything_works_under_a_path_with_chinese_characters_and_spaces(tmp_pa
     try:
         denied = decision_of(machine.hook("PreToolUse", machine.pre_event(f"echo {CANARY}")))
         assert denied["permissionDecision"] == "deny"
-        assert machine.hook("PreToolUse", machine.pre_event("Get-ChildItem")).stdout == b""
+        assert machine.hook("PreToolUse", machine.read_event("a.py")).stdout == b""
         records = [r for r in machine.log_records() if r.get("event") == "pre"]
         assert [r["decision"] for r in records] == ["deny", "none"]
         assert machine.cli("doctor", "--project-dir", str(machine.project)).returncode == 0

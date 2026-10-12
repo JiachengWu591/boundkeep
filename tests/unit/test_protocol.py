@@ -93,7 +93,7 @@ def test_encode_request_rejects_bad_inputs() -> None:
         b"[]",
         b'{"v":1,"id":"other","ok":true,"decision":"none","reason":""}',  # wrong id
         b'{"v":1,"id":"r1","ok":"yes","decision":"none"}',
-        b'{"v":1,"id":"r1","ok":true,"decision":"allow","reason":""}',  # allow is not a decision
+        b'{"v":1,"id":"r1","ok":true,"decision":"approve","reason":""}',  # not a decision
         b'{"v":1,"id":"r1","ok":true,"decision":7}',
         b'{"v":1,"id":"r1","ok":true,"decision":"ask","reason":7}',
         b'{"v":2,"id":"r1","ok":true,"decision":"ask","reason":""}',
@@ -142,3 +142,9 @@ def test_response_round_trip_for_any_text(reason: str, decision: str) -> None:
     resp = p.decode_response(line.rstrip(b"\n"), "r1")
     assert resp.decision == decision
     assert resp.reason == reason[: p.MAX_REASON_CHARS]
+
+
+def test_allow_is_a_valid_response_decision() -> None:
+    line = p.encode_response("r1", decision=p.DECISION_ALLOW, reason="rule x")
+    response = p.decode_response(line.rstrip(b"\n"), "r1")
+    assert (response.ok, response.decision, response.reason) == (True, "allow", "rule x")
