@@ -217,13 +217,13 @@ Claude Code
 **实现约束**
 
 - **hook 客户端 I/O（所有平台）**：按字节读 stdin、显式按 UTF-8 解码；按字节写 stdout，输出的 JSON 只含 ASCII（`ensure_ascii`，非 ASCII 用 `\u` 转义）；不用 `print` 与文本层；不依赖 `PYTHONIOENCODING`、`PYTHONUTF8` 或系统代码页。最外层捕获所有异常（含 `BaseException`），输出 `ask` 并以 0 退出，绝不以 1 退出。事件类型以 stdin 里的 `hook_event_name` 为准，命令行参数（`pre` / `post` / `prompt`）只作交叉检查；缺参数（较早版本的 Claude Code 可能丢弃 `args`）或两者不一致 → 输出 `ask` 并说明原因；`doctor` 检查 Claude Code 版本。
-- **hook 命令**：`init` 写入解析后的真实可执行文件（当前环境 `Scripts` 目录里的 `boundkeep-hook.exe`），不写 PATH 上的 shim（mise、pyenv-win、uv 的 shim 都多一层间接）。`init` 自检与 `doctor` 按 exec 形式原样启动它，喂入含中文的 UTF-8 样例事件，并在清除 `PYTHON*` 环境变量的条件下再来一遍，校验输出是合法决定。exec 写法的选择（E10 实测）：默认 `python.exe -I -S <独立脚本>`（不经过 shell、忽略 `PYTHON*` 环境变量、比 `.exe` 启动器快约 17 ms），`.exe` 启动器作备选（路径更短，但慢、首次运行要过杀毒软件）。**M0 实测**（`scripts/bench_hook.py`，开发机，每项 60 次，结果文件 `scripts/bench_hook_result.json`）：用**基础解释器**的 `python.exe -I -S hook_client.py`，带常驻进程时 p50 约 41 ms、p95 约 48 ms（空进程约 21 ms）；用虚拟环境的 `python.exe`（uv 的跳板，会再起一个子进程）p50 约 60 ms；`boundkeep-hook.exe` 启动器 p50 约 87 ms；常驻进程一侧处理一个请求约 0.1 ms，开销全在 Python 进程启动与导入（`json` 约 9 ms）。所以默认写**基础解释器**，`init` 拒绝 shim、Microsoft Store 别名与 `.cmd` / `.bat`；主脚本 `hook_client.py` 只有几行（主脚本每次都要重新编译，被导入的模块走字节码缓存），逻辑在 `hook_main.py`。
+- **hook 命令**：`init` 写入解析后的真实可执行文件（当前环境 `Scripts` 目录里的 `boundkeep-hook.exe`），不写 PATH 上的 shim（mise、pyenv-win、uv 的 shim 都多一层间接）。`init` 自检与 `doctor` 按 exec 形式原样启动它，喂入含中文的 UTF-8 样例事件，并在清除 `PYTHON*` 环境变量的条件下再来一遍，校验输出是合法决定。exec 写法的选择（E10 实测）：默认 `python.exe -I -S <独立脚本>`（不经过 shell、忽略 `PYTHON*` 环境变量、比 `.exe` 启动器快约 17 ms），`.exe` 启动器作备选（路径更短，但慢、首次运行要过杀毒软件）。**M0 实测**（`scripts/bench_hook.py`，开发机，每项 60 次，结果文件 `scripts/bench_hook_result.json`）：用**基础解释器**的 `python.exe -I -S hook_client.py`，带常驻进程时 p50 约 41 ms、p95 约 48 ms（空进程约 21 ms）；用虚拟环境的 `python.exe`（uv 的跳板，会再起一个子进程）p50 约 60 ms；`boundkeep-hook.exe` 启动器 p50 约 87 ms；常驻进程一侧处理一个请求约 0.1 ms，开销全在 Python 进程启动与导入（`json` 约 9 ms）。**M1 起 hook 命令的参数里带 `--home <绝对路径>`（子命令仍是最后一个参数）**，客户端用它而不是环境变量定位 `endpoint.json` 与 `installs.json`，防止环境被改而被引到伪造的守护进程；`init` 的自检用一次性的临时 home 替换它。所以默认写**基础解释器**，`init` 拒绝 shim、Microsoft Store 别名与 `.cmd` / `.bat`；主脚本 `hook_client.py` 只有几行（主脚本每次都要重新编译，被导入的模块走字节码缓存），逻辑在 `hook_main.py`。
 - **`ConfigChange` hook**（E12）：`init` 同时注册一个，拦下会引入 `disableAllHooks` 或移除 boundkeep 自身 hook 的 settings 变更（退出码 2；托管策略来源拦不了）。它拦不住"会话开始前文件里就已经有 `disableAllHooks`"，那种情况由 `doctor` 与 SessionStart 时的自检补。M0 的规则（hook 客户端本地判断，不依赖常驻进程，**失败即关闭**）：变更后的文件读不了或不是合法 JSON → 阻断；`disableAllHooks` 取任何不是 `null` / `false` 的值 → 阻断；对 `init` 在安装清单（`~/.boundkeep/installs.json`）里记录过的文件，被删除、boundkeep 的条目被删或指向别处、被加上 `if` 等额外字段、`timeout` 短到来不及应答、PreToolUse 的 matcher 被收窄，都阻断；来源是托管策略（`policy_settings`）时放行（Claude Code 不让 hook 阻断它）。**M0 真实宿主实测**（`scripts/smoke_claude.py`，Claude Code 2.1.292，Windows 11，CLI 引擎，各一次观察）：会话中途有人写入 `disableAllHooks: true`，被拒绝，之后的 PreToolUse 照常触发；会话中途把 `hooks` 整个清空（连 ConfigChange 自己的条目一起删），也被否决，之后的命令仍然经过闸门。VS Code 界面里未测。
 - **IPC（`ipc/`）**：POSIX 与 Windows 两个传输实现同一接口。Windows 服务端用 ctypes 调 `CreateNamedPipeW`：管道名含 `init` 生成的随机令牌（令牌存在用户配置目录）；DACL 只授予当前用户 SID；`PIPE_REJECT_REMOTE_CLIENTS`；首实例带 `FILE_FLAG_FIRST_PIPE_INSTANCE`（创建失败即报错，`doctor` 提示管道名被占用）；预建多个实例。不用 asyncio 的管道服务端（无法指定安全属性）；asyncio 在 Windows 上也没有 Unix 套接字服务、不支持 `loop.add_signal_handler`。客户端：`FileNotFoundError` 表示常驻进程没起，立即降级 `ask`；其他 `OSError` 视为"管道忙"，在总预算内退避重试；总预算从进程启动起算、覆盖读 stdin 与 IPC 全程，由"工作线程 + `join` 超时 + `os._exit`"实现，且小于 settings 里的 `timeout`。
 - **路径规范化**分两层，以便跨平台测试（设计原则 10）：
   - **词法层**（纯函数，不碰文件系统；显式使用 `ntpath` / `PureWindowsPath` / `posixpath`，不用当前平台默认的 `os.path`）：展开 `~`、`%VAR%`、`$env:VAR`、`$HOME` 等已知变量（无法解析的变量 → 灰色）；统一分隔符；去掉 `\\?\` 与 `\\.\` 前缀；去掉 NTFS 备用数据流后缀（`:stream`、`::$DATA`）与尾随的点和空格；折叠 `..`；识别驱动器相对路径、UNC 与设备名（`NUL`、`CON`、`COMn` 等，设备名不算项目内）；MSYS 路径（`/c/Users/...`、`/cygdrive/c/...`）与 WSL 的 `/mnt/<盘>/...` 翻译为 Windows 路径；Git Bash 的 `/`、`/usr`、`/tmp` 等无法可靠映射，一律按项目外处理。
   - **文件系统层**（仅本机）：`realpath`，展开符号链接、联接点与存在路径上的 8.3 短名。
-  - 比较一律不区分大小写（casefold）。**方向规则**：deny / ask 侧"可能匹配即匹配"；allow 侧（`inside_project`）"确定在内才算在内"；无法确定（不存在且含短名的路径、含未解析变量、驱动器相对路径）不算在内，进灰色。
+  - 比较一律不区分大小写（casefold）。（M1 澄清：POSIX 风格的路径在 allow 侧区分大小写，见 §7。）**方向规则**：deny / ask 侧"可能匹配即匹配"；allow 侧（`inside_project`）"确定在内才算在内"；无法确定（不存在且含短名的路径、含未解析变量、驱动器相对路径）不算在内，进灰色。
   - 输入既可能是反斜杠形式（hook 的 `file_path`），也可能是 POSIX 形式（Bash 命令里的路径）；规则里的 `path_glob` 一律用正斜杠书写，匹配前双方转成同一规范形式。
   - `protect-guard-config` 的路径集要包含实际生效的配置目录（设置了 `CLAUDE_CONFIG_DIR` 时）。
 - **命令方言**：`Action.shell` 取 `bash` 或 `powershell`，由 `tool_name`（`Bash` / `PowerShell`）决定。
@@ -309,9 +309,18 @@ args: ["-X", "POST", "https://x.example/upload"]
 flags: ["-X"]
 paths: []                       # 解析出的文件路径（按 §5.1 规范化：展开 ~ 与变量、折叠 ..、解析符号链接与短名）
 domains: ["x.example"]          # 解析出的目标域名
-inside_project: null            # 路径是否都在项目目录内
+inside_project: null            # 路径是否都在项目目录内：true | false | null（不确定，见下）
 risk_tags: ["network_egress"]   # network_egress | file_write | exec | secret_access | config_tamper
 ```
+
+**M1 的澄清（2026-10-10，用户已批准）**
+
+- **一次工具调用归一化为 Action 的列表**：一条命令行可以含多个简单命令（管道、`&&`、`;`、子 shell、命令替换、`bash -c` 里的命令），每个简单命令一个 Action，共享 `tool`、`session_id`、`cwd` 等字段；非命令类工具恒为一个 Action。规则对每个 Action 分别匹配，**合并取最严**：任一 deny → deny；否则任一 ask → ask；否则任一灰色 → 灰色；只有全部是 allow 才是 allow。归一化无法确定的部分（解析失败、复合语句、展开无法确定）产生一个带 `gray: true` 的 Action，同样参与合并。
+- **`inside_project` 是三值**：`true`（确定在项目内）、`false`（确定在项目外）、`null`（不确定：含未解析变量或通配符、驱动器相对路径、不存在且含短名的路径、没有项目根）。allow 侧规则只在 `true` 时匹配；`path_outside_project` 在 `false` 与 `null` 时都匹配（deny / ask 侧"可能匹配即匹配"）。
+- **路径比较的大小写**：Windows 风格的路径（盘符、反斜杠、UNC、`\\?\` 前缀）不区分大小写；POSIX 风格的路径区分大小写（`/Home/dev` 与 `/home/dev` 是两个目录，不区分会在 allow 侧把项目外判成项目内）。deny / ask 侧的 `path_glob` 对两种风格都不区分大小写（可能匹配即匹配，过度匹配是安全方向）。这收紧了 §5.1 的"比较一律不区分大小写"。
+- **项目根**：hook 的 stdin 只有 `cwd`；hook 进程的环境里有 `CLAUDE_PROJECT_DIR`（M0a 实测，反斜杠加大写盘符，VS Code 扩展里盘符可能小写）。hook 客户端把这**一个**环境变量转发给常驻进程（环境里的其他变量绝不转发或记录：里面有 `CLAUDE_CODE_MESSAGING_TOKEN`），请求负载里的字段名是 `project_dir`。取不到时回退到 `cwd` 所在的 git 根，再取不到则项目根未知，`inside_project` 一律 `null`。
+- **灰色合并后的输出**：`backend: none` 时灰色输出 `ask`；M1 的默认策略对 shell 命令没有 allow 规则，所以未命中规则的 shell 命令在 `enforce` 下都会弹确认，建议先用 `audit-only` 观察（该模式下只记录 `would_be`）。
+- **M0 的 canary** 保留为内置的最先匹配的 deny 规则（`id: m0-canary`），M0 的端到端测试、冒烟与手工验收依赖它；发布准备（R）时移除。
 
 **污染升级规则（v0 粗粒度）**
 
