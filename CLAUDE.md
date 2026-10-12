@@ -74,9 +74,9 @@ uv run python scripts/smoke_claude.py      # 真实 Claude Code 冒烟（claude 
 
 ## 当前状态
 
-- 阶段：**M0 已实现并通过手工验收，待你确认后提交**（计划 2026-10-07 获批；M0a 已验收并提交，标签 `m0a-done`，报告 `docs/reports/M0a.md`）。
-- 规格是"修订 3"加上 M0a 的 10 条已接受变更；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，只指"闸门可靠到达并失败即关闭"，真正的规则在 M1；其余平台与宿主都不是"支持"。
-- M0 已实现并通过自动测试：协议、IPC（Windows 命名管道；POSIX 套接字只在 Linux 容器里测过，**没有宿主验证**）、hook 客户端、常驻进程与占位判定（只拦含 `BOUNDKEEP_CANARY` 的 shell 命令）、审计日志与脱敏、策略、`init` / `uninstall` / `serve` / `mode` / `log` / `doctor`、ConfigChange 自我保护。结构见 `docs/architecture.md`。
-- M0 中发现并已更正：M0a 以为"文本模式读 stdin 会因 gbk 崩溃"，实测是**悄悄读成乱码**（`docs/hook-behavior.md` E18）。
-- 独立审查（三路）的发现已修复并有回归测试，真实 Claude Code 冒烟已重跑，`docs/reports/M0.md` 已写，用户手工验收已于 2026-10-08 完成（`docs/manual-acceptance-m0.md` 末尾有记录）。手工验收的发现：ask 的理由在两个宿主的确认框里都不显示；hook 配置在会话启动时固定；VS Code 里没有控制台窗口闪现。`bypassPermissions` 仍未测。待用户决定的事项见 M0 报告第 8 节。
+- 阶段：**M1 已实现、已修复独立审查的发现，手工验收已通过（2026-10-12），等你确认后提交**（计划 2026-10-10 获批）。M0 已验收并提交（标签 `m0-done`，报告 `docs/reports/M0.md`），M0a 标签 `m0a-done`。
+- 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
+- M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。**PowerShell 在 M1 一律灰色（ask），M1b 才解析**；没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。
+- 独立审查（四路：解析器、路径与域名、策略语义、性能与集成）共约 60 条发现，已按文件分工修复并有回归测试；真实 Claude Code 冒烟（`scripts/smoke_claude_m1.py`，11 项）全过。Linux 容器里的 M1 测试已跑（真 bash 5.2，差分测试通过）。
+- M1 手工验收（VS Code 扩展 2.1.296 与交互式 CLI）通过，记录在 `docs/manual-acceptance-m1.md`：被拒绝的理由可见，ask 的理由在确认框里仍不显示（与 M0 一致）；验收中发现并已修：文本版 `boundkeep log` 不显示命中的规则。待办：提交。之后是 M1b（PowerShell 方言）。
 - 所有改动在用户确认前不提交。

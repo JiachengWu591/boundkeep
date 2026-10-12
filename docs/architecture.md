@@ -1,6 +1,6 @@
-# 架构（M0：通路与降级）
+# 架构（M0 通路与降级；M1 判定管线）
 
-> 状态：M0 实现，2026-10-08。M0 只证明"一次工具调用能经 hook 到达常驻进程、被判定并写入审计日志，出任何问题都安全降级"。判定管线是占位：**除了含 `BOUNDKEEP_CANARY` 的 shell 命令，M0 不审查任何东西**。规则从 M1 开始，文档与 README 不得暗示 M0 已有保护。
+> 状态：M0 实现于 2026-10-08，M1 的判定管线随后接入（§6）。通路、降级、IPC 与客户端不变量（§1 到 §5、§7、§8）是 M0 的结论；§6 描述 M1 的常驻进程：normalize、规则、取最严，判定在事件循环之外的线程里、带期限地运行。M1 之后 PowerShell 命令仍不被解析（M1b 才做），每一条都落到 `ask`，文档与 README 不得暗示 PowerShell 已被规则审查。
 > 事实来源是 `PROJECT_SPEC.md`；与 Claude Code 行为有关的结论以 `hook-behavior.md`（带版本的实测）为准。
 
 ## 1. 通路
@@ -20,7 +20,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 1. Claude Code 按 settings 里的 exec 形式启动 `python.exe -I -S …\hook_client.py pre`，把事件 JSON（UTF-8 字节）写进 stdin。
 2. `hook_client.py` 只做三件事：记下进程起点、把包根目录放进 `sys.path`（`-I -S` 下既没有脚本目录也没有 site-packages）、调用 `hook_main.entry`。逻辑放在 `hook_main.py` 是因为主脚本每次启动都要从源码编译，被导入的模块走缓存字节码。
 3. `hook_main` 按字节读 stdin，解析事件，读 `endpoint.json`，经 `ipc/client.py` 发一行请求，等一行应答，渲染成 Claude Code 的 hook 输出，写 stdout，`os._exit`。
-4. 常驻进程解码请求，必要时重读策略文件，`pipeline.decide` 给出判定，写一条审计记录，回应答。
+4. 常驻进程解码请求，必要时重读策略文件，`pipeline.decide`（M1：normalize → 规则 → 取最严）在工作线程里给出判定，写一条审计记录，回应答。
 
 ## 2. 模块
 
@@ -34,7 +34,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 | `ipc/named_pipe.py`、`ipc/winsec.py` | Windows 服务端（ctypes、重叠 I/O）与 ACL/SDDL 辅助 |
 | `ipc/unix.py` | POSIX 服务端（只在 Linux 容器里测过，没有宿主验证，见 §9） |
 | `ipc/base.py` | 服务端抽象与工厂 |
-| `daemon/server.py`、`daemon/pipeline.py`、`daemon/lifecycle.py` | 常驻进程、占位判定、单实例锁与停止信号 |
+| `daemon/server.py`、`daemon/pipeline.py`、`daemon/lifecycle.py` | 常驻进程（请求处理、判定线程池与期限、策略热加载、审计记录）、判定管线（M1）、单实例锁与停止信号 |
 | `policy/` | M0 的最小策略（`version`、`mode`、`defaults.emit_allow`、`taint.sources`），严格校验 |
 | `redact.py`、`logstore.py`、`fsperm.py` | 脱敏、JSONL 审计日志、目录与文件的私有性检查 |
 | `settings_io.py`、`install.py`、`claude_settings.py` | 读写 Claude Code 的 settings、合并与移除 hook 条目、自检、清单 |
@@ -54,7 +54,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 - `decision` 是抽象的：**Claude Code 的输出格式只由客户端生成**（`json.dumps(ensure_ascii=True)`），所以"stdout 总是合法的纯 ASCII JSON 或为空"只需要在一处保证。
 - `none` 表示"无决定"：退出 0、什么都不输出，调用交还给 Claude Code 原有的权限流程。M0 从不返回 `allow`（`emit_allow` 默认关闭，M0 也没有实现开启）。
 - 协议层的错误（过大、超时、处理器异常）用占位 id `-` 回应；客户端据此按降级处理。
-- `ping` 只用于 `boundkeep doctor`：有应答、不写日志。
+- `ping` 只用于 `boundkeep doctor`：有应答、不写日志、不经过判定线程池（判定卡住时 ping 照样即时应答）。应答的 `reason` 是状态文本：`mode=…; requests=N; timeouts=N; stuck=N; config_dir=<路径或 ->`，策略不可用时再加 `; policy error: …`。`timeouts` 是迄今因超过期限而被放弃的判定数，`stuck` 是此刻仍在运行的被放弃的工作线程数，`config_dir` 是常驻进程自己环境里的 `CLAUDE_CONFIG_DIR`（`doctor` 拿它与自己的环境比对，见 §6）。
 - 任何不符合的请求或应答都是 `ProtocolError`；协议改动必须升版本号。
 
 ## 4. 本机 IPC
@@ -96,11 +96,15 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 ## 6. 常驻进程
 
 - 一个请求一个判定；`handle` 从不抛异常，任何失败都是错误应答，客户端据此 `ask`。
-- **策略热加载**：每个请求检查策略文件的修改时间与大小，变了就重读，所以 `boundkeep mode` 立即生效。策略不可用时 PreToolUse 一律 `ask`，直到修好；文件没变但上次读失败（编辑器或杀毒软件暂时占用）时，每秒最多重读一次，所以占用解除后自己恢复。
+- **M1 判定管线**（`daemon/pipeline.py`）：PreToolUse 的载荷经 `normalize_event` 变成一组 `Action`（shell 命令按简单命令拆开，其他工具各一个），策略规则逐个 Action 求值并取最严（deny > ask > 灰色 > allow）；没有规则能判定的是灰色，M3 之前没有 LLM 后端，灰色就是 `ask`。`allow` 只有 `defaults.emit_allow` 打开时才发给 Claude Code，默认是"无决定"。审计模式（`audit-only`）只记录与 `would_be`，不返回决定。PowerShell 命令在 M1b 之前整条灰色，即每条都 `ask`。非 PreToolUse 事件（post、prompt、config）管线立即回"无决定"。策略不可用（读不了、不合法、运行期规则加不上）时 PreToolUse 一律 `ask`，原因写进应答与审计记录。
+- **判定在事件循环之外、带期限地运行**：PreToolUse 的整个判定（策略重读、normalize、规则）交给一个有界的守护线程池（默认 4 个线程，`Daemon(pool_size=…)`），用 `asyncio.wait` 等结果，期限默认 2.0 秒（`Daemon(decision_timeout_s=…)`；hook 客户端自己的 PreToolUse 预算是 10 秒）。原因：一条恶意构造的几 KB 命令（例如 `cd src && cd src && …` 的长链）可以让解析器算上十几秒，同步运行会卡死事件循环，连 ping 和其他请求都得不到应答（审查实测）。超过期限时：应答 `ask`，理由 `boundkeep: review took too long`，审计记录 `decision: ask`、`decided_by: timeout`，只记命令的长度（`command_chars`），不记命令正文，常驻进程继续服务。
+- **被放弃的线程**：线程无法被杀死，超时后工作线程继续跑到自己结束。它被记为"卡住"，同时补一个新线程顶替它的位置（容量不减半）。卡住的线程数达到池大小时，新的 PreToolUse 请求不再起任何工作，立即应答 `ask`（`boundkeep: daemon busy`，`decided_by: busy`，同样只记长度），直到有线程返回为止；线程总数因此不超过池大小的两倍。排在队列里、还没开始的判定在超时时被取消，不会白跑。`ping` 与非 PreToolUse 事件不经过线程池，不会排在卡住的判定后面。线程池的线程是守护线程：停止（`serve` 的 stop）与进程退出都不等它们，不会被一个卡住的判定拖住（`ThreadPoolExecutor` 会在退出时 join 线程，所以没有用它）。
+- **策略热加载**：每个请求检查策略文件的修改时间与大小，变了就重读（PreToolUse 在持锁的工作线程里重读；ping 与其他事件在事件循环上重读，只有文件真的变了时才有这点开销），所以 `boundkeep mode` 立即生效。策略不可用时 PreToolUse 一律 `ask`，直到修好；文件没变但上次读失败（编辑器或杀毒软件暂时占用）时，每秒最多重读一次，所以占用解除后自己恢复。重读的任何失败（包括 `PolicyError` 之外的异常，以及 `runtime_policy_checked` 报告的运行期规则问题）都记成策略错误，**绝不**让旧策略在"没有错误"的状态下继续生效；文件的 (mtime, size) 键只在新结果（策略或错误）存好之后才前移。
+- **`CLAUDE_CONFIG_DIR`**：常驻进程从**自己的**环境读它，用来给那个目录里的 settings 与凭据加保护规则；Claude Code 的环境可能不同，而 hook 客户端只转发 `CLAUDE_PROJECT_DIR`。`doctor` 在自己的环境设了它时给 INFO（常驻进程必须以同样的值启动），并在 ping 状态里的 `config_dir` 与自己的环境不同时给 WARN。
 - **失败也留痕**：处理请求时出现内部错误，除了返回错误应答，还会往审计日志写一条 `decision: error`、`decided_by: internal-error` 的记录。
 - **输出不阻塞**：常驻进程的报告行经有界队列由单独线程写 stderr，满了就丢；没人读的 stderr 管道不会再把事件循环卡死。`console.out/err` 容忍没有 stdout/stderr（`pythonw.exe`）。
-- **审计记录**：时间、事件 id、事件类型、判定与来源、模式、延迟、`session_id`、`agent_id`、`permission_mode`、工具名、`cwd`，shell 工具的命令，`prompt` 事件只记长度，`config` 事件记被改的文件与本地判断。不记提示词原文、文件内容、工具输出。
-- **日志写入**：先脱敏，再把每个字符串截到 4096 字符，一次 `os.write`；写失败只记录并返回 `False`，从不改变判定；Windows 上轮转因文件被占用而失败时继续写旧文件，稍后重试，不丢事件。5 MiB 轮转，保留 5 份。
+- **审计记录**：时间、事件 id、事件类型、判定与来源、模式、延迟（`latency_ms`：从收到请求行到判定出来，不含这条记录自己的写入；记录无法包含自己的写入时间，所以 `prev_audit_ms` 是**上一条**记录的写入耗时，处理器总耗时约为两者之和）、`session_id`、`agent_id`、`permission_mode`、工具名、`cwd`，shell 工具的命令，`prompt` 事件只记长度，`config` 事件记被改的文件与本地判断。不记提示词原文、文件内容、工具输出。
+- **日志写入**：先脱敏，再把每个字符串截到 4096 字符，一次 `os.write`；写失败只记录并返回 `False`，从不改变判定；Windows 上轮转因文件被占用而失败时继续写旧文件，稍后重试，不丢事件。5 MiB 轮转，保留 5 份。**追加用只写句柄**：Windows 上只申请 `FILE_APPEND_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE`（POSIX 是 `O_WRONLY | O_APPEND`）。早先的实现为了偷看最后一个字节而申请了读权限，在 Windows Defender 实时扫描下每次打开要 20 到 80 毫秒（实测：带读权限 26 毫秒中位数，只写 0.35 毫秒）。"文件是否以换行结尾"改为内存里的状态：进程启动后的第一次追加、轮转之后、清空之后、写失败之后各用一次单独的读打开检查，其余时候信任它（我们写的每条记录都以换行结尾），所以崩溃留下的半行仍然不会吞掉下一条记录。追加本身在事件循环上做（不占判定线程）。
 - **单实例**：文件锁（Windows `msvcrt.locking`，POSIX `flock`）加 pid 文件；再加管道的首实例标志。锁随进程消失，崩溃不会留下死锁。
 - **停止**：Ctrl+C、Ctrl+Break（Windows）、SIGTERM 都会让它清理退出。
 
@@ -133,12 +137,12 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 
 ## 9. 已知局限（M0）
 
-- 判定管线是占位，没有规则；`allow` 从不输出。
+- （M0 的局限，M1 起已被 §6 的判定管线取代）判定管线曾是占位；M1 起有规则，`allow` 默认仍不输出（`emit_allow`）。
 - **POSIX 传输只在容器里测过**：2026-10-08 在 Linux 容器里跑过（Docker Desktop，`python:3.12`，Linux 6.6 WSL2 内核，非 root 用户，`uv sync --frozen`）：`mypy` 与 `ruff` 无告警，`pytest` 1643 通过、173 跳过（都是 Windows 专用）、0 失败；容器里的 `init`、`serve`、hook 客户端端到端也通过。这只证明代码与测试在 Linux 上成立，**不是宿主验收**：没有在 Linux 上跑过真实的 Claude Code。 审查者从代码里看到两点尚未处理：Unix 套接字服务端没有并发连接数上限（每条连接的读缓冲最多 8 MiB），`os.umask` 的修改跨越了一个 `await`。在有真实 POSIX 宿主的验收之前不得声明 POSIX 支持。
 - 未测：提升权限（UAC）令牌下连管道、杀毒软件的影响（M0a E19 的剩余部分）。
 - 常驻进程需要手动 `boundkeep serve`，没有自启动；它不在时每个工具调用都会 `ask`（失败即关闭）。
 - **M0 没有保护 `~/.boundkeep` 与 settings 文件不被 agent 自己改写**：这是 M1 的 `protect-guard-config` 规则的活（规格 §8）。M0 里 agent 若能写这些文件（例如改 `endpoint.json` 指向别的管道），闸门就可以被绕开；ConfigChange 的自我保护只覆盖 Claude Code 的 settings 文件。
-- `BOUNDKEEP_HOME` 只用于测试与实验目录：hook 与常驻进程必须看到同一个值，真实使用时不要设置它。ConfigChange 会拦下把它写进 settings `env` 块的改动，但 hook 客户端启动时仍信任它的环境（M0 没有把 home 固定进 hook 的参数里；固定后环境就无法再重定向，留给后续）。
+- `BOUNDKEEP_HOME` 只用于测试与实验目录：hook 与常驻进程必须看到同一个值，真实使用时不要设置它。ConfigChange 会拦下把它写进 settings `env` 块的改动。**M1 起 `init` 把 home 固定进 hook 命令的参数**（`... hook_client.py --home <绝对路径> pre`，子命令仍是最后一个参数），hook 客户端据此忽略环境里的 `BOUNDKEEP_HOME` 与 `USERPROFILE`，所以环境无法再把它引到别的守护进程；`doctor` 对没有固定 home 的 M0 安装给警告，对固定值与当前 home 不一致的报 FAIL。已有的 M0 安装重新运行 `init` 即可升级。
 - 审计日志的脱敏是尽力而为：规格 §11 列出的形态都覆盖，另加几种常见的（`xox*-`、`AIza`、`sk_live_`、`npm_`、`glpat-`、JWT、`X-*-Key/Token/Auth` 头、`--pass`），但 `curl -u user:密码`、`mysql -pSECRET`、`sshpass -p`、`docker login -p` 这类位置参数里的口令不会被识别。日志文件只有当前用户能读。
 - 审计日志靠体积可以被同用户进程冲掉（约 1000 个最大尺寸的事件就能轮转掉一条旧记录）；M0 没有防篡改机制，同用户本来也能直接删文件。
 - `boundkeep log` 的文本输出把不可打印字符（含 ESC、BEL、双向控制符）换成 `?`；`--json` 输出保持原样（JSON 转义过）。
