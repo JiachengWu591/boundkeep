@@ -74,9 +74,10 @@ uv run python scripts/smoke_claude.py      # 真实 Claude Code 冒烟（claude 
 
 ## 当前状态
 
-- 阶段：**M1 已实现、已修复独立审查的发现，手工验收已通过（2026-10-12），等你确认后提交**（计划 2026-10-10 获批）。M0 已验收并提交（标签 `m0-done`，报告 `docs/reports/M0.md`），M0a 标签 `m0a-done`。
+- 阶段：**M1b（PowerShell 方言）已实现、四路对抗审查的发现已修复、真实 Claude Code 冒烟与 Linux 容器验证通过，手工验收已通过（2026-10-16，记录在 `docs/manual-acceptance-m1b.md`），等你确认后提交**。M1 已提交（标签 `m1-done`，报告 `docs/reports/M1.md`，手工验收 2026-10-12 通过）；M0 标签 `m0-done`，M0a 标签 `m0a-done`。M1b 之后做一次 M1+M1b 合并的 X1 安全审查，再进 M2。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
-- M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。**PowerShell 在 M1 一律灰色（ask），M1b 才解析**；没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。
+- M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。
 - 独立审查（四路：解析器、路径与域名、策略语义、性能与集成）共约 60 条发现，已按文件分工修复并有回归测试；真实 Claude Code 冒烟（`scripts/smoke_claude_m1.py`，11 项）全过。Linux 容器里的 M1 测试已跑（真 bash 5.2，差分测试通过）。
-- M1 手工验收（VS Code 扩展 2.1.296 与交互式 CLI）通过，记录在 `docs/manual-acceptance-m1.md`：被拒绝的理由可见，ask 的理由在确认框里仍不显示（与 M0 一致）；验收中发现并已修：文本版 `boundkeep log` 不显示命中的规则。待办：提交。之后是 M1b（PowerShell 方言）。
+- M1 手工验收（VS Code 扩展 2.1.296 与交互式 CLI）通过，记录在 `docs/manual-acceptance-m1.md`：被拒绝的理由可见，ask 的理由在确认框里仍不显示（与 M0 一致）；验收中发现并已修：文本版 `boundkeep log` 不显示命中的规则。
+- M1b 已实现：常驻辅助进程（`powershell.exe`/`pwsh`，只做 `ParseInput`，从不执行命令；Job Object 随守护进程退出而终止；预热约 2 秒，期间 PowerShell 命令一律灰色 `ps-helper-not-ready`；熔断带 60 秒半开；慢输入有哈希缓存与限流），AST 摘要经 `pscmd` → `programs.classify(shell="powershell")` → `psprograms`，别名/参数表 `psaliases`（只有 Windows 上的一致性测试）。设计契约 `docs/m1b-design.md`，使用说明与已知缺口 `docs/powershell-dialect.md`，报告 `docs/reports/M1b.md`。审查（四路，约 1500 条命令只解析不执行）无 blocker、无 allow 绕过；两项 HIGH（熔断器永久打开、慢输入造成的全员灰色）与六项 MEDIUM 已修。pwsh 7 与 Linux/macOS 上的 pwsh 没有实测（只有 Windows PowerShell 5.1）。冒烟 `scripts/smoke_claude_m1b.py`（10 项）全过。
 - 所有改动在用户确认前不提交。

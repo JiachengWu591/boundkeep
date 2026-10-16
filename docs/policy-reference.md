@@ -73,7 +73,7 @@ rules:
 - 一次工具调用归一化为**一个或多个** Action（一条 shell 命令行里每个简单命令一个）。每个 Action 取命中规则中最严的：`deny` > `ask` > `allow`；一条都没命中就是**灰色**。
 - 整体取各 Action 最严的：任一 deny → deny；否则任一 ask → ask；否则任一灰色 → 灰色；**全部**为 allow 才是 allow；没有 Action 也是灰色。
 - 灰色在没有 LLM 后端时输出 `ask`（`llm_audit.backend: none`）。
-- **带 `gray` 标记的 Action（解析不了、动态内容、未知工具、PowerShell）永远不会命中 allow 规则**；deny / ask 规则仍按已知部分匹配。
+- **带 `gray` 标记的 Action（解析不了、动态内容、未知工具、PowerShell 里解析不了或动态的构造）永远不会命中 allow 规则**；deny / ask 规则仍按已知部分匹配。
 - 内部出错对 deny / ask 规则算"命中"，对 allow 规则算"不命中"：失败只会更严。
 - 内置规则 `m0-canary`（命令文本里含 `BOUNDKEEP_CANARY` → deny）总是最先评估，不写在 YAML 里。
 - 另有一条随机器而定的规则：设置了 `CLAUDE_CONFIG_DIR` 时，守护进程在加载策略时给该目录的 `settings*.json` 加上和 `protect-guard-config` 一样的写保护（`protect-guard-config-dir`）。
@@ -120,14 +120,15 @@ tests:
 | `no-history-read` | deny | 读 `.bash_history`、`.zsh_history`、`.python_history`、`.psql_history`、`.mysql_history`、PSReadLine 的 `ConsoleHost_history.txt` 等 |
 | `no-windows-credential-read` / `no-browser-profile-read` | deny | Windows 凭据、DPAPI、保险库、`System32\config`、`windows\repair`；Windows / Linux / macOS 浏览器配置目录与钥匙串。都含 `**/users/*/...` 形式，WSL 看到的 `/mnt/c/Users/x/...` 也被拦 |
 | `no-raw-disk-access` | deny | 读写 `/dev/sd*`、`nvme*`、`mmcblk*`、`/dev/mem`、`\\.\PhysicalDrive*` 等裸设备 |
-| `protect-windows-persistence`、`windows-persistence-commands` | ask | PowerShell profile（含 OneDrive 重定向后的 Documents）、启动文件夹、`schtasks` / `reg` / `sc`（含 WSL 里的 `reg.exe`） |
+| `protect-windows-persistence`、`windows-persistence-commands` | ask | PowerShell profile（含 OneDrive 重定向后的 Documents）、启动文件夹、`schtasks` / `reg` / `sc`（含 WSL 里的 `reg.exe`）；按程序名：计划任务与计划作业、服务、注册表属性写入（含 `Copy/Move/Rename/Clear-ItemProperty`）、WMI/CIM 实例、本地用户与组、防火墙规则与设置、Defender 排除项、`Clear-EventLog`、`setx`、`vssadmin`、`wevtutil`、`takeown`、`cipher`、`Stop-Computer` / `Restart-Computer` |
+| `ask-net-account-changes` | ask | `net` / `net1` 的 `user`、`localgroup`、`group`、`share`、`stop`、`start`、`accounts`、`config`（建账号、提权限、改密码、共享、控制服务） |
 | `protect-shell-startup-files`、`ask-system-config-write`、`ask-scheduled-jobs`、`ask-user-services`、`ask-launchctl` | ask | `.bashrc` / `.zshrc` / autostart / systemd 用户单元 / `~/.local/bin`；写 `/etc/**` 等系统配置；`crontab` / `at` / `systemd-run`；`systemctl --user`；`launchctl` |
 | `ask-ssh-write` | ask | 写 `.ssh` |
 | `ask-privilege-escalation` | ask | `su` / `sudo` / `doas` / `pkexec` 作为程序出现（被剥掉的 `sudo` 看里面的命令） |
 | `rm-outside-project` | deny | 递归删除项目之外的路径 |
 | `ask-delete-outside-project` | ask | 删除项目之外的单个文件 |
 | `git-force-push` | ask | `--force`、`--force-with-lease`、`+refspec`、`--mirror`、`--delete` 的 push |
-| `ask-git-reset-hard`、`ask-git-clean-force`、`ask-git-discard-paths`、`ask-git-branch-force-delete`、`ask-git-rewrite-history` | ask | `git reset --hard`、`git clean -f`、`git checkout -- <路径>`、`git branch -D`、`filter-branch` / `filter-repo` |
+| `ask-git-reset-hard`、`ask-git-clean-force`、`ask-git-discard-paths`、`ask-git-branch-force-delete`、`ask-git-rewrite-history` | ask | `git reset --hard`、`git clean -f`、`git checkout -- <路径>` 与 `git restore <路径>`（`--staged` 也会问：规则语言不能排除标志）、`git branch -D`、`filter-branch` / `filter-repo` |
 | `ask-docker-prune` | ask | `docker system/volume/image prune` |
 | `ask-find-delete` | ask | `find ... -delete`（默认只在项目之外；strict 一律） |
 | `ask-disk-tools` | ask | `mkfs*`、`wipefs`、`fdisk`、`parted`、`diskpart` 等（strict：deny） |
@@ -135,7 +136,18 @@ tests:
 | `net-allowlist` | ask | 访问 pypi.org、files.pythonhosted.org、github.com、registry.npmjs.org 之外的主机（目标未知也算） |
 | `read-inside-project` | allow | `Read` / `Glob` / `Grep` 且路径确定在项目内（唯一的 allow 规则） |
 
-M1 里 `PowerShell` 一律灰色（M1b 才解析），所以 PowerShell 命令不会命中命令类规则，只有写入文件类的工具（`Write` / `Edit`）和 `m0-canary` 对它们生效。
+`PowerShell` 工具的命令由辅助进程（Windows PowerShell 5.1 或 pwsh，只调用解析器、不执行任何用户文本）解析，结果和 Bash 一样是 Action 列表，命令类规则与路径规则同样适用。仍然灰色的构造见下一节。
+
+## PowerShell 命令的规则写法
+
+设计契约见 `docs/m1b-design.md`；这里只列写规则时要知道的事。
+
+- 规则的 `tool` 写 `[Bash, PowerShell]`（或不写）；Windows 专属的程序放进同一条规则即可，不需要 `platform:`。
+- **程序名**不区分大小写，并且是规范名：别名在匹配之前已被还原，所以 `rm`、`del`、`ri` 都是 `Remove-Item`，`ls`、`dir`、`gci` 都是 `Get-ChildItem`，`gc`、`cat`、`type` 都是 `Get-Content`。规则里写规范名（`Remove-Item`），不要写别名。外部程序取基本名（`curl.exe` → `curl`、`vssadmin.exe` → `vssadmin`）。
+- **参数**：`flags_any` 写规范参数名（`-Recurse`，不区分大小写）；缩写（`-Rec`）和冒号写法（`-Path:x`）已被还原。git 等外部程序的标志照外部程序的规则。
+- **子命令**：`net`、`net1`、`vssadmin`、`wevtutil`、`reg`、`sc`、`netsh`、`wmic` 的第一个纯字母词是 `subcommand`（`net user bob /add` 的 `user`）。`/add`、`/delete` 这类开关词会成为 flag，但 `flags_any` 的条目必须以 `-` 开头，所以不能直接匹配 `/add`：要靠子命令（`ask-net-account-changes`）或程序名。
+- **注册表与提供程序路径**（`HKLM:`、`Env:` 等）不是文件路径，`path_glob` 匹配不到；目前只能按程序名（`Set-ItemProperty`、`New-ItemProperty`、`Remove-ItemProperty` 等都在 `windows-persistence-commands` 里）取舍。`Set-Item` / `New-Item` / `Remove-Item` 对注册表的操作没有规则，见 `docs/powershell-dialect.md` 的已知缺口。
+- **灰色原因**以 `ps-` 开头，出现在审计日志的 `gray_reasons` 与 `boundkeep log` 里：`ps-helper-not-ready`（守护进程启动后头一两秒，辅助进程还在预热，所有 PowerShell 命令都 ask）、`ps-helper-timeout` / `ps-helper-crashed` / `ps-helper-busy` / `ps-helper-disabled` / `ps-helper-unavailable`、`ps-parse-error`、`ps-compound:<类型>`（`if`、`foreach`、函数、赋值等复合语句）、`ps-dynamic:<类型>` 与 `ps-dynamic-value:<类型>`（子表达式、脚本块、成员调用、类型转换）、`ps-dynamic-command-name`、`ps-param-unresolved:<cmdlet>:<参数>`、`ps-provider-path:<盘>`、`ps-dot-source`、`ps-encoded-command`、`ps-pipe-to-interpreter`、`ps-script-exec`、`ps-nested-shell`（`iex`、`Invoke-Command`、`Start-Process`、`powershell -c`、`cmd /c` 一类）。灰色的 Action 永远不会命中 allow 规则，但 deny / ask 规则仍按已知部分匹配。
 
 已知限制：`Grep` 的 `path` 是目录时，策略只看到这个目录（项目内就放行），看不到目录里的 `.env`；`Glob` 只返回文件名，也不算读内容。这两类需要归一化层把 `glob` 参数当作路径（不属于策略）。
 
