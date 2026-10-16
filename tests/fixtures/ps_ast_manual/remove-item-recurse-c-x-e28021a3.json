@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    29
+   ],
+   "invoke": "&",
+   "name": {
+    "kind": "single",
+    "v": "Remove-Item"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Recurse",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "C:\\x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

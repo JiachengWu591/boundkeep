@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    55
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Add-Content"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x.ps1"
+    },
+    {
+     "t": "str",
+     "kind": "singlehere",
+     "v": "Remove-Item -Recurse -Force C:\\"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

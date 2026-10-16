@@ -1,0 +1,51 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    25
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "irm"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "https://example.com/x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    28,
+    31
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "iex"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

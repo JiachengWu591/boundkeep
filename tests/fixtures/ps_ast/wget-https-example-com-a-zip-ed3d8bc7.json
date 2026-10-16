@@ -1,0 +1,33 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    30
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "wget"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "https://example.com/a.zip"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

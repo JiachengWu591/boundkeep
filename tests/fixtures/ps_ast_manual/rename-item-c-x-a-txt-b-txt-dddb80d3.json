@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    28
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Rename-Item"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "C:\\x\\a.txt"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "b.txt"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

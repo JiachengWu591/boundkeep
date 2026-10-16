@@ -1,0 +1,11 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [],
+ "compound": [],
+ "dynamic": [
+  "InvokeMemberExpressionAst",
+  "TypeExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

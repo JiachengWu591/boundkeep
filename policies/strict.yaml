@@ -347,8 +347,63 @@ rules:
         - regedit
         - regedit.exe
         - bcdedit
+        - Unregister-ScheduledTask
+        - Set-ScheduledTask
+        - Set-Service
+        - Set-ExecutionPolicy
+        - Add-MpPreference
+        - Set-MpPreference
+        - New-NetFirewallRule
+        - Set-NetFirewallRule
+        - Set-NetFirewallProfile
+        - Enable-PSRemoting
+        - Set-ItemProperty
+        - New-ItemProperty
+        - Remove-ItemProperty
+        - netsh
+        - netsh.exe
+        - wmic
+        - wmic.exe
+        - Copy-ItemProperty
+        - Move-ItemProperty
+        - Rename-ItemProperty
+        - Clear-ItemProperty
+        - Set-WmiInstance
+        - New-CimInstance
+        - Register-ScheduledJob
+        - Register-ObjectEvent
+        - New-LocalUser
+        - Add-LocalGroupMember
+        - Remove-Service
+        - Disable-ScheduledTask
+        - Remove-NetFirewallRule
+        - Enable-NetFirewallRule
+        - Disable-NetFirewallRule
+        - Set-NetFirewallSetting
+        - Remove-MpPreference
+        - Clear-EventLog
+        - setx
+        - vssadmin
+        - wevtutil
+        - takeown
+        - cipher
+        - Stop-Computer
+        - Restart-Computer
     action: ask
-    reason: "scheduled tasks, services and registry edits can run code at logon or boot"
+    reason: "scheduled tasks, services, registry edits, local accounts, WMI/CIM subscriptions, Defender exclusions, firewall rules, event-log clearing, shadow-copy deletion, ownership changes, shutdown and the execution policy can run code at logon or boot, switch protections off or destroy evidence and data"
+  - id: ask-net-account-changes
+    # `net user`, `net localgroup` and `net group` create accounts, put them into the
+    # Administrators group or reset a password (`net user name newpassword` changes it without
+    # any /add switch), `net share` publishes a folder, `net stop` / `net start` control
+    # services. The switch words (/add, /delete) cannot be matched (flags_any entries start with
+    # '-'), so the verb decides and read-only uses (`net user`, `net share`) ask as well.
+    # Only PowerShell actions carry the verb: the parser knows `net` as a Windows tool there.
+    tool: [Bash, PowerShell]
+    match:
+      program: [net, net1]
+      subcommand: [user, localgroup, group, share, stop, start, accounts, config]
+    action: ask
+    reason: "net changes local accounts, shares and services"
   - id: protect-shell-startup-files
     # Shell startup files, autostart entries, user services, launch agents and directories early in
     # PATH (~/.local/bin, ~/bin) run on every login or new shell, or in place of a real program. A
@@ -531,7 +586,9 @@ rules:
   - id: ask-git-discard-paths
     # `git checkout -- <path>`, `git checkout .` and `git restore <path>` overwrite working-tree
     # files with the committed version: uncommitted edits to them are lost. Only forms that name a
-    # path match (`git checkout main` switches branches and names none).
+    # path match (`git checkout main` switches branches and names none). `git restore --staged
+    # <path>` only unstages, but it names a path too and asks as well: the rule language cannot
+    # exclude a flag, and an unneeded question is the safe side.
     tool: [Bash, PowerShell]
     match:
       program: git
@@ -668,8 +725,7 @@ tests:
   - { tool: Bash,  input: { command: "pytest -q" },                   expect: gray }
   - { tool: Read,  input: { file_path: "./src/app.py" },              expect: allow }
   - { tool: Read,       platform: [windows], input: { file_path: "~\\.SSH\\id_rsa" },                  expect: deny }
-  # M1b (PowerShell normalization) will make this deny; until then PowerShell is gray.
-  - { tool: PowerShell, platform: [windows], input: { command: "Remove-Item -Recurse -Force C:\\" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-Item -Recurse -Force C:\\" }, expect: deny }
   - { tool: Bash,  input: { command: "curl https://github.com/o/r" }, expect: ask }   # no allowlist in strict
   - { tool: Bash,  input: { command: "echo 'x' >> ~/.bashrc" },       expect: deny }
   - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "rm -rf build" },            expect: ask }
@@ -698,3 +754,34 @@ tests:
   # One path must be both written and outside: copying a file IN from /tmp is a read of /tmp.
   - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "cp /tmp/a.txt ./b.txt" }, expect: ask }   # asks because /tmp is READ (outside), not written
   - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "cp ./a.txt /tmp/b.txt" }, expect: ask }   # asks because /tmp/b.txt is WRITTEN
+  # Windows persistence, account, firewall and shutdown commands (PowerShell, ask in both policies).
+  - { tool: PowerShell, platform: [windows], input: { command: "Copy-ItemProperty -Path HKCU:\\Software\\A -Name x -Destination HKCU:\\Software\\B" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Move-ItemProperty -Path HKCU:\\Software\\A -Name x -Destination HKCU:\\Software\\B" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Rename-ItemProperty -Path HKCU:\\Software\\A -Name x -NewName y" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Clear-ItemProperty -Path HKCU:\\Software\\A -Name x" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-WmiInstance -Class __EventFilter -Namespace root\\subscription" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "New-CimInstance -Namespace root\\subscription -ClassName CommandLineEventConsumer" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Register-ScheduledJob -Name j -ScriptBlock { 1 }" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Register-ObjectEvent -InputObject $w -EventName Created -Action { 1 }" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "New-LocalUser -Name bob -NoPassword" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Add-LocalGroupMember -Group Administrators -Member bob" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-Service -Name Spooler" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Disable-ScheduledTask -TaskName t" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-NetFirewallRule -Name r" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Enable-NetFirewallRule -Name r" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Disable-NetFirewallRule -Name r" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-NetFirewallSetting -Profile Domain" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-MpPreference -ExclusionPath C:\\x" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Clear-EventLog -LogName Application" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "setx PATH C:\\x" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "vssadmin delete shadows /all /quiet" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "wevtutil cl Security" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "takeown /f C:\\x" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "cipher /w:C:\\" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Stop-Computer -Force" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Restart-Computer" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "net user bob /add" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "net localgroup administrators bob /add" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "net1 user bob hunter2xx" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "git restore src\\a.py" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Date" }, expect: gray }

@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    24
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "powershell"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "enc",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "SQBFAFgA"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

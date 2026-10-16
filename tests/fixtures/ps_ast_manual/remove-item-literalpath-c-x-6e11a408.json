@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    33
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Remove-Item"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "LiteralPath",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "single",
+     "v": "C:\\x\\*"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

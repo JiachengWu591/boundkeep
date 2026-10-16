@@ -1,0 +1,46 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    17
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "rm"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "r",
+     "arg": null
+    },
+    {
+     "t": "param",
+     "name": "fo",
+     "arg": null
+    },
+    {
+     "t": "expstr",
+     "v": "$HOME\\x",
+     "vars": [
+      "HOME"
+     ],
+     "subexpr": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -1,0 +1,67 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    39
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Remove-Item"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": null
+    },
+    {
+     "t": "other",
+     "ast": "ParenExpressionAst",
+     "text": "(Get-Item x)"
+    },
+    {
+     "t": "param",
+     "name": "Recurse",
+     "arg": null
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    19,
+    29
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Item"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

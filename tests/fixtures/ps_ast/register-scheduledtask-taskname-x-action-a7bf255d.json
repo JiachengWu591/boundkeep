@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    57
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Register-ScheduledTask"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "TaskName",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    },
+    {
+     "t": "param",
+     "name": "Action",
+     "arg": null
+    },
+    {
+     "t": "var",
+     "name": "a",
+     "splat": false
+    },
+    {
+     "t": "param",
+     "name": "Trigger",
+     "arg": null
+    },
+    {
+     "t": "var",
+     "name": "t",
+     "splat": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

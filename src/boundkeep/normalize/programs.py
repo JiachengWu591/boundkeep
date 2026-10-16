@@ -193,6 +193,7 @@ def derive_risk_tags(
     exec_hint: bool = False,
     write_hint: bool = False,
     secret_hint: bool = False,
+    config_hint: bool = False,
 ) -> tuple[RiskTag, ...]:
     """Derive the risk tags of one command. THE single place tags are decided (audit here).
 
@@ -229,8 +230,8 @@ def derive_risk_tags(
         tags.append("exec")
     if secret_hint or any(_is_secret_path(w.text) for w, _ in paths):
         tags.append("secret_access")
-    if any(access != "read" and _is_config_path(w.text) for w, access in paths):
-        tags.append("config_tamper")
+    if config_hint or any(access != "read" and _is_config_path(w.text) for w, access in paths):
+        tags.append("config_tamper")  # config_hint: PowerShell provider paths, system settings
     return tuple(tags)
 
 
@@ -1124,30 +1125,34 @@ def _h_transfer(a: _Acc, args: Sequence[Word]) -> None:
         for w in pos:
             a.path(w, "write")
         return
-    src_access: Access = "write" if prog == "mv" else "read"
-    if prog == "ln":
-        src_access = "read"
+    moves = prog == "mv"
     parents = "--parents" in seen
     recursive = prog == "cp" and bool(seen & _fs("-r -R -a --recursive --archive"))
     if recursive:
         a.gray.append("directory-write")  # a copied directory brings members we cannot see
+
+    def source(w: Word) -> None:
+        a.path(w, "read")  # a source is always read (its content ends up at the destination)
+        if moves:
+            a.path(w, "write")  # and a moved source is removed: read AND written
+
     tdirs = [w for opt, _, w in sc.values if opt in ("-t", "--target-directory")]
     if tdirs:
         for w in pos:
-            a.path(w, src_access)
+            source(w)
         for d in tdirs:
             _copy_into(a, d, pos, dirlike=True, parents=parents)
         return
     if not pos:
         return
     if len(pos) == 1:
-        a.path(pos[0], src_access)
+        source(pos[0])
         if prog == "ln":
             a.path(Word("."), "write")
             _copy_into(a, Word("."), pos, dirlike=False, parents=False)
         return
     for w in pos[:-1]:
-        a.path(w, src_access)
+        source(w)
     dest = pos[-1]
     a.path(dest, "write")
     if "-T" not in seen and "--no-target-directory" not in seen:
@@ -3391,12 +3396,17 @@ def _classify(
     redirects: Sequence[Redirect],
     env: Sequence[tuple[str, Word]],
 ) -> CmdInfo:
+    if shell == "powershell":
+        # Local import: psprograms imports this module (it delegates external programs to it).
+        from boundkeep.normalize.psprograms import classify_ps
+
+        return classify_ps(program, args, redirects=redirects, env=env)
     name, status = _resolve_program(program)
     a = _Acc(name)
     if shell != "bash":
         a.known = False
-        a.gray.append("powershell-not-classified")
-        _h_unknown(a, args, single_dash_long=True)
+        a.gray.append("shell-not-classified")
+        _h_unknown(a, args)
     elif status == "dynamic":
         a.gray.append("dynamic-program")
         _h_unknown(a, args)
@@ -3460,7 +3470,8 @@ def classify(
     stripped. ``redirects`` become paths (``>``, ``>>``, ``&>`` write; ``<`` reads). ``env`` is the
     optional ``NAME=value`` prefix list: proxy variables become URLs when the command talks to the
     network and code-injecting ones (``LD_PRELOAD``, ``PATH``, ``GIT_SSH_COMMAND``, ...) make the
-    command gray. For ``shell="powershell"`` nothing is understood: ``known=False``, gray.
+    command gray. ``shell="powershell"`` is ``psprograms.classify_ps`` (cmdlet tables; canonical
+    cmdlet names and parameters as ``pscmd`` produces them).
 
     Never raises: an internal error yields ``known=False``, every risk tag and a gray reason.
     Unknown programs get ``known=False``; path-looking, expanding or globbing arguments become

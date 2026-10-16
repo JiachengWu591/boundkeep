@@ -1,0 +1,37 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    22
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Select-Object"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "First",
+     "arg": null
+    },
+    {
+     "t": "num",
+     "v": "5"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

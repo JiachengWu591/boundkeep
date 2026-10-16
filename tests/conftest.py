@@ -106,3 +106,17 @@ def boundkeep_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def hook_env(boundkeep_home: Path) -> dict[str, str]:
     """Environment for running the hook client or the CLI as a subprocess."""
     return scrubbed_env({"BOUNDKEEP_HOME": str(boundkeep_home)})
+
+
+@pytest.fixture(autouse=True)
+def _powershell_helper(request: pytest.FixtureRequest) -> None:
+    """Make sure the PowerShell parser helper is ready (it needs ~1.5 s to start) before a test
+    that may use it; other tests (the helper's own, which fiddle with the shared instance) can leave
+    it shut down. On other platforms it is simply unavailable and PowerShell commands are gray."""
+    if sys.platform != "win32" or request.module.__name__.endswith("test_norm_psparse"):
+        return
+    from boundkeep.normalize import psparse
+
+    if psparse.status().get("state") != "ready":
+        psparse.reset()
+        psparse.warm_up(wait_s=15)

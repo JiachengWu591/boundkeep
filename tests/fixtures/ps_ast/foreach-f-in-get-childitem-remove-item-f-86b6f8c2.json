@@ -1,0 +1,53 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    15,
+    28
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-ChildItem"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  },
+  {
+   "pos": [
+    32,
+    46
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Remove-Item"
+   },
+   "elements": [
+    {
+     "t": "var",
+     "name": "f",
+     "splat": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [
+  "ForEachStatementAst"
+ ],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

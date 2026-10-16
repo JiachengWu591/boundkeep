@@ -264,8 +264,8 @@ TRANSFER_CASES = [
         paths=[("dir", W_), ("a", R), ("dir/a", W_)],
     ),
     c("cp-secret", "cp", ["-r", "~/.ssh", "/tmp/x"], tags_has=["secret_access", "file_write"]),
-    c("mv", "mv", ["a", "b"], paths=[("a", W_), ("b", W_), ("b/a", W_)]),
-    c("mv-t", "mv", ["-t", "d", "a"], paths=[("d", W_), ("a", W_), ("d/a", W_)]),
+    c("mv", "mv", ["a", "b"], paths=[("a", R), ("a", W_), ("b", W_), ("b/a", W_)]),
+    c("mv-t", "mv", ["-t", "d", "a"], paths=[("d", W_), ("a", R), ("a", W_), ("d/a", W_)]),
     c("install-dirs", "install", ["-d", "d1", "d2"], paths=[("d1", W_), ("d2", W_)]),
     c(
         "install-mode",
@@ -1204,21 +1204,22 @@ MISC_CASES = [
         gray_has=["program-case-variant:RM"],
     ),
     c("program-versioned", "python3", ["x.py"], paths=[("x.py", R)]),
-    c(  # noqa: S604
-        "powershell-not-classified",
+    c(  # noqa: S604  (PowerShell is classified by psprograms: see test_norm_psprograms.py)
+        "powershell-dispatches-to-psprograms",
         "Remove-Item",
         ["-Recurse", "-Force", "C:\\x"],
         shell="powershell",
-        known=False,
+        known=True,
         flags=["-Recurse", "-Force"],
-        gray_has=["powershell-not-classified"],
+        paths=[("C:\\x", W_)],
     ),
     c(  # noqa: S604
         "powershell-flags-unexpanded",
         "Get-ChildItem",
         ["-Recurse"],
         shell="powershell",
-        known=False,
+        known=True,
+        flags=["-Recurse"],
         flags_not=["-R", "-e"],
     ),
 ]
@@ -2689,7 +2690,7 @@ def test_classify_never_raises(
         assert info.known is False
         assert "dynamic-program" in info.gray
     if shell == "powershell":
-        assert info.known is False
+        assert isinstance(info.known, bool)  # psprograms decides (see test_norm_psprograms.py)
 
 
 @settings(max_examples=400, deadline=None)

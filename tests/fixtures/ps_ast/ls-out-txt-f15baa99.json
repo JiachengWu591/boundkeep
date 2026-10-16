@@ -1,0 +1,37 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    12
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "ls"
+   },
+   "elements": [],
+   "redirects": [
+    {
+     "op": ">",
+     "target": {
+      "t": "str",
+      "kind": "bare",
+      "v": "out.txt"
+     },
+     "merge": null
+    }
+   ],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

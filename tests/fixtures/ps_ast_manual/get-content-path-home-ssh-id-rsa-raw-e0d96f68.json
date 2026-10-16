@@ -1,0 +1,46 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    42
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Content"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": null
+    },
+    {
+     "t": "expstr",
+     "v": "$HOME\\.ssh\\id_rsa",
+     "vars": [
+      "HOME"
+     ],
+     "subexpr": false
+    },
+    {
+     "t": "param",
+     "name": "Raw",
+     "arg": null
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

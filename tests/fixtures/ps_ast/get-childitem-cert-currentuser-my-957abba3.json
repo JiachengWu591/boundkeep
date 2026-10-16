@@ -1,0 +1,33 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    34
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-ChildItem"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Cert:\\CurrentUser\\My"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

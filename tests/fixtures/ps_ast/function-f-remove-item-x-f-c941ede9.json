@@ -1,0 +1,53 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    13,
+    26
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Remove-Item"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  },
+  {
+   "pos": [
+    30,
+    31
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "f"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [
+  "FunctionDefinitionAst"
+ ],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

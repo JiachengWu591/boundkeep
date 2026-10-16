@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    25
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Set-Variable"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "HOME"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "C:\\evil"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

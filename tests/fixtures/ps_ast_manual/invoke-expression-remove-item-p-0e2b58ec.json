@@ -1,0 +1,35 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    39
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Invoke-Expression"
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "ParenExpressionAst",
+     "text": "(\"Remove-Item \" + $p)"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "BinaryExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

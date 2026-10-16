@@ -160,7 +160,8 @@ def test_init_tells_the_truth_about_m1_and_does_not_claim_m0(machine: Machine) -
     assert "asks" in out
     assert "boundkeep mode audit-only" in out
     assert "PowerShell" in out
-    assert "M1b" in out
+    assert "not parsed until M1b" not in out  # PowerShell is parsed by a helper since M1b
+    assert "ps-helper-not-ready" in out
     assert "boundkeep test" in out
     assert "boundkeep explain" in out
 

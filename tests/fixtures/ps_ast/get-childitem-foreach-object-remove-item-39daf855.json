@@ -1,0 +1,78 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    13
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-ChildItem"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    16,
+    58
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "ForEach-Object"
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "ScriptBlockExpressionAst",
+     "text": "{ Remove-Item $_.FullName }"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    33,
+    56
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Remove-Item"
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "MemberExpressionAst",
+     "text": "$_.FullName"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "ScriptBlockExpressionAst",
+  "MemberExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

@@ -188,18 +188,51 @@ _SET_ENV_VAR = re.compile(
     r"[ \t\r\n]*\([ \t\r\n]*([\"'])([^\"'\r\n]{0,128})\1[ \t\r\n]*,[ \t\r\n]*",
     _FLAGS,
 )
-# PowerShell: the plaintext argument of ConvertTo-SecureString is a secret by definition.
-_SECURE_STRING = re.compile(r"ConvertTo-SecureString[ \t]+(?:-String[ \t]+)?(?=[\"'])", _FLAGS)
 # cmd: setx [/M] NAME value
 _SETX = re.compile(
     r"(?<![A-Za-z0-9_])setx[ \t]+(?:/[A-Za-z][ \t]+)*([\"']?)([A-Za-z0-9_.-]+)\1[ \t]+", _FLAGS
 )
-# Command line flags that take a secret as the next word: --password hunter2, --token "a b".
+# Command line flags that take a secret as the next word: --password hunter2, --token "a b", and
+# the PowerShell spellings -Password 'x', -Password:'x', -Pwd x.
 _SECRET_FLAG = re.compile(
-    r"(?<![A-Za-z0-9_-])--(?:password|passwd|token|secret|api-key|api_key|apikey|access-token"
-    r"|auth-token|client-secret|private-token|pass|passphrase|pwd)[ \t]+",
+    r"(?<![A-Za-z0-9_-])--?(?:password|passwd|token|secret|api-key|api_key|apikey|access-token"
+    r"|accesstoken|auth-token|authtoken|client-secret|clientsecret|private-token|pass|passphrase"
+    r"|pwd|credential|with-token|http-password|ftp-password|proxy-password|secret-key"
+    r"|secretkey|sas-token|sastoken)(?:[ \t]+|:)",
     _FLAGS,
 )
+# PowerShell cmdlets that store a value under a name: Set-Item Env:TOKEN 'x', Set-Variable -Name
+# token -Value 'x', Set-ItemProperty -Path ... -Name ApiKey -Value 'x' (and their short aliases).
+_PS_VALUE_CMD = re.compile(
+    r"(?<![A-Za-z0-9_.-])(Set-Item|New-Item|Set-Variable|New-Variable|Set-ItemProperty"
+    r"|New-ItemProperty|si|ni|sv|nv|sp)(?![A-Za-z0-9_-])",
+    _FLAGS,
+)
+_PS_SECURE_CMD = re.compile(r"ConvertTo-SecureString(?![A-Za-z0-9_-])", _FLAGS)
+_PS_PARAM = re.compile(r"-([A-Za-z]+)(:?)")
+_PS_BARE = re.compile(r"[^ \t\r\n;|&\"']+")
+_PS_STOP = frozenset(";|&)}")
+_PS_MAX_WORDS = 16
+_PS_LOOKBACK = 4096
+# Program-specific secret flags that are too common to treat as secret everywhere (-p is a port,
+# a directory flag ...). Each program has its own flag shape.
+_TOOL = re.compile(
+    r"(?<![A-Za-z0-9_.-])(docker|podman|nerdctl|az|sshpass|sqlcmd|redis-cli|mysql|mysqldump"
+    r"|mysqladmin|mariadb|mongo|mongosh|mongodump|mongorestore|zip|unzip|7z|7za|7zr|curl)"
+    r"(?:\.exe)?(?![A-Za-z0-9_.-])",
+    _FLAGS,
+)
+_TOOL_LOGIN_GROUP = frozenset({"docker", "podman", "nerdctl", "az"})
+_TOOL_SPACED_P = frozenset({"sshpass", "mongo", "mongosh", "mongodump", "mongorestore"})
+_TOOL_CAP_P = frozenset({"sqlcmd", "zip", "unzip"})
+_TOOL_ATTACHED_P = frozenset({"mysql", "mysqldump", "mysqladmin", "mariadb", "7z", "7za", "7zr"})
+_FLAG_P_SPACED = re.compile(r"(?<![A-Za-z0-9_-])-p[ \t]+", _FLAGS)
+_FLAG_CAP_P = re.compile(r"(?<![A-Za-z0-9_-])-P[ \t]*")
+_FLAG_P_ATTACHED = re.compile(r"(?<![A-Za-z0-9_-])-p(?=[^\s-])", _FLAGS)
+_FLAG_A_SPACED = re.compile(r"(?<![A-Za-z0-9_-])-a[ \t]+", _FLAGS)
+_FLAG_CURL_USER = re.compile(r"(?<![A-Za-z0-9_-])(?:-u|--user|--proxy-user)[ \t]+", _FLAGS)
+_LOGIN_WORD = re.compile(r"[ \t]login(?![A-Za-z0-9_-])", _FLAGS)
+_TOOL_WINDOW = 512
 
 # JSON-like pairs: a quoted key containing a keyword, then ":". The quote may be written with up
 # to four backslashes in front (JSON inside a double-quoted shell argument, or JSON inside a JSON
@@ -237,8 +270,18 @@ _ANY_TRIGGER = (
     "glpat-",
     "eyj",
     "x-",
-    "--pass",
-    "--pwd",
+    "-pass",
+    "-pwd",
+    "login",
+    "sqlcmd",
+    "mysql",
+    "mariadb",
+    "curl",
+    "sshpass",
+    "redis-cli",
+    "mongo",
+    "zip",
+    "7z",
     "bearer",
     "authorization",
     "credential",
@@ -382,6 +425,8 @@ def _value_edit(
     if v >= n:
         return None
     first = text[v]
+    if _starts_here_string(text, v):
+        return (v, _here_string_end(text, v), REDACTED)
     if first in "\"'":
         quoted = _QUOTED.match(text, v)
         if quoted is None:
@@ -421,7 +466,24 @@ def _value_edit(
         after = v + len(REDACTED)
         if after >= n or text[after] in _WS or text[after] in _SHELL_OPERATORS:
             return None
+    if concat:
+        end = _concat_end(text, end)  # $env:A = $env:B + 'secret': every operand is hidden
     return (v, end, REDACTED)
+
+
+def _starts_here_string(text: str, v: int) -> bool:
+    """True when a PowerShell here-string (``@'`` or ``@"`` then a line end) opens at ``v``."""
+    n = len(text)
+    if v + 1 >= n or text[v] != "@" or text[v + 1] not in "\"'":
+        return False
+    j = _skip_spaces(text, v + 2)
+    return j < n and text[j] in "\r\n"
+
+
+def _here_string_end(text: str, v: int) -> int:
+    """End of the here-string that opens at ``v`` (the rest of the text when unterminated)."""
+    close = text.find("\n" + text[v + 1] + "@", v + 2)
+    return len(text) if close < 0 else close + 3
 
 
 def _enclosed_edit(text: str, v: int, quote: str, name_start: int) -> _Edit | None:
@@ -504,7 +566,9 @@ def _assignment_edit(text: str, s: int, e: int) -> _Edit | None:
     spaced_before = k > i
     after_spaces = _skip_spaces(text, v)
     if quoted_name:
-        if after_spaces < n and text[after_spaces] in "\"'":
+        if after_spaces < n and (
+            text[after_spaces] in "\"'" or _starts_here_string(text, after_spaces)
+        ):
             return _value_edit(text, after_spaces, single_only=True)
         if not spaced_before and after_spaces == v and v < n and text[v] != "=":
             return _value_edit(text, v, single_only=False)  # export "NAME"=value
@@ -520,7 +584,9 @@ def _assignment_edit(text: str, s: int, e: int) -> _Edit | None:
     if spaced_before or after_spaces > v:
         # Generic "name = value" (config files, source code): only a quoted literal counts, so
         # prose and comparisons ("tokens = 3", "key == x") are left alone.
-        if after_spaces < n and text[after_spaces] in "\"'":
+        if after_spaces < n and (
+            text[after_spaces] in "\"'" or _starts_here_string(text, after_spaces)
+        ):
             return _value_edit(text, after_spaces, single_only=True)
         return None
     return _value_edit(text, v, single_only=False, name_start=s)
@@ -568,20 +634,287 @@ def _pass_set_env_calls(text: str, work: _Work) -> str:
     return _splice(text, edits)
 
 
+def _ps_words(text: str, pos: int, work: _Work) -> list[tuple[int, int]]:
+    """Spans of the argument words of the PowerShell command whose name ends at ``pos``.
+
+    Stops at the end of the statement (line end, ``;``, ``|``, ``&``, a closing bracket) or after
+    a fixed number of words. Quoted strings and here-strings are one word each.
+    """
+    n = len(text)
+    words: list[tuple[int, int]] = []
+    i = pos
+    while len(words) < _PS_MAX_WORDS:
+        while i < n:
+            c = text[i]
+            if c in " \t":
+                i += 1
+            elif c == "`" and i + 1 < n and text[i + 1] in "\r\n":  # line continuation
+                i += 2
+                if text[i - 1] == "\r" and i < n and text[i] == "\n":
+                    i += 1
+            else:
+                break
+        if i >= n or text[i] in "\r\n" or text[i] in _PS_STOP:
+            break
+        work.charge()
+        if _starts_here_string(text, i):
+            end = _here_string_end(text, i)
+        elif text[i] in "\"'":
+            quoted = _QUOTED.match(text, i)
+            end = quoted.end() if quoted is not None else n
+        else:
+            bare = _PS_BARE.match(text, i)
+            end = bare.end() if bare is not None else i + 1
+        words.append((i, end))
+        i = end
+    return words
+
+
+def _ps_role(pname: str) -> str | None:
+    """What a parameter (possibly abbreviated) takes as its value, or None for other parameters."""
+    if len(pname) >= 2 and "value".startswith(pname):
+        return "value"
+    if "name".startswith(pname):
+        return "name"
+    if (len(pname) >= 2 and "path".startswith(pname)) or (
+        len(pname) >= 3 and "literalpath".startswith(pname)
+    ):
+        return "path"
+    if len(pname) >= 2 and "string".startswith(pname):
+        return "string"
+    if pname == "key" or (len(pname) >= 3 and "securekey".startswith(pname)):
+        return "key"
+    return None
+
+
+def _ps_items(text: str, words: list[tuple[int, int]]) -> list[tuple[str, tuple[int, int]]]:
+    """(role, value span) per argument: role is value, name, path, string, key, pos or other."""
+    items: list[tuple[str, tuple[int, int]]] = []
+    i = 0
+    while i < len(words):
+        start, end = words[i]
+        i += 1
+        param = _PS_PARAM.match(text, start, end)
+        if param is None:
+            items.append(("pos", (start, end)))
+            continue
+        role = _ps_role(param.group(1).lower())
+        span: tuple[int, int] | None = None
+        if param.group(2):  # -Name:value, -Name:'value'
+            if param.end() < end:
+                span = (param.end(), end)
+            elif i < len(words) and words[i][0] == end:
+                span = words[i]
+                i += 1
+        elif role is not None and i < len(words):
+            following = words[i]
+            if _PS_PARAM.match(text, following[0], following[1]) is None:
+                span = following
+                i += 1
+        if span is not None:
+            items.append((role or "other", span))
+    return items
+
+
+def _piped_literal_edit(text: str, floor: int, start: int) -> _Edit | None:
+    """Edit for ``'plaintext' | ConvertTo-SecureString``: the quoted literal before the pipe."""
+    lo = max(floor, start - _PS_LOOKBACK)
+    i = start - 1
+    while i >= lo and text[i] in " \t":
+        i -= 1
+    if i < lo or text[i] != "|":
+        return None
+    i -= 1
+    if i >= lo and text[i] == "|":
+        return None
+    while i >= lo and text[i] in " \t":
+        i -= 1
+    if i < lo or text[i] not in "\"'":
+        return None
+    quote = text[i]
+    end = i + 1
+    j = i - 1
+    while j >= lo:
+        if text[j] == quote:
+            if j > lo and text[j - 1] == quote:  # doubled quote inside the literal
+                j -= 2
+                continue
+            break
+        j -= 1
+    if j < lo:
+        return (lo, end, REDACTED)  # the literal opens before the window: hide what we can see
+    if end - j == 2 or text[j + 1 : end - 1] == REDACTED:
+        return None
+    return (j, end, quote + REDACTED + quote)
+
+
 def _pass_secure_string(text: str, work: _Work) -> str:
-    """The plaintext literal handed to PowerShell's ConvertTo-SecureString."""
+    """The plaintext handed to PowerShell's ConvertTo-SecureString, wherever it is written.
+
+    ``ConvertTo-SecureString -AsPlainText -Force -String 'x'``, the positional form with any
+    switches in front, and the piped form ``'x' | ConvertTo-SecureString``.
+    """
     edits: list[_Edit] = []
     pos = 0
+    floor = 0
     while True:
-        match = _SECURE_STRING.search(text, pos)
+        match = _PS_SECURE_CMD.search(text, pos)
         if match is None:
             break
         work.charge()
         pos = match.end()
-        edit = _value_edit(text, pos, single_only=True)
-        if edit is not None:
+        back = _piped_literal_edit(text, floor, match.start())
+        if back is not None:
+            edits.append(back)
+            floor = back[1]
+        items = _ps_items(text, _ps_words(text, pos, work))
+        target = next((span for role, span in items if role == "string"), None)
+        if target is None:
+            target = next((span for role, span in items if role == "pos"), None)
+        if target is None or text.startswith("$", target[0]):
+            continue
+        edit = _value_edit(text, target[0], single_only=False)
+        if edit is not None and edit[0] >= floor:
             edits.append(edit)
-            pos = edit[1]
+            floor = pos = edit[1]
+    return _splice(text, edits)
+
+
+_PS_ITEM_CMDS = frozenset({"set-item", "new-item", "si", "ni"})
+_PS_PROP_CMDS = frozenset({"set-itemproperty", "new-itemproperty", "sp"})
+
+
+def _ps_value_edits(text: str, cmd: str, words: list[tuple[int, int]]) -> list[_Edit]:
+    """Value edits for ``Set-Variable -Name token -Value 'x'`` and its Set-Item / Env: cousins."""
+    kind = "item" if cmd in _PS_ITEM_CMDS else "prop" if cmd in _PS_PROP_CMDS else "var"
+    items = _ps_items(text, words)
+    positional = [span for role, span in items if role == "pos"]
+    explicit = [span for role, span in items if role == "value"]
+
+    def literal(span: tuple[int, int]) -> str:
+        return text[span[0] : span[1]].strip("\"'").lower()
+
+    provider = any(
+        literal(span).startswith(("env:", "variable:"))
+        for role, span in items
+        if role in ("path", "pos")
+    )
+    candidates: list[tuple[int, int]] = []
+    for role, span in items:
+        if role not in ("name", "path", "pos") or _ASSIGN_ANY.search(literal(span)) is None:
+            continue
+        if kind == "item" and not (
+            literal(span).startswith(("env:", "variable:")) or (provider and role == "name")
+        ):
+            continue
+        if kind == "prop" and (role == "path" or (positional and span == positional[0])):
+            continue
+        candidates.append(span)
+    if not candidates:
+        return []
+    if explicit:
+        targets = explicit
+    else:
+        targets = [
+            span
+            for span in positional
+            if span not in candidates and not (kind != "var" and span == positional[0])
+        ]
+    edits: list[_Edit] = []
+    last = 0
+    for span in sorted(targets):
+        edit = _value_edit(text, span[0], single_only=False, concat=True)
+        if edit is not None and edit[0] >= last:
+            edits.append(edit)
+            last = edit[1]
+    return edits
+
+
+def _pass_ps_values(text: str, work: _Work) -> str:
+    """Values stored under a secret-looking name by Set-Variable, Set-Item Env:X and the like."""
+    edits: list[_Edit] = []
+    pos = 0
+    last = 0
+    while True:
+        match = _PS_VALUE_CMD.search(text, pos)
+        if match is None:
+            break
+        work.charge()
+        words = _ps_words(text, match.end(), work)
+        pos = max(match.end(), words[-1][1] if words else 0)
+        for edit in _ps_value_edits(text, match.group(1).lower(), words):
+            if edit[0] >= last:
+                edits.append(edit)
+                last = edit[1]
+        pos = max(pos, last)
+    return _splice(text, edits)
+
+
+def _curl_user_edit(text: str, start: int, limit: int) -> _Edit | None:
+    """``curl -u user:password``: hide what follows the first colon of the credential word."""
+    flag = _FLAG_CURL_USER.search(text, start, limit)
+    if flag is None:
+        return None
+    v = flag.end()
+    n = len(text)
+    if v >= n:
+        return None
+    if text[v] in "\"'":
+        quoted = _QUOTED.match(text, v)
+        inner_start, inner_end = v + 1, (quoted.end() - 1 if quoted is not None else n)
+    else:
+        word = _WORD.match(text, v)
+        inner_start, inner_end = v, (word.end() if word is not None else v)
+    colon = text.find(":", inner_start, inner_end)
+    if colon < 0 or colon + 1 >= inner_end or text[colon + 1 : inner_end] == REDACTED:
+        return None
+    return (colon + 1, inner_end, REDACTED)
+
+
+def _tool_flag_edit(text: str, prog: str, start: int, limit: int) -> _Edit | None:
+    if prog == "curl":
+        return _curl_user_edit(text, start, limit)
+    if prog in _TOOL_LOGIN_GROUP:
+        if _LOGIN_WORD.search(text, start, limit) is None:
+            return None
+        pattern = _FLAG_P_SPACED
+    elif prog in _TOOL_SPACED_P:
+        pattern = _FLAG_P_SPACED
+    elif prog in _TOOL_CAP_P:
+        pattern = _FLAG_CAP_P
+    elif prog in _TOOL_ATTACHED_P:
+        pattern = _FLAG_P_ATTACHED
+    elif prog == "redis-cli":
+        pattern = _FLAG_A_SPACED
+    else:
+        return None
+    flag = pattern.search(text, start, limit)
+    if flag is None:
+        return None
+    v = flag.end()
+    if v >= len(text) or text[v] in _WS:
+        return None
+    return _value_edit(text, v, single_only=False, name_start=flag.start())
+
+
+def _pass_tool_flags(text: str, work: _Work) -> str:
+    """Password flags of specific programs (docker login -p, sqlcmd -P, mysql -pSECRET, curl -u)."""
+    edits: list[_Edit] = []
+    pos = 0
+    last = 0
+    n = len(text)
+    while True:
+        match = _TOOL.search(text, pos)
+        if match is None:
+            break
+        work.charge()
+        pos = match.end()
+        newline = text.find("\n", pos, pos + _TOOL_WINDOW)
+        limit = newline if newline >= 0 else min(n, pos + _TOOL_WINDOW)
+        edit = _tool_flag_edit(text, match.group(1).lower(), pos, limit)
+        if edit is not None and edit[0] >= last:
+            edits.append(edit)
+            last = pos = edit[1]
     return _splice(text, edits)
 
 
@@ -615,7 +948,8 @@ def _pass_secret_flags(text: str, work: _Work) -> str:
         work.charge()
         v = match.end()
         pos = v
-        if v < n and text[v] != "-":
+        colon = text[v - 1] == ":"  # -Password:'x' binds the value even when it starts with "-"
+        if v < n and text[v] not in _WS and (colon or text[v] != "-"):
             edit = _value_edit(text, v, single_only=False, name_start=match.start())
             if edit is not None:
                 edits.append(edit)
@@ -676,15 +1010,22 @@ def _redact_once(text: str, work: _Work) -> str:
         changed = _pass_secure_string(text, work)
         if changed != text:
             text, low = changed, changed.lower()
+    if "-" in low:
+        changed = _pass_tool_flags(text, work)
+        if changed != text:
+            text, low = changed, changed.lower()
     if "setx" in low:
         changed = _pass_setx(text, work)
         if changed != text:
             text, low = changed, changed.lower()
     if _contains_any(low, _ASSIGN_WORD_LIST):
+        changed = _pass_ps_values(text, work)
+        if changed != text:
+            text, low = changed, changed.lower()
         changed = _pass_assignments(text, work)
         if changed != text:
             text, low = changed, changed.lower()
-    if "--" in low:  # --pass and --pwd carry no assignment word, the others do; scan for all
+    if "-" in low:  # -pass and -pwd carry no assignment word, the others do; scan for all
         changed = _pass_secret_flags(text, work)
         if changed != text:
             text, low = changed, changed.lower()

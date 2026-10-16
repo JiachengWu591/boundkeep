@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    54
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "New-Item"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "ItemType",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "File"
+    },
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "a.txt"
+    },
+    {
+     "t": "param",
+     "name": "Value",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "single",
+     "v": "C:\\secret"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -1,0 +1,35 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    5,
+    11
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "echo"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [
+  "DoWhileStatementAst"
+ ],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

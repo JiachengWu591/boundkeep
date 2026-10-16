@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    15
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "cmd"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "/c"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "del"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "/q"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

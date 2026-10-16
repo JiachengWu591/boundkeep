@@ -1,0 +1,33 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    43
+   ],
+   "invoke": "&",
+   "name": {
+    "kind": "single",
+    "v": "C:\\Program Files\\Git\\bin\\git.exe"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "status"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

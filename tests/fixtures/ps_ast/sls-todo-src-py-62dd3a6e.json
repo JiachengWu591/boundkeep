@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    17
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "sls"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "TODO"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "src\\*.py"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

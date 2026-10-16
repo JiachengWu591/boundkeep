@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    35
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "New-Object"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "ComObject",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "WScript.Shell"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

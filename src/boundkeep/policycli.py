@@ -39,6 +39,7 @@ _FAKE: dict[str, dict[str, Any]] = {
         "env": {
             "USERPROFILE": "C:\\Users\\testuser",
             "APPDATA": "C:\\Users\\testuser\\AppData\\Roaming",
+            "LOCALAPPDATA": "C:\\Users\\testuser\\AppData\\Local",
         },
     },
     "posix": {
@@ -83,7 +84,14 @@ def _run_one(
 
 
 def cmd_test(args: argparse.Namespace) -> int:
+    from boundkeep.normalize import psparse
+
+    psparse.warm_up(wait_s=10)  # PowerShell policy tests need the parser helper to be ready
+    # A host without PowerShell cannot parse PowerShell commands (they come back gray), which says
+    # nothing about the policy: those cases are skipped visibly, never counted as passes or fails.
+    no_ps = _ps_unavailable(psparse.status())
     failures = 0
+    skipped = 0
     ran = 0
     ran_on: dict[str, int] = {}
     total_tests = 0
@@ -100,6 +108,13 @@ def cmd_test(args: argparse.Namespace) -> int:
         ran_on[platform] = 0
         for index, case in enumerate(policy.tests, start=1):
             if case.platform is not None and platform not in case.platform:
+                continue
+            if no_ps and case.tool == "PowerShell":
+                skipped += 1
+                shown = json.dumps(case.input.thaw(), ensure_ascii=False)[:90]
+                console.out(
+                    f"  [SKIP] #{index} {case.tool} {shown} (no PowerShell parser on this host)"
+                )
                 continue
             ran += 1
             ran_on[platform] += 1
@@ -120,7 +135,10 @@ def cmd_test(args: argparse.Namespace) -> int:
                 console.out(f"  [FAIL] {label}: expected {case.expect}, got {got}")
                 for reason in result.verdict.reasons[:3]:
                     console.out(f"         why: {reason}")
-    console.out(f"{ran} test(s) run, {failures} failed")
+    summary = f"{ran} test(s) run, {failures} failed"
+    if skipped:
+        summary += f", {skipped} skipped"
+    console.out(summary)
     # A run that checked nothing proves nothing: it must not look like a pass.
     if args.platform != "all" and ran == 0:
         console.err(
@@ -132,6 +150,15 @@ def cmd_test(args: argparse.Namespace) -> int:
         console.err(f"boundkeep test: no test ran ({_why_none(total_tests, 'all')})")
         return EXIT_PROBLEM
     return EXIT_PROBLEM if failures else EXIT_OK
+
+
+def _ps_unavailable(status: Mapping[str, Any]) -> bool:
+    """Is there no PowerShell parser on this host (not found / unusable language mode)?
+
+    Only ``unavailable``: a helper that is merely slow to start or whose breaker is open on a host
+    that does have PowerShell must keep failing the PowerShell tests where somebody can see it.
+    """
+    return status.get("state") == "unavailable"
 
 
 def _why_none(total: int, platform: str) -> str:
@@ -175,6 +202,9 @@ def _runtime(policy: Policy, env: Mapping[str, str], home: str | None) -> tuple[
 def cmd_explain(args: argparse.Namespace) -> int:
     """Explain one hook event with the REAL machine (this user's home and environment), the way
     the daemon would see it; ``--policy`` defaults to the active policy, else the shipped one."""
+    from boundkeep.normalize import psparse
+
+    psparse.warm_up(wait_s=10)
     try:
         if args.event == "-":
             raw = sys.stdin.buffer.read()

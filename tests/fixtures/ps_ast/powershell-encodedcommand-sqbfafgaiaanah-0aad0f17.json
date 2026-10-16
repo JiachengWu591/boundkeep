@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    59
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "powershell"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "EncodedCommand",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "SQBFAFgAIAAnAHcAaABvAGEAbQBpACcA"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

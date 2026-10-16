@@ -1,0 +1,33 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    60
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Content"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Microsoft.PowerShell.Core\\FileSystem::C:\\x\\y.txt"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

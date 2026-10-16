@@ -1,0 +1,62 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    24
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Set-Alias"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "gc"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Remove-Item"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    26,
+    30
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "gc"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

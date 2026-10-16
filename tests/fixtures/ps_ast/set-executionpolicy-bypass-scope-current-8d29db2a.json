@@ -1,0 +1,43 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    45
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Set-ExecutionPolicy"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Bypass"
+    },
+    {
+     "t": "param",
+     "name": "Scope",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "CurrentUser"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

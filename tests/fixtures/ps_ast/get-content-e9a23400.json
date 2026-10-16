@@ -1,0 +1,33 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    15
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Content"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "\uff23\uff2f\uff2e"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

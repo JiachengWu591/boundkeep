@@ -1,0 +1,55 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    2
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "ls"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    5,
+    27
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Select-Object"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "First",
+     "arg": null
+    },
+    {
+     "t": "num",
+     "v": "3"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

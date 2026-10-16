@@ -1,0 +1,43 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    21
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "git"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "C",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "C:\\repo"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "status"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

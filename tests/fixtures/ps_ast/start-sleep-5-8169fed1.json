@@ -1,0 +1,32 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    13
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Start-Sleep"
+   },
+   "elements": [
+    {
+     "t": "num",
+     "v": "5"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

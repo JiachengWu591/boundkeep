@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    20
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "npm"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "install"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "left-pad"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -1,0 +1,33 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    25
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Start-Process"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "notepad.exe"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

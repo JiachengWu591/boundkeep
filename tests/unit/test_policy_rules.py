@@ -1103,9 +1103,15 @@ FIELD_CASES = [
     pytest.param({"flags_any": ["-r"]}, A(), False, id="flag-absent"),
     pytest.param(
         {"flags_any": ["-Recurse"]},
-        A(flags=("-recurse",), sh="powershell"),
+        A(flags=("-recurse",), sh="powershell", program="Remove-Item"),
         True,
         id="flag-powershell-case-insensitive",
+    ),
+    pytest.param(
+        {"flags_any": ["-D"]},
+        A(flags=("-d",), sh="powershell", program="git"),
+        False,
+        id="flag-powershell-external-case-sensitive",
     ),
     # path_outside_project / path_inside_project
     pytest.param(
@@ -1669,8 +1675,7 @@ def test_default_policy_keeps_the_spec_example_tests() -> None:
         ("Bash", "gray", "pytest -q"),
         ("Read", "allow", "./src/app.py"),
         ("Read", "deny", "~\\.SSH\\id_rsa"),
-        # the spec says deny; PowerShell is gray until M1b (PowerShell normalization)
-        ("PowerShell", "gray", "Remove-Item -Recurse -Force C:\\"),
+        ("PowerShell", "deny", "Remove-Item -Recurse -Force C:\\"),
     ]:
         assert expected in seen
 

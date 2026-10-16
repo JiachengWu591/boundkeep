@@ -1,0 +1,45 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    9
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "foo"
+   },
+   "elements": [
+    {
+     "t": "array",
+     "items": [
+      {
+       "t": "num",
+       "v": "1"
+      },
+      {
+       "t": "num",
+       "v": "2"
+      },
+      {
+       "t": "num",
+       "v": "3"
+      }
+     ]
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

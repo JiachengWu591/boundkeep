@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    56
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Start-BitsTransfer"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Source",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "http://x/a"
+    },
+    {
+     "t": "param",
+     "name": "Destination",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "a.exe"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

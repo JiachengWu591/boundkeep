@@ -1,0 +1,46 @@
+{
+ "ok": true,
+ "parse_errors": [
+  {
+   "msg": "\u201c(\u201d\u540e\u9762\u5e94\u4e3a\u8868\u8fbe\u5f0f\u3002",
+   "line": 1,
+   "col": 14
+  },
+  {
+   "msg": "\u8868\u8fbe\u5f0f\u4e2d\u7f3a\u5c11\u53f3\u201c)\u201d\u3002",
+   "line": 1,
+   "col": 14
+  }
+ ],
+ "commands": [
+  {
+   "pos": [
+    0,
+    13
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Content"
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "ParenExpressionAst",
+     "text": "("
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [
+  "ErrorStatementAst"
+ ],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

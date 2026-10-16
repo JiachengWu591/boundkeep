@@ -1,0 +1,42 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    16
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "foo"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "-5"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "-1.5"
+    },
+    {
+     "t": "num",
+     "v": "0x10"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

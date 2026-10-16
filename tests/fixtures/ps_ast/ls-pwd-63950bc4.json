@@ -1,0 +1,39 @@
+{
+ "ok": true,
+ "parse_errors": [
+  {
+   "msg": "\u4e0d\u5141\u8bb8\u4f7f\u7528\u4e0e\u53f7(&)\u3002& \u8fd0\u7b97\u7b26\u662f\u4e3a\u5c06\u6765\u4f7f\u7528\u800c\u4fdd\u7559\u7684\uff1b\u8bf7\u7528\u53cc\u5f15\u53f7\u5c06\u4e0e\u53f7\u5f15\u8d77\u6765(\"&\")\uff0c\u4ee5\u5c06\u5176\u4f5c\u4e3a\u5b57\u7b26\u4e32\u7684\u4e00\u90e8\u5206\u4f20\u9012\u3002",
+   "line": 1,
+   "col": 4
+  }
+ ],
+ "commands": [
+  {
+   "pos": [
+    0,
+    8
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "ls"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "pwd"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

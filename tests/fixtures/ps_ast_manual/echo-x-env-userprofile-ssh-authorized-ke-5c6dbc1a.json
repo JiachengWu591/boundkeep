@@ -1,0 +1,46 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    47
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "echo"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    }
+   ],
+   "redirects": [
+    {
+     "op": ">>",
+     "target": {
+      "t": "expstr",
+      "v": "$env:USERPROFILE\\.ssh\\authorized_keys",
+      "vars": [
+       "env:USERPROFILE"
+      ],
+      "subexpr": false
+     },
+     "merge": null
+    }
+   ],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

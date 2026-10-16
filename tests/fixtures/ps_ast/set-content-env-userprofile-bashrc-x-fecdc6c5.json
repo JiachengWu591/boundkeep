@@ -1,0 +1,41 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    38
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Set-Content"
+   },
+   "elements": [
+    {
+     "t": "expstr",
+     "v": "$env:USERPROFILE\\.bashrc",
+     "vars": [
+      "env:USERPROFILE"
+     ],
+     "subexpr": false
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    23
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "icm"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "ScriptBlock",
+     "arg": null
+    },
+    {
+     "t": "other",
+     "ast": "ScriptBlockExpressionAst",
+     "text": "{ ls }"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    19,
+    21
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "ls"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "ScriptBlockExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

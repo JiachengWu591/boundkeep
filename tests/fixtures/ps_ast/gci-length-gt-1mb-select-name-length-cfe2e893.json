@@ -1,0 +1,89 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    3
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "gci"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 3
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    6,
+    29
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "?"
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "ScriptBlockExpressionAst",
+     "text": "{ $_.Length -gt 1mb }"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 3
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    32,
+    51
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "select"
+   },
+   "elements": [
+    {
+     "t": "array",
+     "items": [
+      {
+       "t": "str",
+       "kind": "bare",
+       "v": "Name"
+      },
+      {
+       "t": "str",
+       "kind": "bare",
+       "v": "Length"
+      }
+     ]
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 2,
+    "of": 3
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "ScriptBlockExpressionAst",
+  "BinaryExpressionAst",
+  "MemberExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

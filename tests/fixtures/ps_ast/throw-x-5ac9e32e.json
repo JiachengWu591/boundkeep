@@ -1,0 +1,10 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [],
+ "compound": [
+  "ThrowStatementAst"
+ ],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

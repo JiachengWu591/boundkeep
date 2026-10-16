@@ -1,0 +1,37 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    19
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "foo"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": {
+      "t": "var",
+      "name": "env:TEMP",
+      "splat": false
+     }
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

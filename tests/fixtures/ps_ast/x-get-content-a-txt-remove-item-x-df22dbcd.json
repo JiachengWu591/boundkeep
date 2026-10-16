@@ -1,0 +1,59 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    5,
+    22
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Content"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "a.txt"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  },
+  {
+   "pos": [
+    24,
+    38
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Remove-Item"
+   },
+   "elements": [
+    {
+     "t": "var",
+     "name": "x",
+     "splat": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [
+  "AssignmentStatementAst"
+ ],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

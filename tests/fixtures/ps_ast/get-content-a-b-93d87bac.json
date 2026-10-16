@@ -1,0 +1,61 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    19
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "expr",
+    "v": "(Get-Content a) > b"
+   },
+   "elements": [],
+   "redirects": [
+    {
+     "op": ">",
+     "target": {
+      "t": "str",
+      "kind": "bare",
+      "v": "b"
+     },
+     "merge": null
+    }
+   ],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    1,
+    14
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Content"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "a"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

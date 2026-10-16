@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    57
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "New-Item"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": ".claude"
+    },
+    {
+     "t": "param",
+     "name": "Name",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "settings.json"
+    },
+    {
+     "t": "param",
+     "name": "ItemType",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "File"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

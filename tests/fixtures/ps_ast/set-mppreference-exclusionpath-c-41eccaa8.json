@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    35
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Set-MpPreference"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "ExclusionPath",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "C:\\"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    28
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "git"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "push"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "--force"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "origin"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "main"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

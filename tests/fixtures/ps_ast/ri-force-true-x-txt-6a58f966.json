@@ -1,0 +1,42 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    21
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "ri"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Force",
+     "arg": {
+      "t": "var",
+      "name": "true",
+      "splat": false
+     }
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x.txt"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

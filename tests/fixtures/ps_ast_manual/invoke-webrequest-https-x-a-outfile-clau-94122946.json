@@ -1,0 +1,43 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    60
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Invoke-WebRequest"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "https://x/a"
+    },
+    {
+     "t": "param",
+     "name": "OutFile",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": ".claude\\settings.json"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

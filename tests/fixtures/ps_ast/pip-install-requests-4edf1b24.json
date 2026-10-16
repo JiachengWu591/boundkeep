@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    20
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "pip"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "install"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "requests"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

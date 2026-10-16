@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    36
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "docker"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "run"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "--rm"
+    },
+    {
+     "t": "param",
+     "name": "v",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "C:\\x:/x"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "alpine"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "ls"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

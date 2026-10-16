@@ -1,0 +1,34 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    16,
+    29
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Start-Sleep"
+   },
+   "elements": [
+    {
+     "t": "num",
+     "v": "1"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [
+  "WhileStatementAst"
+ ],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

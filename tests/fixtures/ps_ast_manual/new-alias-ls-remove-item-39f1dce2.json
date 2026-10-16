@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    24
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "New-Alias"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "ls"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Remove-Item"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

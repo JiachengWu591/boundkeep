@@ -1,0 +1,37 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    15
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "expr",
+    "v": "'x' > ~\\.bashrc"
+   },
+   "elements": [],
+   "redirects": [
+    {
+     "op": ">",
+     "target": {
+      "t": "str",
+      "kind": "bare",
+      "v": "~\\.bashrc"
+     },
+     "merge": null
+    }
+   ],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

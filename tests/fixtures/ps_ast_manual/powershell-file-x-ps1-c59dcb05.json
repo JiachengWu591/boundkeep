@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    22
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "powershell"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "File",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x.ps1"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

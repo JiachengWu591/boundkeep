@@ -1,0 +1,77 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    2
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "ls"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    5,
+    16
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "%"
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "ScriptBlockExpressionAst",
+     "text": "{ rm $_ }"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    9,
+    14
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "rm"
+   },
+   "elements": [
+    {
+     "t": "var",
+     "name": "_",
+     "splat": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "ScriptBlockExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

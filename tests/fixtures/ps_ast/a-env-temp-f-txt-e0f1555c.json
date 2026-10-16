@@ -1,0 +1,40 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    21
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "expr",
+    "v": "$a >> $env:TEMP\\f.txt"
+   },
+   "elements": [],
+   "redirects": [
+    {
+     "op": ">>",
+     "target": {
+      "t": "expstr",
+      "v": "$env:TEMP\\f.txt",
+      "vars": [
+       "env:TEMP"
+      ],
+      "subexpr": false
+     },
+     "merge": null
+    }
+   ],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

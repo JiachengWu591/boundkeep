@@ -167,8 +167,67 @@ def check_daemon(endpoint: Endpoint | None) -> list[Check]:
     status = WARN if "policy error" in response.reason else OK
     checks = [Check("daemon", status, f"running ({response.reason}); ping {elapsed_ms:.1f} ms")]
     checks += check_config_dir(response.reason)
+    checks += check_powershell_parser(response.reason)
     if endpoint.transport == TRANSPORT_NAMED_PIPE and sys.platform == "win32":
         checks += _check_pipe_acl(endpoint)
+    return checks
+
+
+_STATUS_POWERSHELL = re.compile(r"(?:^|; )powershell=(\w+)")
+_STATUS_PS_RETRY = re.compile(r"(?:^|; )powershell_retry_s=(\d+)")
+_STATUS_PS_JOB = re.compile(r"(?:^|; )powershell_job=no(?:;|$)")
+
+
+def check_powershell_parser(daemon_status: str) -> list[Check]:
+    """PowerShell commands are judged through a helper process that parses (never runs) them; when
+    it is not usable every PowerShell command is gray, i.e. asks for confirmation."""
+    found = _STATUS_POWERSHELL.search(daemon_status)
+    if found is None:
+        return []  # an older daemon that does not report it
+    state = found.group(1)
+    checks: list[Check] = []
+    if state == "ready":
+        checks.append(Check("powershell-parser", OK, "the PowerShell parser helper is ready"))
+    elif state == "warming":
+        # Starting takes about 2 s; a helper that died is restarted by the daemon on its own.
+        checks.append(
+            Check(
+                "powershell-parser",
+                INFO,
+                "the PowerShell parser helper is starting (takes about 2 s) or restarting; "
+                "until then every PowerShell command asks for confirmation",
+            )
+        )
+    else:
+        retry = _STATUS_PS_RETRY.search(daemon_status)
+        if state == "disabled":
+            when = f"; one probe start is allowed in {retry.group(1)} s" if retry else ""
+            what = f"switched off by the circuit breaker after repeated failures{when}"
+        elif state == "unavailable":
+            when = f"; checked again in {retry.group(1)} s" if retry else ""
+            what = f"unavailable (no usable PowerShell, or ConstrainedLanguage mode){when}"
+        else:
+            what = state
+        checks.append(
+            Check(
+                "powershell-parser",
+                WARN,
+                f"the PowerShell parser helper is {what}: every PowerShell command asks for "
+                "confirmation (no rule can judge it)",
+                "check that powershell.exe or pwsh.exe exists and runs in FullLanguage mode (not "
+                "ConstrainedLanguage); the daemon retries on its own, or restart 'boundkeep serve'",
+            )
+        )
+    if _STATUS_PS_JOB.search(daemon_status):
+        checks.append(
+            Check(
+                "powershell-job",
+                WARN,
+                "the PowerShell helper could not be put into a kill-on-close Job Object: it is "
+                "still used, but may outlive a daemon that is killed hard",
+                "stop stray powershell.exe processes after killing the daemon",
+            )
+        )
     return checks
 
 

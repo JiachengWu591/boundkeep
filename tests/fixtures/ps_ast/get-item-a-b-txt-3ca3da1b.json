@@ -1,0 +1,33 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    18
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Item"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "single",
+     "v": "a b.txt"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

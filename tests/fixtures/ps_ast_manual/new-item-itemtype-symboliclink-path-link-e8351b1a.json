@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    57
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "New-Item"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "ItemType",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "SymbolicLink"
+    },
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "link"
+    },
+    {
+     "t": "param",
+     "name": "Target",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "~\\.ssh"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    34
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Copy-Item"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": null
+    },
+    {
+     "t": "array",
+     "items": [
+      {
+       "t": "str",
+       "kind": "bare",
+       "v": "a"
+      },
+      {
+       "t": "str",
+       "kind": "bare",
+       "v": "b"
+      }
+     ]
+    },
+    {
+     "t": "param",
+     "name": "Destination",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "c"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

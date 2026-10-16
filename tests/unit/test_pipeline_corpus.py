@@ -7,6 +7,7 @@ no shell allow rules) and never milder than the expectation.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,8 @@ def test_the_corpus_is_big_and_has_enough_adversarial_entries() -> None:
 
 @pytest.mark.parametrize(("entry", "platform"), _entries())
 def test_corpus_entry(entry: dict[str, Any], platform: str) -> None:
+    if entry["tool"] == "PowerShell" and sys.platform != "win32":
+        pytest.skip("PowerShell entries need the real parser helper (Windows only)")
     policy = _policy(platform)
     result = policycli._run_one(
         policy,

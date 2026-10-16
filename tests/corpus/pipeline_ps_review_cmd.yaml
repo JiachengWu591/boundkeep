@@ -1,0 +1,31 @@
+# End-to-end corpus for the M1b review fixes of the PowerShell command layer (pscmd / psprograms /
+# programs): command -> verdict under the DEFAULT policy. Windows hosts only (real parser helper).
+# Paths use the fake machine's project C:\Users\testuser\proj. `adv: true` entries must never come
+# out milder than `expect`.
+
+# ---- cd.. and cd\ are built-in functions: the working directory must follow them ---------------
+- {id: psr-cd-dotdot-function-then-rm, tool: PowerShell, platform: windows, input: {command: 'cd..; Remove-Item -Recurse -Force other'}, expect: deny, adv: true}
+- {id: psr-cd-dotdot-function-upper-then-rm, tool: PowerShell, platform: windows, input: {command: 'CD..; Remove-Item -Recurse -Force other'}, expect: deny, adv: true}
+- {id: psr-cd-backslash-function-then-rm, tool: PowerShell, platform: windows, input: {command: 'cd\; Remove-Item -Recurse -Force other'}, expect: deny, adv: true}
+- {id: psr-cd-dotdot-spaced-then-rm, tool: PowerShell, platform: windows, input: {command: 'cd ..; Remove-Item -Recurse -Force other'}, expect: deny, adv: true}
+- {id: psr-cd-dotdot-function-then-read-ssh, tool: PowerShell, platform: windows, input: {command: 'cd..; Get-Content testuser\.ssh\id_rsa'}, expect: deny, adv: true}
+
+# ---- splatted arguments are dynamic ------------------------------------------------------------
+- {id: psr-splat-remove-recurse, tool: PowerShell, platform: windows, input: {command: 'Remove-Item -Recurse @paths'}, expect: deny, adv: true}
+- {id: psr-splat-remove-force-recurse, tool: PowerShell, platform: windows, input: {command: 'rm -r -fo @targets'}, expect: deny, adv: true}
+- {id: psr-var-remove-recurse, tool: PowerShell, platform: windows, input: {command: 'Remove-Item -Recurse $paths'}, expect: deny, adv: true}
+
+# ---- the stop-parsing token hands the rest of the line over as flags ---------------------------
+- {id: psr-stop-parsing-git-reset-hard, tool: PowerShell, platform: windows, input: {command: 'git reset --% --hard HEAD~1'}, expect: ask, adv: true}
+- {id: psr-stop-parsing-git-push-force, tool: PowerShell, platform: windows, input: {command: 'git push --% --force origin main'}, expect: ask, adv: true}
+
+# ---- moving or renaming a secret reads it ------------------------------------------------------
+- {id: psr-move-item-aws-credentials, tool: PowerShell, platform: windows, input: {command: 'Move-Item ~\.aws\credentials .\c.txt'}, expect: deny, adv: true}
+- {id: psr-move-item-env, tool: PowerShell, platform: windows, input: {command: 'Move-Item .env e.txt'}, expect: deny, adv: true}
+- {id: psr-move-item-alias-mv-env, tool: PowerShell, platform: windows, input: {command: 'mv .env x'}, expect: deny, adv: true}
+- {id: psr-move-item-alias-move-env, tool: PowerShell, platform: windows, input: {command: 'move .env x'}, expect: deny, adv: true}
+- {id: psr-rename-item-env, tool: PowerShell, platform: windows, input: {command: 'Rename-Item .env e.txt'}, expect: deny, adv: true}
+- {id: psr-rename-item-alias-ren-env, tool: PowerShell, platform: windows, input: {command: 'ren .env e.txt'}, expect: deny, adv: true}
+- {id: psr-move-item-ssh-key, tool: PowerShell, platform: windows, input: {command: 'Move-Item -Path ~\.ssh\id_rsa -Destination .\k'}, expect: deny, adv: true}
+- {id: psr-mv-env-bash, tool: Bash, input: {command: 'mv .env x'}, expect: deny, adv: true}
+- {id: psr-mv-ssh-key-bash, tool: Bash, input: {command: 'mv ~/.ssh/id_rsa ./k'}, expect: deny, adv: true}

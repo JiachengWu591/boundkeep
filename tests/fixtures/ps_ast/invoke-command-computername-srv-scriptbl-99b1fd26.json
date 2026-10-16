@@ -1,0 +1,68 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    56
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Invoke-Command"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "ComputerName",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "srv"
+    },
+    {
+     "t": "param",
+     "name": "ScriptBlock",
+     "arg": null
+    },
+    {
+     "t": "other",
+     "ast": "ScriptBlockExpressionAst",
+     "text": "{ whoami }"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    48,
+    54
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "whoami"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "ScriptBlockExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

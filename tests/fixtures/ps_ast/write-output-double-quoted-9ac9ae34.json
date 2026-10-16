@@ -1,0 +1,33 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    28
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Write-Output"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "double",
+     "v": "double quoted"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

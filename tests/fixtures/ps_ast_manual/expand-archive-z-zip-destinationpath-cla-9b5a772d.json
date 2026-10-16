@@ -1,0 +1,43 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    45
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Expand-Archive"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "z.zip"
+    },
+    {
+     "t": "param",
+     "name": "DestinationPath",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": ".claude"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

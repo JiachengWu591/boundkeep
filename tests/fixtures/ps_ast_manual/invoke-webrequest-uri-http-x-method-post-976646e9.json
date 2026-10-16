@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    71
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Invoke-WebRequest"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Uri",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "http://x"
+    },
+    {
+     "t": "param",
+     "name": "Method",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Post"
+    },
+    {
+     "t": "param",
+     "name": "InFile",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "~\\.aws\\credentials"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

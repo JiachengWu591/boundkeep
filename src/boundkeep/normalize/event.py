@@ -29,7 +29,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from boundkeep.normalize import bash, domains, paths, programs
+from boundkeep.normalize import bash, domains, paths, programs, psparse
 from boundkeep.normalize.model import (
     Access,
     Action,
@@ -49,6 +49,7 @@ SEARCH_TOOLS = frozenset({"Glob", "Grep"})
 HARMLESS_TOOLS = frozenset({"ToolSearch", "TodoWrite"})
 
 MAX_GIT_WALK = 16  # levels find_git_root climbs
+PS_PARSE_BUDGET_S = 0.3  # the PowerShell helper's own limit (not charged to TIME_BUDGET_S)
 TIME_BUDGET_S = 0.25  # normalize_event runs on the daemon's event loop
 MAX_ACTIONS = 256  # simple commands handled per command line
 MAX_DISK_KEYS = 64  # distinct paths looked up on disk per request
@@ -61,6 +62,7 @@ _MAX_TEXT = 1 << 22
 _MAX_BRACE_TEXT = 1024
 _MAX_BRACE_DEPTH = 16
 
+_PS_CD = {"set-location": "cd", "push-location": "pushd", "pop-location": "popd"}
 _CD_FLAGS = frozenset({"-L", "-P", "-e", "-@", "--"})
 _PLACEHOLDER = "./{}"  # stands for the arguments xargs appends
 _SYNTHETIC_KEY = "{args-from-stdin}"
@@ -173,6 +175,7 @@ class _Line:
     written: set[str] = field(default_factory=set)  # keys written by earlier commands
     last_find: list[tuple[Word, Access]] = field(default_factory=list)
     line_gray: list[str] = field(default_factory=list)
+    shell: str = "bash"  # bash | powershell: picks the parser, the path dialect and the tables
 
 
 def _text(value: object) -> str | None:
@@ -282,16 +285,53 @@ def _inside(refs: Sequence[PathRef]) -> bool | None:
 # --------------------------------------------------------------------------------------------
 
 _KNOWN_VARS = ("HOME", "PWD")  # what the path layer resolves for a bash word
+_PS_KNOWN_VARS = frozenset({"home", "pwd", "profile"})  # PowerShell names are case-insensitive
 
 
 def _is_ident(ch: str) -> bool:
     return ch.isascii() and (ch.isalnum() or ch == "_")
 
 
-def _has_unknown_dollar(text: str) -> bool:
+def _ps_var_end(rest: str) -> int:
+    """How many characters of ``rest`` (the text after a ``$``) are a variable the path layer
+    knows in PowerShell: ``$HOME`` ``$PWD`` ``$PROFILE`` (any case), ``$env:NAME`` and the
+    ``${...}`` forms of those. 0 when it is anything else (or the name runs on into characters
+    this scan cannot vouch for: non-ASCII, ``:`` and ``?`` continue a PowerShell variable name).
+
+    ``$env:NAME`` is accepted whatever NAME is: the path layer resolves the names it can and marks
+    the rest uncertain, with the variable named in the key.
+    """
+    if rest.startswith("{"):
+        close = rest.find("}")
+        inner = rest[1:close] if close > 0 else ""
+        if not inner or "$" in inner or "`" in inner or not inner.isascii():
+            return 0
+        if inner.lower() in _PS_KNOWN_VARS or (inner[:4].lower() == "env:" and len(inner) > 4):
+            return close + 1
+        return 0
+    start = 4 if rest[:4].lower() == "env:" else 0
+    j = start
+    while j < len(rest) and (rest[j].isalnum() or rest[j] == "_"):
+        j += 1
+    name = rest[start:j]
+    if not name or not name.isascii() or rest[j : j + 1] in (":", "?"):
+        return 0
+    if start or name.lower() in _PS_KNOWN_VARS:
+        return j
+    return 0
+
+
+def _has_unknown_dollar(text: str, shell: str = "bash") -> bool:
     i = text.find("$")
     while i >= 0:
         rest = text[i + 1 :]
+        if shell == "powershell":
+            used = _ps_var_end(rest)
+            if not used:
+                return True
+            i += used + 1
+            i = text.find("$", i)
+            continue
         for name in _KNOWN_VARS:
             if rest.startswith("{" + name + "}"):
                 i += len(name) + 3
@@ -305,19 +345,20 @@ def _has_unknown_dollar(text: str) -> bool:
     return False
 
 
-def _dynamic(word: Word, *, globs: bool = True) -> bool:
+def _dynamic(word: Word, *, globs: bool = True, shell: str = "bash") -> bool:
     """Is the path this word stands for unknowable from its text?
 
     True for glob characters, command substitution and any ``$`` expansion other than the
-    variables the path layer resolves (``$HOME``, ``${HOME}``, ``$PWD``). A bare leading ``~`` is
-    not dynamic: ``normalize_path`` expands it (``~user`` and unknown homes it marks uncertain).
+    variables the path layer resolves (``$HOME``, ``${HOME}``, ``$PWD``; for PowerShell also
+    ``$env:NAME`` and ``$PROFILE``, in any case). A bare leading ``~`` is not dynamic:
+    ``normalize_path`` expands it (``~user`` and unknown homes it marks uncertain).
     """
     if word.glob:
         return globs
     if not word.expands:
         return False
     text = word.text
-    return "`" in text or "$(" in text or _has_unknown_dollar(text)
+    return "`" in text or "$(" in text or _has_unknown_dollar(text, shell)
 
 
 class _TooMany(Exception):
@@ -451,6 +492,50 @@ def _relative_text(text: str) -> bool:
     return not (len(text) >= 2 and text[1] == ":")
 
 
+def _ps_literal_glob(ctx: _Ctx, word: Word) -> bool:
+    """A PowerShell word whose wildcard characters the command line parser cleared (a
+    ``-LiteralPath`` value): ``[id]`` is a file name there, not a character class.
+
+    On Windows ``*`` and ``?`` cannot be part of a name, so a word that holds them stays a
+    pattern (uncertain) even when it was cleared; only brackets become literal.
+    """
+    if word.glob:
+        return False
+    text = word.text
+    if not any(c in text for c in "*?["):
+        return False
+    return not (ctx.platform == "windows" and ("*" in text or "?" in text))
+
+
+def _uses_pwd(text: str, dialect: str) -> bool:
+    """Does the word mention ``$PWD`` / ``${PWD}``? Its value is the working directory, so each
+    possible working directory is a different path (PowerShell names are case-insensitive)."""
+    if "$" not in text or dialect not in ("bash", "powershell"):
+        return False
+    shown = text if dialect == "bash" else text.lower()
+    name = "PWD" if dialect == "bash" else "pwd"
+    return "$" + name in shown or "${" + name + "}" in shown
+
+
+_PS_PROFILE_FILE = "Microsoft.PowerShell_profile.ps1"
+
+
+def _profile_texts(ctx: _Ctx) -> list[str]:
+    """Where ``$PROFILE`` (the current user's profile of the current host) can point.
+
+    The shell that runs the command is not known (Windows PowerShell 5.1 or ``pwsh``), so both
+    profile files are listed; they are what ``protect-windows-persistence`` guards. A OneDrive
+    redirected Documents folder is covered by that rule's ``**/documents/...`` patterns only when
+    the real path is spelled out, not through this variable: a known limit.
+    """
+    if ctx.platform == "windows":
+        return [
+            f"~\\Documents\\{folder}\\{_PS_PROFILE_FILE}"
+            for folder in ("WindowsPowerShell", "PowerShell")
+        ]
+    return [f"~/.config/powershell/{_PS_PROFILE_FILE}"]
+
+
 def _has_dotdot(text: str) -> bool:
     return ".." in text.replace("\\", "/").split("/")
 
@@ -508,10 +593,17 @@ def _glob_refs(
     norm: paths.NormPath,
     access: Access,
     notes: list[str],
+    *,
+    dotfiles: bool = False,
 ) -> list[PathRef]:
-    """PathRefs for the files an unquoted glob matches on disk (the text itself stays uncertain)."""
+    """PathRefs for the files an unquoted glob matches on disk (the text itself stays uncertain).
+
+    ``dotfiles``: the wildcard also matches names that start with a dot (PowerShell, unlike Bash).
+    """
     ctx.budget.check()
-    found = paths.expand_glob(norm, limit=MAX_GLOB_MATCHES, deadline=ctx.budget.deadline)
+    found = paths.expand_glob(
+        norm, limit=MAX_GLOB_MATCHES, deadline=ctx.budget.deadline, dotfiles=dotfiles
+    )
     if found.status == "budget":
         raise _BudgetExceeded("time")
     if found.status == "too-many":
@@ -596,7 +688,7 @@ def _refs_one(
     if dynamic or deep:
         return refs
     if "glob" in norm.reasons and not glob_literal:
-        return refs + _glob_refs(ctx, norm, access, notes)
+        return refs + _glob_refs(ctx, norm, access, notes, dotfiles=dialect == "powershell")
     if "brace" in norm.reasons:
         return refs
     # Disk forms: a symlink / junction / 8.3 name that leads somewhere else (paths.resolve_on_disk
@@ -682,9 +774,11 @@ def _refs(
             dynamic = True
         else:
             texts = expanded
+    if dialect == "powershell" and len(texts) == 1 and raw.lower() in ("$profile", "${profile}"):
+        texts = _profile_texts(ctx)
     out: dict[tuple[str, str, str, bool, tuple[str, ...]], PathRef] = {}
     for text in texts:
-        relative = _relative_text(text)
+        relative = _relative_text(text) or _uses_pwd(text, dialect)
         for cwd in cwds if relative else cwds[:1]:
             if relative and cwd is None:
                 notes.append("cwd-unknown")
@@ -721,9 +815,15 @@ def _synthetic_ref(ctx: _Ctx, raw: str, access: Access) -> PathRef:
 # --------------------------------------------------------------------------------------------
 
 
-def _cd_target(ctx: _Ctx, text: str, cwd: str | None) -> str | None:
+def _cd_target(ctx: _Ctx, text: str, cwd: str | None, dialect: str = "bash") -> str | None:
     """The key of the directory ``cd text`` leads to from ``cwd``, or None when unknowable."""
-    norm = paths.normalize_path(text, cwd=cwd, home=ctx.home, env=ctx.env, dialect="bash")
+    norm = paths.normalize_path(
+        text,
+        cwd=cwd,
+        home=ctx.home,
+        env=ctx.env,
+        dialect=dialect,  # type: ignore[arg-type]
+    )
     if norm.uncertain or not norm.absolute or norm.is_device or not norm.key:
         return None
     if norm.key.count("/") > MAX_KEY_DEPTH:
@@ -753,6 +853,8 @@ def _after_cd(ctx: _Ctx, st: _Line, cmd: SimpleCmd, program: str) -> None:
         st.cwds = _merge_cwds(st.cwds, (None,))
         return
     words = [w for w in cmd.argv[1:] if w.text not in _CD_FLAGS]
+    if st.shell == "powershell":  # canonical parameters (-Path, -PassThru, ...) are not directories
+        words = [w for w in words if w.quoted or not w.text.startswith("-")]
     if not words:
         if program == "pushd":  # swaps the top two directories
             st.cwds = _merge_cwds(st.cwds, (None,))
@@ -761,14 +863,14 @@ def _after_cd(ctx: _Ctx, st: _Line, cmd: SimpleCmd, program: str) -> None:
     elif (
         len(words) > 1
         or words[0].text in ("-", "")
-        or _dynamic(words[0])
+        or _dynamic(words[0], shell=st.shell)
         or (program == "pushd" and words[0].text[:1] in "+-" and words[0].text[1:].isdigit())
     ):
         st.cwds = _merge_cwds(st.cwds, (None,))
         return
     else:
         text = words[0].text
-    st.cwds = _merge_cwds(st.cwds, [_cd_target(ctx, text, cwd) for cwd in st.cwds])
+    st.cwds = _merge_cwds(st.cwds, [_cd_target(ctx, text, cwd, st.shell) for cwd in st.cwds])
 
 
 def _domains_of(urls: Sequence[str]) -> tuple[tuple[str, ...], bool]:
@@ -924,10 +1026,10 @@ def _command_action(
         gray_reasons = list(info.gray)
     else:
         program, spelling = _canonical_program(ctx, cmd.argv[0])
-        info = programs.classify(  # noqa: S604 - "bash" names a dialect, not a subprocess flag
+        info = programs.classify(
             program,
             classify_args,
-            shell="bash",
+            shell=st.shell,  # type: ignore[arg-type]
             redirects=cmd.redirects,
             env=cmd.env,
         )
@@ -943,13 +1045,22 @@ def _command_action(
         gray_reasons.append("arguments-from-stdin")
     refs: list[PathRef] = []
     if "program-path-qualified" in gray_reasons:
-        refs += _refs(ctx, notes, cmd.argv[0].text, "read", cwds=st.cwds, dynamic=False)
+        refs += _refs(
+            ctx, notes, cmd.argv[0].text, "read", cwds=st.cwds, dialect=st.shell, dynamic=False
+        )
     for word, access in info.paths:
         if exec_child and "{}" in word.text:
             refs += _placeholder_refs(ctx, notes, st, cmd, word, access)
         else:
             refs += _refs(
-                ctx, notes, word.text, access, cwds=st.cwds, dynamic=_dynamic(word, globs=False)
+                ctx,
+                notes,
+                word.text,
+                access,
+                cwds=st.cwds,
+                dialect=st.shell,
+                dynamic=_dynamic(word, globs=False, shell=st.shell),
+                glob_literal=_ps_literal_glob(ctx, word) if st.shell == "powershell" else False,
             )
     names, unknown_host = _domains_of(info.urls)
     if unknown_host:
@@ -965,8 +1076,12 @@ def _command_action(
     st.written.update(ref.key for ref in refs if ref.access == "write")
     if program == "find" and cmd.origin != "find-exec":
         st.last_find = list(info.paths)
-    if program in ("cd", "pushd", "popd"):
-        _after_cd(ctx, st, cmd, program)
+    cd_program = program
+    if st.shell == "powershell":
+        # cmdlet names are case-insensitive: ``program`` is only case-folded on a Windows platform
+        cd_program = _PS_CD.get((program or "").lower())
+    if cd_program in ("cd", "pushd", "popd"):
+        _after_cd(ctx, st, cmd, cd_program)
     gray_reasons.extend(notes)
     reasons = tuple(dict.fromkeys(gray_reasons))
     return Action(
@@ -991,11 +1106,15 @@ def _command_action(
 def _shell_actions(ctx: _Ctx, tool: str, shell: Shell, command: str) -> list[Action]:
     common: dict[str, Any] = {"shell": shell, "command_text": command}
     if shell == "powershell":
-        # M1b adds the PowerShell AST normalizer; until then the whole line is gray.
-        return [_gray(ctx, tool, "powershell-not-parsed-in-m1", risk_tags=("exec",), **common)]
-    result = bash.parse_bash(command)
+        # The helper process parses (AST only, never executes); not ready, timeout, crash and
+        # every other failure come back as gray reasons, never as an exception.
+        started = time.monotonic()
+        result = psparse.parse_powershell(command, budget_s=PS_PARSE_BUDGET_S)
+        ctx.budget.deadline += time.monotonic() - started  # the helper has its own time limit
+    else:
+        result = bash.parse_bash(command)
     actions: list[Action] = []
-    st = _Line(cwds=(ctx.cwd,))
+    st = _Line(cwds=(ctx.cwd,), shell=shell)
     try:
         for cmd in result.commands:
             if len(actions) >= MAX_ACTIONS:

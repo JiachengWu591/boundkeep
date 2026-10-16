@@ -1,0 +1,39 @@
+{
+ "ok": true,
+ "parse_errors": [
+  {
+   "msg": "\u4e0d\u5141\u8bb8\u4f7f\u7528\u7a7a\u7ba1\u9053\u5143\u7d20\u3002",
+   "line": 1,
+   "col": 10
+  }
+ ],
+ "commands": [
+  {
+   "pos": [
+    0,
+    7
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "echo"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "hi"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

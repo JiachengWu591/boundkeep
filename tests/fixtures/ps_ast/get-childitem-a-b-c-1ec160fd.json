@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    19
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-ChildItem"
+   },
+   "elements": [
+    {
+     "t": "array",
+     "items": [
+      {
+       "t": "str",
+       "kind": "bare",
+       "v": "a"
+      },
+      {
+       "t": "str",
+       "kind": "bare",
+       "v": "b"
+      },
+      {
+       "t": "str",
+       "kind": "bare",
+       "v": "c"
+      }
+     ]
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

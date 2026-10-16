@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    72
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Send-MailMessage"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "SmtpServer",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "smtp.example.com"
+    },
+    {
+     "t": "param",
+     "name": "Attachments",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "~\\.ssh\\id_rsa"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

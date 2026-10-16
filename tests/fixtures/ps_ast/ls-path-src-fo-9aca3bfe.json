@@ -1,0 +1,42 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    16
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "ls"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": {
+      "t": "str",
+      "kind": "bare",
+      "v": "src"
+     }
+    },
+    {
+     "t": "param",
+     "name": "Fo",
+     "arg": null
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

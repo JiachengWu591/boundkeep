@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    58
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "curl.exe"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "sSL",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "https://example.com/install.sh"
+    },
+    {
+     "t": "param",
+     "name": "o",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "install.sh"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -1,0 +1,51 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    90
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Add-Content"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": null
+    },
+    {
+     "t": "expstr",
+     "v": "$env:USERPROFILE\\Documents\\WindowsPowerShell\\profile.ps1",
+     "vars": [
+      "env:USERPROFILE"
+     ],
+     "subexpr": false
+    },
+    {
+     "t": "param",
+     "name": "Value",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "double",
+     "v": "calc"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -33,6 +33,7 @@ from boundkeep.daemon import pipeline
 from boundkeep.ipc.base import DEFAULT_INSTANCES, create_server
 from boundkeep.ipc.endpoint import Endpoint
 from boundkeep.logstore import AuditLog
+from boundkeep.normalize import psparse
 from boundkeep.policy import Policy, PolicyError, load_policy
 
 POLICY_RETRY_S = (
@@ -48,6 +49,7 @@ DECIDED_BY_BUSY = "busy"
 # For these the audit record carries the command's length, never its text: the review never
 # finished, so nothing is known about what the text is.
 _NO_COMMAND_LOG = frozenset({DECIDED_BY_TIMEOUT, DECIDED_BY_BUSY})
+_PS_POLL_TICKS = 4  # the serve loop wakes every 0.5 s: poll the PowerShell helper every 2 s
 
 _LOG_FIELDS = (
     "session_id",
@@ -474,9 +476,18 @@ class Daemon:
 
     def _status_text(self) -> str:
         state = self._state
+        ps = psparse.status()
+        ps_text = f"powershell={ps.get('state', '?')}"
+        if ps.get("retry_in_s") is not None:
+            ps_text += f"; powershell_retry_s={int(ps['retry_in_s'])}"
+        if ps.get("job_degraded"):
+            ps_text += "; powershell_job=no"
+        if ps.get("throttled_s"):
+            ps_text += f"; powershell_throttled_s={int(ps['throttled_s'])}"
         text = (
             f"mode={state.mode}; requests={self._requests}; timeouts={self._timeouts}; "
-            f"stuck={self._pool.stuck}; config_dir={os.environ.get('CLAUDE_CONFIG_DIR') or '-'}"
+            f"stuck={self._pool.stuck}; {ps_text}; "
+            f"config_dir={os.environ.get('CLAUDE_CONFIG_DIR') or '-'}"
         )
         if state.error is not None:
             text += f"; policy error: {state.error}"
@@ -511,18 +522,34 @@ class Daemon:
             instances=self._instances,
             on_error=lambda message: self._report(f"transport: {message}"),
         )
-        await server.start()
+        # The PowerShell parser takes ~2 s to start (1.8 - 2.3 s measured): begin before the pipe
+        # opens so the first calls find it ready. It is a background thread; a failed start of the
+        # server kills the child again.
+        psparse.warm_up()
+        try:
+            await server.start()
+        except BaseException:
+            psparse.shutdown()
+            raise
         self._log_lifecycle("start")
         self._report(
             f"listening on {server.address} (mode={self._state.mode}, "
             f"policy={self._policy_path}, log={self._log.path})"
         )
         try:
+            ticks = 0
             while not stop.is_set():
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=0.5)
+                ticks += 1
+                if ticks % _PS_POLL_TICKS == 0:
+                    # Idempotent and non-blocking: restarts a helper that died while idle and lets a
+                    # half-open breaker or an unavailable retry run without waiting for a request.
+                    with contextlib.suppress(Exception):
+                        psparse.warm_up()
         finally:
             await server.close()
             self._pool.close()  # stuck workers are daemon threads: they cannot hold us up
+            psparse.shutdown()
             self._log_lifecycle("stop")
             self._report("stopped")

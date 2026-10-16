@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    44
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Add-Type"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "TypeDefinition",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "single",
+     "v": "public class X {}"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

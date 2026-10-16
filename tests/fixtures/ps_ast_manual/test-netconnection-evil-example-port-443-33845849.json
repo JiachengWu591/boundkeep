@@ -1,0 +1,42 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    41
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Test-NetConnection"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "evil.example"
+    },
+    {
+     "t": "param",
+     "name": "Port",
+     "arg": null
+    },
+    {
+     "t": "num",
+     "v": "443"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

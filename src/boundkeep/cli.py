@@ -249,8 +249,11 @@ def _epilogue(policy_path: str) -> list[str]:
         )
     return [
         summary,
-        "PowerShell commands are not parsed until M1b, so no rule can judge them: every "
-        "PowerShell command asks for confirmation.",
+        "PowerShell commands are parsed by a helper process (Windows PowerShell 5.1 or pwsh) "
+        "and judged by the same rules as Bash commands. Some constructs still ask "
+        "(Invoke-Expression, script blocks, values built at run time), and for the first "
+        "seconds after the daemon starts every PowerShell command asks (ps-helper-not-ready) "
+        "while the helper warms up.",
         "See what the rules do with 'boundkeep test' (the policy's own tests) and "
         "'boundkeep explain <event.json>' (why one event got its verdict).",
         "Until the daemon runs, every tool call asks for confirmation (fail closed).",
@@ -415,6 +418,19 @@ def cmd_mode(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _infrastructure_gray(record: dict[str, object]) -> str:
+    """The ``ps-helper-*`` / ``normalize-*`` gray reasons of a gray record, or ""."""
+    if record.get("decided_by") != "gray" and record.get("verdict") != "gray":
+        return ""
+    gray = record.get("gray_reasons")
+    if not isinstance(gray, list):
+        return ""
+    picked = [
+        str(g) for g in gray if isinstance(g, str) and g.startswith(("ps-helper", "normalize-"))
+    ]
+    return _printable("; ".join(picked[:3]))[:100]
+
+
 def _summary(record: dict[str, object]) -> str:
     """What the text log line shows after the tool: matched rules, then the command or the reason.
 
@@ -424,10 +440,22 @@ def _summary(record: dict[str, object]) -> str:
     rules = record.get("rules")
     if isinstance(rules, list) and rules:
         head = "[" + ",".join(_printable(str(r))[:40] for r in rules[:3]) + "] "
+    infra = _infrastructure_gray(record)
+    if infra:
+        # The PowerShell helper (or the normalizer) could not judge this command: say so next to
+        # it, otherwise it looks like an ordinary "no rule matched" ask.
+        command = record.get("command")
+        shown = f"gray: {infra}"
+        if isinstance(command, str) and command:
+            shown += " | " + _printable(command)[:100]
+        return head + shown
     for key in ("command", "reason", "local_reason"):
         value = record.get(key)
         if isinstance(value, str) and value:
             return head + _printable(value)[:100]
+    decided_by = record.get("decided_by")
+    if decided_by in ("timeout", "busy"):
+        return head + f"({decided_by})"
     gray = record.get("gray_reasons")
     if isinstance(gray, list) and gray:
         return head + "gray: " + _printable("; ".join(str(g) for g in gray[:3]))[:100]

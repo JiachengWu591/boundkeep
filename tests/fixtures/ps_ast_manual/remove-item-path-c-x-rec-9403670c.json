@@ -1,0 +1,42 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    27
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Remove-Item"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": {
+      "t": "str",
+      "kind": "bare",
+      "v": "C:\\x"
+     }
+    },
+    {
+     "t": "param",
+     "name": "Rec",
+     "arg": null
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

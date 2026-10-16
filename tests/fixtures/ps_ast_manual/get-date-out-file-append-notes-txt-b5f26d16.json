@@ -1,0 +1,56 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    8
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Date"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    11,
+    37
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Out-File"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Append",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "notes.txt"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

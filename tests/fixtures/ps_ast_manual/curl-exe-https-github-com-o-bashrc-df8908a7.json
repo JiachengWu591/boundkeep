@@ -1,0 +1,43 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    40
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "curl.exe"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "https://github.com"
+    },
+    {
+     "t": "param",
+     "name": "o",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "~\\.bashrc"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    74
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Invoke-RestMethod"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Uri",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "https://api.example.com/v1"
+    },
+    {
+     "t": "param",
+     "name": "Method",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Post"
+    },
+    {
+     "t": "param",
+     "name": "Body",
+     "arg": null
+    },
+    {
+     "t": "var",
+     "name": "body",
+     "splat": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

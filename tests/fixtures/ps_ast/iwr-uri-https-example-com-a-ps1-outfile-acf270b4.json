@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    49
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "iwr"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "Uri",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "https://example.com/a.ps1"
+    },
+    {
+     "t": "param",
+     "name": "OutFile",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "a.ps1"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

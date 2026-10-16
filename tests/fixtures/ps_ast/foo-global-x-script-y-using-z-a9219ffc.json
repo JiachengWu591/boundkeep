@@ -1,0 +1,45 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    32
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "foo"
+   },
+   "elements": [
+    {
+     "t": "var",
+     "name": "global:x",
+     "splat": false
+    },
+    {
+     "t": "var",
+     "name": "script:y",
+     "splat": false
+    },
+    {
+     "t": "other",
+     "ast": "UsingExpressionAst",
+     "text": "$using:z"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "UsingExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

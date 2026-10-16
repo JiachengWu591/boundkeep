@@ -1,0 +1,36 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    19,
+    23
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "rm"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [
+  "TrapStatementAst",
+  "ContinueStatementAst"
+ ],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

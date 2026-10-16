@@ -1,0 +1,52 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    49
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Remove-Item"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "C:\\x\\"
+    },
+    {
+     "t": "param",
+     "name": "Recurse",
+     "arg": null
+    },
+    {
+     "t": "param",
+     "name": "Force",
+     "arg": null
+    },
+    {
+     "t": "param",
+     "name": "Confirm",
+     "arg": {
+      "t": "var",
+      "name": "false",
+      "splat": false
+     }
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

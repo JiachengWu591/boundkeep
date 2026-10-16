@@ -1,0 +1,57 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    15
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "git"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "status"
+    }
+   ],
+   "redirects": [
+    {
+     "op": ">&",
+     "target": null,
+     "merge": "2>&1"
+    }
+   ],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    18,
+    28
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Out-String"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

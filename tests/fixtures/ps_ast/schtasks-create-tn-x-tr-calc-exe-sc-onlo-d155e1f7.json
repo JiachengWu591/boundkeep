@@ -1,0 +1,63 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    47
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "schtasks"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "/create"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "/tn"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "/tr"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "calc.exe"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "/sc"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "onlogon"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

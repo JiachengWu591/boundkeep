@@ -1,0 +1,27 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    30,
+    33
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "iex"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

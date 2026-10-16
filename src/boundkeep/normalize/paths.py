@@ -346,6 +346,11 @@ def _tilde_value(ctx: _Ctx) -> str | None:
     return None
 
 
+# Variables a Windows machine always has, with their standard values; only used when the
+# environment handed to us does not carry them (a hook environment can be stripped).
+_WINDOWS_DEFAULTS = {"PROGRAMDATA": "C:\\ProgramData", "ALLUSERSPROFILE": "C:\\ProgramData"}
+
+
 def _lookup(name: str, syntax: str, ctx: _Ctx) -> str | None:
     """The value of a variable, or None when it is not known. Names are case-sensitive in bash."""
     ci = ctx.dialect != "bash" or syntax in ("env-colon", "percent")
@@ -363,6 +368,8 @@ def _lookup(name: str, syntax: str, ctx: _Ctx) -> str | None:
         return ctx.home_raw
     if key == "USERPROFILE" and ctx.dialect != "bash":
         return ctx.home_raw
+    if ctx.windows_ctx and ci and key in _WINDOWS_DEFAULTS:
+        return _WINDOWS_DEFAULTS[key]  # absent from the environment: the standard location
     return None
 
 
@@ -537,8 +544,18 @@ def _win_part(part: str, reasons: list[str], *, final: bool) -> str:
     ``.`` otherwise.
     """
     if ":" in part:
-        part = part.split(":", 1)[0]
-        _add(reasons, "ads-stripped")
+        # An unresolved ``$env:NAME`` / ``${env:NAME}`` is a variable, not a stream: keep its name
+        # in the key (``$env:name/x``) so the path stays recognisable and uncertain.
+        prefix = ""
+        if part[:5].lower() == "$env:":
+            prefix, part = part[:5], part[5:]
+        elif part[:6].lower() == "${env:" and "}" in part:
+            cut = part.index("}") + 1
+            prefix, part = part[:cut], part[cut:]
+        if ":" in part:
+            part = part.split(":", 1)[0]
+            _add(reasons, "ads-stripped")
+        part = prefix + part
         if part == "":
             return "."
     if part in (".", ".."):
@@ -1026,20 +1043,23 @@ def expand_glob(
     limit: int = 64,
     max_entries: int = 4096,
     deadline: float | None = None,
+    dotfiles: bool = False,
 ) -> GlobResult:
     """File system layer: the existing paths a glob-carrying ``path`` can stand for (bash rules).
 
     ``*``, ``?`` and ``[...]`` work inside one component (no ``**``), a leading dot must be matched
-    by a dot in the pattern. Bounded: more than ``limit`` matches, or a directory with more than
-    ``max_entries`` entries, gives status ``too-many`` (the matches found so far are returned and
-    the list is incomplete); a passed ``deadline`` (``time.monotonic()`` value) gives ``budget``.
+    by a dot in the pattern, unless ``dotfiles`` (PowerShell: its wildcards match ``.env`` for
+    ``*env``, ``*.*`` and ``[.]e*``). Bounded: more than ``limit`` matches, or a directory with
+    more than ``max_entries`` entries, gives status ``too-many`` (the matches found so far are
+    returned and the list is incomplete); a passed ``deadline`` (``time.monotonic()`` value) gives
+    ``budget``.
     ``none`` means nothing matched or a directory does not exist; ``unsupported`` means the path is
     not one we may enumerate (relative, UNC, device, network drive, foreign flavor, unresolved
     variable, too deep). The caller keeps the unexpanded text as an uncertain path in every case.
     Never raises.
     """
     try:
-        return _expand_glob(path, limit, max_entries, deadline)
+        return _expand_glob(path, limit, max_entries, deadline, dotfiles)
     except Exception:  # noqa: BLE001 - never raise; "unsupported" keeps the caller cautious
         return GlobResult((), "unsupported")
 
@@ -1049,7 +1069,7 @@ def _glob_pattern(segment: str) -> str:
 
 
 def _expand_glob(
-    path: NormPath, limit: int, max_entries: int, deadline: float | None
+    path: NormPath, limit: int, max_entries: int, deadline: float | None, dotfiles: bool = False
 ) -> GlobResult:
     blocking = [r for r in path.reasons if r not in _INFO_REASONS and r not in ("glob", "brace")]
     if blocking or not is_local_disk(path):
@@ -1075,7 +1095,7 @@ def _expand_glob(
                         if count >= max_entries:
                             return GlobResult(tuple(nxt), "too-many")
                         name = entry.name
-                        if name.startswith(".") and not segment.startswith("."):
+                        if name.startswith(".") and not segment.startswith(".") and not dotfiles:
                             continue
                         if fnmatch.fnmatchcase(name.casefold() if windows else name, pattern):
                             nxt.append(os.path.join(base, name))

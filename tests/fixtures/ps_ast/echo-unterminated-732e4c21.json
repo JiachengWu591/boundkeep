@@ -1,0 +1,39 @@
+{
+ "ok": true,
+ "parse_errors": [
+  {
+   "msg": "\u5b57\u7b26\u4e32\u7f3a\u5c11\u7ec8\u6b62\u7b26: '\u3002",
+   "line": 1,
+   "col": 6
+  }
+ ],
+ "commands": [
+  {
+   "pos": [
+    0,
+    18
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "echo"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "single",
+     "v": "unterminated"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

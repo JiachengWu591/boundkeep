@@ -1,0 +1,42 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    24
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "gc"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "TotalCount",
+     "arg": null
+    },
+    {
+     "t": "num",
+     "v": "5"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": ".\\a.txt"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -5,9 +5,10 @@ The contract is docs/m1-design.md ("模块 D"); the short version:
 * A rule matches an ``Action`` when its ``tool`` and ``platform`` filters pass and EVERY ``match``
   field matches (AND across fields; a list inside a field is an OR).
 * ``program`` / ``subcommand`` / ``flags_any`` compare exactly; for PowerShell actions the
-  comparison ignores case. ``path_glob`` runs over ``PathRef.key`` (both sides casefolded) and,
-  when ``access`` is given, only over paths whose access equals it or is ``unknown`` ("may
-  read, may write" counts as a match).
+  comparison ignores case (flags: only cmdlet parameters and ``/switches``; an external
+  program's short flags stay case-sensitive). ``path_glob`` runs over ``PathRef.key`` (both
+  sides casefolded) and, when ``access`` is given, only over paths whose access equals it or is
+  ``unknown`` ("may read, may write" counts as a match).
 * ``path_glob`` (+ ``access``) and ``path_outside_project`` must hold for the SAME path: one path
   matches a glob, is access-compatible and is not definitely inside. Without a glob,
   ``path_outside_project`` matches when ANY path is not definitely inside. ``path_inside_project``
@@ -38,6 +39,7 @@ from typing import Final, Literal
 
 from boundkeep.normalize.domains import canonical_host, host_matches
 from boundkeep.normalize.model import Action, PathRef, Platform
+from boundkeep.normalize.psprograms import is_cmdlet_name
 from boundkeep.policy.glob import MAX_KEY_LENGTH, first_match
 from boundkeep.policy.schema import Match, Policy, Rule
 
@@ -89,6 +91,16 @@ def _tool_matches(patterns: tuple[str, ...], tool: str) -> bool:
 
 def _fold(action: Action, text: str) -> str:
     return text.casefold() if action.shell == "powershell" else text
+
+
+def _fold_flag(action: Action, text: str) -> str:
+    """Flags fold only for cmdlet parameters and Windows ``/switches``: external programs'
+    short flags are case-sensitive (``git branch -d`` is not ``-D``)."""
+    if action.shell != "powershell":
+        return text
+    if text.startswith("/") or is_cmdlet_name(action.program or ""):
+        return text.casefold()
+    return text
 
 
 def _host_in(domain: str, allowed: tuple[str, ...]) -> bool:
@@ -184,8 +196,8 @@ def _match_detail(rule: Rule, action: Action, platform: Platform) -> tuple[str, 
             return None
         details.append(f"subcommand: {action.subcommand}")
     if match.flags_any is not None:
-        wanted = {_fold(action, f) for f in match.flags_any}
-        found = next((f for f in action.flags if _fold(action, f) in wanted), None)
+        wanted = {_fold_flag(action, f) for f in match.flags_any}
+        found = next((f for f in action.flags if _fold_flag(action, f) in wanted), None)
         if found is None:
             return None
         details.append(f"flags_any: {found}")

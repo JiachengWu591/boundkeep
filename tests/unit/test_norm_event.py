@@ -1153,12 +1153,16 @@ def test_find_git_root_never_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 # --- the rest of the assembler (previously covered through the pipeline only) -----------------
 
 
-def test_powershell_is_gray_in_m1(world: dict[str, Any]) -> None:
+def test_powershell_commands_go_through_the_parser_helper(world: dict[str, Any]) -> None:
     got = run(world, "Get-ChildItem", tool="PowerShell")
-    assert len(got) == 1
-    assert got[0].gray_reasons == ("powershell-not-parsed-in-m1",)
-    assert got[0].shell == "powershell"
-    assert "exec" in got[0].risk_tags
+    assert got
+    assert all(action.shell == "powershell" for action in got)
+    if sys.platform == "win32":
+        assert got[0].program is not None
+        assert got[0].program.lower() == "get-childitem"
+    else:  # no PowerShell here: the helper is unavailable and the command is gray, never allowed
+        assert all(action.gray for action in got)
+        assert any(r.startswith("ps-helper") for a in got for r in a.gray_reasons)
 
 
 @pytest.mark.parametrize(

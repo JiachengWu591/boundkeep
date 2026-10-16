@@ -1,0 +1,33 @@
+{
+ "ok": true,
+ "parse_errors": [
+  {
+   "msg": "\u201c<\u201d\u8fd0\u7b97\u7b26\u662f\u4e3a\u5c06\u6765\u4f7f\u7528\u800c\u4fdd\u7559\u7684\u3002",
+   "line": 1,
+   "col": 13
+  }
+ ],
+ "commands": [
+  {
+   "pos": [
+    0,
+    20
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Content"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

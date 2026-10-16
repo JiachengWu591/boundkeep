@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    60
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "New-Item"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "ItemType",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Junction"
+    },
+    {
+     "t": "param",
+     "name": "Path",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "j"
+    },
+    {
+     "t": "param",
+     "name": "Value",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "C:\\Users\\bob\\.aws"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

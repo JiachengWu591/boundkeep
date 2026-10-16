@@ -1,0 +1,54 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    31
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Write-Output"
+   },
+   "elements": [
+    {
+     "t": "expstr",
+     "v": "now: $(Get-Date)",
+     "vars": [],
+     "subexpr": true
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    21,
+    29
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Date"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "SubExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

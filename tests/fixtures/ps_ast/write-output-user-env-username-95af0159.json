@@ -1,0 +1,36 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    38
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Write-Output"
+   },
+   "elements": [
+    {
+     "t": "expstr",
+     "v": "user: $env:USERNAME",
+     "vars": [
+      "env:USERNAME"
+     ],
+     "subexpr": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

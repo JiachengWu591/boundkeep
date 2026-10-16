@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    75
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "reg"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "add"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "/v"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "/d"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "calc.exe"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    45
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Out-File"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "FilePath",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "C:\\x\\y.txt"
+    },
+    {
+     "t": "param",
+     "name": "InputObject",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "hi"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}
