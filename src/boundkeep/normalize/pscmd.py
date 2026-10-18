@@ -30,6 +30,7 @@ from typing import Any
 
 from boundkeep.normalize import psaliases, psprograms
 from boundkeep.normalize.model import BashResult, Redirect, SimpleCmd, Word
+from boundkeep.normalize.programs import peel_runner
 
 __all__ = ["MAX_COMMANDS", "MAX_ELEMENTS", "build"]
 
@@ -403,6 +404,34 @@ def _raw(st: _State, pos: object) -> str:
     return ""
 
 
+_MAX_RUNNER_LAYERS = 16
+
+
+def _peel_runners(
+    program: Word, args: list[Word], st: _State
+) -> tuple[Word, list[Word], tuple[str, ...]]:
+    """``uv run CMD``, ``uvx CMD``, ``pipx run CMD``, ``poetry run CMD`` and ``python -m boundkeep``
+    start another program: peel them like ``sudo`` so the inner command is what gets judged (the
+    marker in ``wrappers`` keeps allow rules away). An option the tables do not know is gray."""
+    wrappers: list[str] = []
+    for _ in range(_MAX_RUNNER_LAYERS):
+        words = [program, *args]
+        peeled = peel_runner(words)
+        if peeled is None:
+            break
+        if isinstance(peeled, str):
+            st.add_gray("ps-runner-options")
+            break
+        n_drop, marker, synthetic = peeled
+        rest = ([synthetic] if synthetic is not None else []) + words[n_drop:]
+        if not rest:
+            break
+        wrappers.append(marker)
+        program = Word(_strip_exe(rest[0].text), rest[0].expands, rest[0].glob, rest[0].quoted)
+        args = rest[1:]
+    return program, args, tuple(wrappers)
+
+
 def _command(c: object, st: _State) -> SimpleCmd | None:
     if not isinstance(c, Mapping):
         st.add_gray("ps-internal-error")
@@ -420,6 +449,9 @@ def _command(c: object, st: _State) -> SimpleCmd | None:
             fixed = _CD_FUNCTIONS.get(str(name.get("v", "")).lower())
         if fixed is not None:
             args = [Word(fixed), *args]
+    wrappers: tuple[str, ...] = ()
+    if not dynamic and cmdlet is None:
+        program, args, wrappers = _peel_runners(program, args, st)
     redirects = _redirects(c, st)
     if invoke == ".":
         st.add_exec("ps-dot-source")
@@ -455,6 +487,7 @@ def _command(c: object, st: _State) -> SimpleCmd | None:
     return SimpleCmd(
         argv=(program, *args),
         redirects=tuple(redirects),
+        wrappers=wrappers,
         origin=origin,
         raw=_raw(st, c.get("pos")),
         in_pipeline=in_pipeline,

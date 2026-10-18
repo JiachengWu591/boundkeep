@@ -26,7 +26,7 @@ from urllib.parse import unquote
 
 from boundkeep.normalize.model import Access, Redirect, RiskTag, Shell, Word
 
-__all__ = ["CmdInfo", "classify", "derive_risk_tags", "is_code_env"]
+__all__ = ["CmdInfo", "classify", "derive_risk_tags", "is_code_env", "peel_runner"]
 
 _ALL_TAGS: tuple[RiskTag, ...] = (
     "network_egress",
@@ -54,6 +54,12 @@ class CmdInfo:
     network: bool
     tags: tuple[RiskTag, ...]
     gray: tuple[str, ...]
+    # True: the command reads the WHOLE SUBTREE of its directory operands (``grep -r``, ``tar c``,
+    # ``cp -r``, ``find -exec``, ``git log -p`` ...), so a protected file somewhere below an
+    # operand is read although no path names it. Every operand in ``paths`` (read or unknown) is a
+    # root to scan; a file operand has no subtree, so listing one is harmless. When the command
+    # names no path but acts on the current directory, ``paths`` holds ``"."``.
+    recursive: bool = False
 
 
 # ---------------------------------------------------------------------------------------------
@@ -298,6 +304,8 @@ def _urllike(text: str) -> bool:
 
 def _canon_program(name: str) -> str:
     """``python3.12`` -> ``python``, ``pip3`` -> ``pip``; other names unchanged."""
+    if name.lower() == "py":
+        return "python"  # the Windows launcher: ``py -m pip uninstall`` is ``python -m pip ...``
     base = name.rstrip("0123456789.")
     if base != name and base in _VERSIONED:
         return base
@@ -499,6 +507,7 @@ class _Acc:
         "network",
         "paths",
         "prog",
+        "recursive",
         "secret_hint",
         "sub",
         "urls",
@@ -517,6 +526,7 @@ class _Acc:
         self.exec_hint = False
         self.write_hint = False
         self.secret_hint = False
+        self.recursive = False
 
     def path(self, w: Word, access: Access) -> None:
         t = w.text
@@ -630,6 +640,10 @@ def _apply(a: _Acc, opt: str, role: str, w: Word) -> None:
             key, _, value = part.partition("=")
             if key in ("src", "source"):
                 a.path(_sub(w, value), "read")
+    elif role == "gitL":
+        # git log -L START,END:FILE / -L :FUNC:FILE: the history of a file's lines (its content)
+        if ":" in t:
+            a.path(_sub(w, t.rpartition(":")[2]), "read")
     elif role == "out" and ("=" not in t or "dest=" in t):
         dest = t.partition("dest=")[2].partition(",")[0] if "dest=" in t else t
         a.path(_sub(w, dest), "write")
@@ -726,6 +740,8 @@ class Spec:
     #                                            empty set always, else only with these flags
     mode_letters: str = ""  # chmod: the real short options; any other letter means the MODE is
     #                         written like a flag ("chmod -x f") and no positional is skipped
+    recursive: frozenset[str] | None = None  # reads the subtree of its operands: None never,
+    #                                          empty set always, else only with these flags
 
 
 _FILES: dict[str, Spec] = {}
@@ -777,7 +793,8 @@ _reg(
             long="exclude=x exclude-from=r ignore-matching-lines=x label=x from-file=r to-file=r "
             "starting-file=r width=x",
             flags="recursive unified brief new-file",
-        )
+        ),
+        recursive=_fs("-r --recursive"),
     ),
 )
 _reg("file", Spec(opts=_opts(short="f=r m=r F=x e=x P=x", long="files-from=r magic-file=r")))
@@ -792,6 +809,7 @@ _reg(
             flags="recursive all almost-all",
         ),
         cwd_default=frozenset(),
+        recursive=_fs("-R --recursive"),
     ),
 )
 _reg(
@@ -859,7 +877,13 @@ _GREP_OPTS = _opts(
 _REC = _fs("-r -R --recursive --dereference-recursive")
 _reg(
     "grep egrep fgrep zgrep",
-    Spec(opts=_GREP_OPTS, skip=1, no_skip_flags=_fs("-e -f --regexp --file"), cwd_default=_REC),
+    Spec(
+        opts=_GREP_OPTS,
+        skip=1,
+        no_skip_flags=_fs("-e -f --regexp --file"),
+        cwd_default=_REC,
+        recursive=_REC,
+    ),
 )
 _reg(
     "rg",
@@ -877,6 +901,7 @@ _reg(
         skip=1,
         no_skip_flags=_fs("-e -f --regexp --file --files --type-list"),
         cwd_default=frozenset(),
+        recursive=frozenset(),
     ),
 )
 _reg(
@@ -890,6 +915,7 @@ _reg(
         skip=1,
         no_skip_flags=_fs("-g -f"),
         cwd_default=frozenset(),
+        recursive=frozenset(),
     ),
 )
 
@@ -971,9 +997,12 @@ _reg(
 )
 _reg(
     "gzip gunzip bzip2 bunzip2 xz unxz zstd unzstd lz4 compress uncompress lzma unlzma",
+    # The operand is the SOURCE of a compression / decompression: its content is read into the
+    # output (``gzip -k .env`` keeps it, ``zstd -o x.zst .env`` names the output elsewhere) and the
+    # original may be replaced: ``unknown`` (may read AND write), so a read-deny rule sees it.
     Spec(
-        opts=_opts(short="S=x b=x", long="suffix=x"),
-        access="write",
+        opts=_opts(short="S=x b=x o=w", long="suffix=x output=w"),
+        access="unknown",
         flip_read=_fs("-c --stdout --to-stdout -l --list -t --test"),
     ),
 )
@@ -1000,6 +1029,13 @@ def _h_files(a: _Acc, args: Sequence[Word], spec: Spec) -> None:
     mode: Access = spec.access
     if seen & spec.flip_read:
         mode = "read"
+    if spec.recursive is not None and (
+        not spec.recursive
+        or seen & spec.recursive
+        # ``grep -d recurse`` / ``--directories=recurse`` is ``-r``
+        or any(opt in ("-d", "--directories") and w.text == "recurse" for opt, _, w in sc.values)
+    ):
+        a.recursive = True
     listed = 0
     for idx, w in enumerate(sc.pos[skip:]):
         access = spec.pos_access[min(idx, len(spec.pos_access) - 1)] if spec.pos_access else mode
@@ -1130,6 +1166,7 @@ def _h_transfer(a: _Acc, args: Sequence[Word]) -> None:
     recursive = prog == "cp" and bool(seen & _fs("-r -R -a --recursive --archive"))
     if recursive:
         a.gray.append("directory-write")  # a copied directory brings members we cannot see
+        a.recursive = True  # and reads every file below the source directories
 
     def source(w: Word) -> None:
         a.path(w, "read")  # a source is always read (its content ends up at the destination)
@@ -1518,6 +1555,8 @@ def _h_find(a: _Acc, args: Sequence[Word]) -> None:
             a.flags.append(t)
             if t == "-delete":
                 delete = True
+            if t in _FIND_EXEC or t in _FIND_WRITE_PRIMARIES:
+                a.recursive = True  # runs a program on / lists every file of the whole subtree
             if t in _FIND_EXEC:
                 a.exec_hint = True
                 a.gray.append(f"find-{t[1:]}")
@@ -1639,6 +1678,8 @@ def _h_tar(a: _Acc, args: Sequence[Word]) -> None:
             renamed=bool(seen & _TAR_RENAMING),
             absolute=bool(seen & {"-P", "--absolute-names"}),
         )
+    if (creating or appending) and (sc.pos or seen & {"-T", "--files-from"}):
+        a.recursive = True  # a directory operand is archived with everything below it
     if creating or appending:
         for w in sc.pos:
             a.path(w, "read")
@@ -1689,6 +1730,222 @@ def _h_zip(a: _Acc, args: Sequence[Word]) -> None:
         a.path(pos[0], "write")
     if "-d" not in set(sc.flags):
         for w in pos[1:]:
+            a.path(w, "read")
+        if set(sc.flags) & {"-r", "-R", "--recurse-paths", "--recurse-patterns"}:
+            a.recursive = True  # ``zip -r x.zip dir`` archives everything below dir
+
+
+_BOUNDKEEP = _opts(
+    long="home=u project-dir=u policy=r scope=x python=x instances=x tail=x hook-style=x",
+    flags="version help json purge reset-policy",
+)
+
+
+def _h_boundkeep(a: _Acc, args: Sequence[Word]) -> None:
+    """``boundkeep [--home DIR] COMMAND ...``: the first positional is the subcommand.
+
+    The same shape as git: a rule on ``subcommand`` (mode, uninstall, init, serve) must see it
+    even behind global options. ``--home`` / ``--project-dir`` are directories (unknown access).
+    """
+    sc = _scan(args, _BOUNDKEEP)
+    a.flags.extend(sc.flags)
+    a.note_dynamic(sc)
+    _apply_values(a, sc.values)
+    if sc.pos:
+        a.sub = sc.pos[0].text
+        if sc.pos[0].expands or sc.pos[0].glob:
+            a.gray.append("boundkeep-dynamic-subcommand")
+    if a.sub in ("explain", "test"):
+        for w in sc.pos[1:2]:
+            if w.text != "-":
+                a.path(w, "read")
+
+
+# --- runners that start another program: uv run, uvx, pipx run, poetry run, python -m boundkeep --
+
+_UV_VALUES = _fs(
+    "--with --with-editable --with-requirements --python -p --directory --project --env-file "
+    "--extra --group --only-group --no-group --no-extra --no-install-package --package --index "
+    "--default-index -i --index-url --extra-index-url --find-links -f --index-strategy "
+    "--keyring-provider --resolution --prerelease --exclude-newer --exclude-newer-package "
+    "--config-file --cache-dir --python-preference --python-platform --reinstall-package "
+    "--upgrade-package -P --refresh-package --link-mode --color --allow-insecure-host "
+    "--no-binary-package --no-build-package --build-constraints -b --constraints -c --overrides "
+    "--fork-strategy --torch-backend --from"
+)
+_UV_FLAGS = _fs(
+    "--isolated --no-project --frozen --locked --offline --no-sync --all-extras --no-dev --dev "
+    "--all-groups --active --quiet -q --verbose -v --no-cache -n --no-config --refresh "
+    "--reinstall --upgrade -U --native-tls --no-progress --no-editable --all-packages "
+    "--no-binary --no-build --no-env-file --no-managed-python --managed-python "
+    "--no-python-downloads --exact --inexact --script -s --show-resolution --preview "
+    "--no-preview --compile-bytecode --no-build-isolation --no-install-project "
+    "--no-install-workspace --no-group-default"
+)
+_PIPX_VALUES = _fs("--spec --python --pip-args --index-url")
+_PIPX_FLAGS = _fs(
+    "--no-cache --system-site-packages --verbose -v --quiet -q --fetch-missing-python"
+)
+_POETRY_VALUES = _fs("-C --directory -P --project")
+_POETRY_FLAGS = _fs(
+    "-q --quiet -v -vv -vvv --verbose -n --no-interaction --no-ansi --ansi --no-plugins --no-cache"
+)
+# program -> (subcommand words before the command, value options, flag options, marker)
+_RUNNER_TABLE: dict[str, tuple[tuple[str, ...], frozenset[str], frozenset[str], str]] = {
+    "uv": (("run",), _UV_VALUES, _UV_FLAGS, "uv-run"),
+    "uvx": ((), _UV_VALUES, _UV_FLAGS, "uvx"),
+    "pipx": (("run",), _PIPX_VALUES, _PIPX_FLAGS, "pipx-run"),
+    "poetry": (("run",), _POETRY_VALUES, _POETRY_FLAGS, "poetry-run"),
+}
+_PY_VALUE_FLAGS = frozenset({"-W", "-X", "-Q"})
+
+
+def _literal(w: Word) -> bool:
+    return not (w.expands or w.glob)
+
+
+def _python_like(name: str) -> bool:
+    base = name.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if base.endswith(".exe"):
+        base = base[:-4]
+    if base in ("py", "pythonw", "pyw", "python"):
+        return True
+    return base.startswith("python") and all(ch.isdigit() or ch == "." for ch in base[6:])
+
+
+def peel_runner(argv: Sequence[Word]) -> tuple[int, str, Word | None] | str | None:
+    """Recognize a runner that starts another program at the head of ``argv``.
+
+    ``uv run [options] CMD ...``, ``uv tool run``, ``uvx [options] CMD``,
+    ``pipx run [options] CMD``, ``poetry run CMD`` and ``python -m boundkeep ...`` (the
+    interpreter is only a launcher there).
+    Returns ``(n_drop, marker, synthetic)``: drop the first ``n_drop`` words, prepend ``synthetic``
+    (a word, or None) and record ``marker`` as a wrapper, so the inner command is judged and no
+    allow rule matches the wrapped line; ``"unsure"`` when an option is not in the tables (where
+    the command starts is unknown: the caller makes the line gray); None for anything else.
+    """
+    if not argv or not _literal(argv[0]):
+        return None
+    head = argv[0].text.replace("\\", "/").rsplit("/", 1)[-1]
+    if head.lower().endswith(".exe"):
+        head = head[:-4]
+    head = head.lower()
+    if _python_like(head):
+        return _peel_python_m(argv)
+    entry = _RUNNER_TABLE.get(head)
+    if entry is None:
+        return None
+    subs, values, flags, marker = entry
+    i = 1
+    if head == "uv" and len(argv) > 2 and argv[1].text == "tool" and argv[2].text == "run":
+        subs, i, marker = (), 3, "uvx"
+    elif subs:
+        for s in subs:
+            if i >= len(argv) or not _literal(argv[i]) or argv[i].text != s:
+                return None
+            i += 1
+    n = len(argv)
+    while i < n:
+        w = argv[i]
+        t = w.text
+        if t == "--":
+            i += 1
+            break
+        if not (t.startswith("-") and len(t) > 1):
+            if t[:1] in ("$", "`") and not _literal(w) and "/" not in t:
+                return "unsure"  # a lone ``$X`` may be an option or the command
+            break
+        if not _literal(w):
+            return "unsure"
+        name, eq, _ = t.partition("=")
+        if name in values:
+            i += 1 if eq else 2
+        elif name in flags and not eq:
+            i += 1
+        else:
+            return "unsure"
+    if i >= n:
+        return None  # nothing to run (``uv run`` alone)
+    return i, marker, None
+
+
+def _peel_python_m(argv: Sequence[Word]) -> tuple[int, str, Word | None] | None:
+    """``python [flags] -m boundkeep ARGS``: the interpreter only launches boundkeep."""
+    n = len(argv)
+    i = 1
+    while i < n:
+        w = argv[i]
+        t = w.text
+        if not _literal(w):
+            return None
+        if t == "-m":
+            if i + 1 < n and _literal(argv[i + 1]) and argv[i + 1].text == "boundkeep":
+                return i + 1, "python-m", None
+            return None
+        if t.startswith("-m") and len(t) > 2:
+            return (i + 1, "python-m", Word("boundkeep")) if t[2:] == "boundkeep" else None
+        if t in _PY_VALUE_FLAGS:
+            i += 2
+        elif t.startswith("-") and not t.startswith("--") and len(t) > 1 and "c" not in t[1:]:
+            i += 1  # -u -B -I -E -s -3 -3.12 -Xutf8 ...
+        else:
+            return None
+    return None
+
+
+_SEVENZ_ADD = _fs("a u")
+_SEVENZ_EXTRACT = _fs("x e")
+_SEVENZ_MODIFY = _fs("d rn")
+
+
+def _h_7z(a: _Acc, args: Sequence[Word]) -> None:
+    """7z / 7za / 7zr / 7zz: ``7z COMMAND [switches] ARCHIVE [files...]`` (switches are glued).
+
+    Only the first two characters of a switch are kept as the flag (``-p`` carries a password,
+    ``-mx=9`` a value). ``-oDIR`` is the extraction directory, ``-wDIR`` the temporary one.
+    """
+    a.known = True
+    pos: list[Word] = []
+    out_dirs: list[Word] = []
+    delete_sources = False
+    for w in args:
+        t = w.text
+        if len(t) > 1 and t[0] == "-":
+            a.flags.append(t[:2])
+            if t[:2] in ("-o", "-w") and len(t) > 2:
+                out_dirs.append(_sub(w, t[2:]))
+            elif t[:2] in ("-i", "-x") and t[2:3] == "@":
+                a.path(_sub(w, t[3:]), "read")
+            elif t.lower().startswith("-sdel"):
+                delete_sources = True
+        elif t.startswith("@") and len(t) > 1:
+            a.path(_sub(w, t[1:]), "read")  # a list file: its lines are file names
+        else:
+            pos.append(w)
+    if not pos:
+        return
+    sub = pos[0].text.lower()
+    a.sub = sub
+    if sub in _SEVENZ_ADD:
+        for w in pos[1:2]:
+            a.path(w, "write")
+        for w in pos[2:]:
+            a.path(w, "unknown" if delete_sources else "read")
+        for d in out_dirs:
+            a.path(d, "write")  # -w: where temporary files go
+        a.recursive = len(pos) > 2  # ``7z a x.7z dir`` archives everything below dir
+    elif sub in _SEVENZ_EXTRACT:
+        for w in pos[1:2]:
+            a.path(w, "read")
+        dirs = list(out_dirs) or [Word(".")]
+        for d in dirs:
+            a.path(d, "write")
+        _extract_members(a, dirs, pos[2:], renamed=False, absolute=False, junk_paths=sub == "e")
+    elif sub in _SEVENZ_MODIFY:
+        for w in pos[1:2]:
+            a.path(w, "write")
+    else:
+        for w in pos[1:2]:
             a.path(w, "read")
 
 
@@ -2029,9 +2286,12 @@ def _h_rsync(a: _Acc, args: Sequence[Word]) -> None:
     a.note_dynamic(sc)
     _apply_values(a, sc.values)
     seen = set(sc.flags)
+    # --remove-source-files: the source is copied (read) and then deleted (written): ``unknown``
     src_access: Access = (
-        "write" if seen & _fs("--remove-source-files --remove-sent-files") else "read"
+        "unknown" if seen & _fs("--remove-source-files --remove-sent-files") else "read"
     )
+    if seen & _fs("-a -r --archive --recursive"):
+        a.recursive = True  # directory sources are copied with everything below them
     pos = sc.pos
     for idx, w in enumerate(pos):
         remote = _remote_spec(w.text)
@@ -2189,7 +2449,20 @@ _GIT_REMOTE_NET = _fs("add set-url update show prune")
 _GIT_REMOTE_WRITE = _fs("add set-url remove rm rename set-head set-branches prune")
 _GIT_EXEC_SUBS = _fs("difftool mergetool filter-branch instaweb daemon gui")
 _GIT_READ_FILE_SUBS = _fs("apply am hash-object mailsplit mailinfo")
-_GIT_PATH_ALL = _fs("add rm mv clean restore apply am hash-object mailsplit mailinfo update-index")
+_GIT_PATH_ALL = _fs(
+    "add rm mv clean restore apply am hash-object mailsplit mailinfo update-index checkout-index "
+    "commit blame annotate"
+)
+# Subcommands whose path operands are SOURCES: git reads the content (into the index, a commit, a
+# stash, the work tree elsewhere) and may replace the file: ``unknown``, never plain ``write``.
+_GIT_SOURCE_SUBS = _fs("add rm mv update-index checkout-index commit stash")
+_GIT_READ_PATH_SUBS = _fs("blame annotate archive")  # operands are paths that are only read
+_GIT_REVPATH_SUBS = _fs("show cat-file diff archive grep")  # operands may be REV:PATH
+_GIT_PATCH_FLAGS = _fs("-p -u --patch -c --cc --patch-with-raw --patch-with-stat --textconv")
+_GIT_NOCONTENT_FLAGS = _fs(
+    "--stat --name-only --name-status --no-patch -s --shortstat --numstat --summary --raw "
+    "--dirstat --check --quiet"
+)
 _GIT_EXEC_FLAGS = _fs(
     "--exec --upload-pack --receive-pack --ext-diff --open-files-in-pager --exec-path"
 )
@@ -2248,14 +2521,14 @@ _GIT_SUB_OPTS: dict[str, Opts] = {
     "restore": _opts(short="s=x", long="source=x pathspec-from-file=r"),
     "branch": _opts(short="u=x", long="set-upstream-to=x sort=x format=x contains=x"),
     "log": _opts(
-        short="n=x",
+        short="n=x L=gitL",
         long="output=w max-count=x since=x until=x author=x committer=x grep=x format=x pretty=x "
         "skip=x",
     ),
     "diff": _opts(long="output=w", short="O=r"),
     "show": _opts(long="output=w format=x pretty=x", short="O=r"),
     "format-patch": _opts(short="o=w n=x", long="output-directory=w from=x subject-prefix=x"),
-    "archive": _opts(short="o=w", long="output=w remote=url exec=cmd prefix=x format=x"),
+    "archive": _opts(short="o=w", long="output=w remote=url exec=cmd prefix=x format=x add-file=r"),
     "config": _opts(short="f=w", long="file=w blob=x default=x type=x"),
     "apply": _opts(short="p=x C=x", long="directory=w include=x exclude=x whitespace=x"),
     "am": _opts(short="p=x", long="directory=w whitespace=x"),
@@ -2329,6 +2602,75 @@ def _git_url_or_path(a: _Acc, w: Word, access: Access) -> None:
         a.target(w)
     elif _outside_like(t) or w.expands or w.glob:
         a.path(w, access)
+
+
+def _rev_path(text: str) -> str | None:
+    """The PATH of a git ``REV:PATH`` operand (``HEAD:.env``, ``:.env``, ``:0:.env``), else None.
+
+    ``git show HEAD:.env`` prints the file as of a commit: a read of ``.env`` although no
+    positional is a path. URLs (``://``) and drive paths (``C:\\x``) are not; ``user@host:path`` is
+    not special here (``stash@{0}:.env`` looks the same): over-listing a path only costs a check.
+    """
+    if "://" in text or _drive(text) or text.startswith("-"):
+        return None
+    if text.startswith(":"):
+        rest = text[1:]
+        if len(rest) > 2 and rest[0] in "0123" and rest[1] == ":":
+            rest = rest[2:]  # :N:path is a path in merge stage N
+        return rest or None
+    head, sep, tail = text.partition(":")
+    if sep and head and tail:
+        return tail
+    return None
+
+
+def _git_operands(
+    a: _Acc,
+    sub: str,
+    pos: Sequence[Word],
+    before: Sequence[Word],
+    after: Sequence[Word],
+    seen: set[str],
+    chain: Word | None,
+) -> None:
+    """Recursive reads and ``REV:PATH`` operands of the read-side git subcommands.
+
+    Sets ``a.recursive`` for the commands that print the content of the whole tree or of every
+    commit (``grep``, ``archive``, ``log -p``, ``show``, ``stash show -p``); with no pathspec the
+    root is ``.`` (listed read). A ``REV:PATH`` operand is a read of PATH and needs no recursion.
+    """
+    rev_paths = 0
+    if sub == "cat-file" and any(f.startswith("--batch") for f in seen):
+        a.gray.append("git-cat-file-batch")  # the objects to print arrive on stdin
+    if sub in _GIT_REVPATH_SUBS:
+        for w in before:
+            rp = _rev_path(w.text)
+            if rp is not None:
+                rev_paths += 1
+                a.path(_sub(w, rp), "read")
+                _scoped_path(a, chain, _sub(w, rp), "read")
+    sub2 = pos[0].text if pos else None
+    content = False
+    if sub in ("grep", "archive"):
+        content = True
+    elif sub in ("log", "whatchanged"):
+        content = bool(seen & _GIT_PATCH_FLAGS)
+    elif sub == "show":
+        content = bool(seen & _GIT_PATCH_FLAGS) or not seen & _GIT_NOCONTENT_FLAGS
+    elif sub == "stash" and sub2 == "show":
+        content = bool(seen & (_GIT_PATCH_FLAGS | _fs("--include-untracked")))
+    if not content or rev_paths:
+        return
+    a.recursive = True
+    if sub == "archive":
+        # ``git archive TREE-ISH [PATH...]``: every operand after the tree-ish is a path read
+        for w in pos[1:]:
+            a.path(w, "read")
+            _scoped_path(a, chain, w, "read")
+    restricted = bool(after) or (sub == "archive" and len(pos) > 1)
+    restricted = restricted or any(_outside_like(w.text) for w in before)
+    if not restricted and chain is None:
+        a.path(Word("."), "read")  # no pathspec: the whole work tree / history
 
 
 def _h_git(a: _Acc, args: Sequence[Word]) -> None:
@@ -2481,18 +2823,27 @@ def _h_git(a: _Acc, args: Sequence[Word]) -> None:
         a.path(Word("."), "write")
     before = pos if sc.dd_at < 0 else pos[: sc.dd_at]
     after = [] if sc.dd_at < 0 else pos[sc.dd_at :]
+    operand_access: Access = "unknown" if sub in _GIT_SOURCE_SUBS else access
+    _git_operands(a, sub, pos, before, after, seen, chain)
+    if sub == "add" and seen & {"-f", "--force"}:
+        a.recursive = True  # ``git add -f DIR`` stages even ignored files below DIR
+    if sub == "stash" and sub2 in ("push", "save"):
+        for w in (*before[1:], *after):  # every operand of ``stash push`` is a pathspec
+            a.path(w, operand_access)
+            _scoped_path(a, chain, w, operand_access)
     if sub in _GIT_PATH_ALL:
-        file_access: Access = "read" if sub in _GIT_READ_FILE_SUBS else access
+        file_access: Access = "read" if sub in _GIT_READ_FILE_SUBS else operand_access
         for w in pos:
             a.path(w, file_access)
             _scoped_path(a, chain, w, file_access)
         return
+    tail_access: Access = "read" if sub in _GIT_READ_PATH_SUBS else operand_access
     for w in before:
         if _outside_like(w.text) or w.expands or w.glob:
-            a.path(w, access)
+            a.path(w, tail_access)
     for w in after:
-        a.path(w, access)
-        _scoped_path(a, chain, w, access)
+        a.path(w, tail_access)
+        _scoped_path(a, chain, w, tail_access)
     if sub == "checkout" and chain is not None and sc.dd_at < 0:
         # ``git -C d checkout settings.json``: without ``--`` a pathspec looks like a branch name
         for w in pos:
@@ -3342,6 +3693,12 @@ def _dispatch(name: str) -> _DispatchFn | None:
         "tar": _h_tar,
         "unzip": _h_unzip,
         "zip": _h_zip,
+        "boundkeep": _h_boundkeep,
+        "boundkeep-hook": _h_boundkeep,
+        "7z": _h_7z,
+        "7za": _h_7z,
+        "7zr": _h_7z,
+        "7zz": _h_7z,
         "patch": _h_patch,
         "curl": _h_curl,
         "wget": _h_wget,
@@ -3452,6 +3809,7 @@ def _classify(
         network=network,
         tags=tags,
         gray=tuple(dict.fromkeys(a.gray)),
+        recursive=a.recursive,
     )
 
 

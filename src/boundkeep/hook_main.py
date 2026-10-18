@@ -29,6 +29,11 @@ tool call simply runs (measured in M0a, docs/hook-behavior.md E6/E18/E22):
   budget, bad response, oversize or unparsable event, internal error) produces ``ask`` with the
   reason. For events that carry no decision (PostToolUse, UserPromptSubmit) the degraded result is
   a no-op. For ConfigChange it is a block (exit 2).
+* The client never speaks for the user on its own: a daemon ``allow`` is printed as an explicit
+  PreToolUse allow ONLY when the hook command carries ``--emit-allow`` (``init`` writes it when
+  the policy sets ``defaults.emit_allow``). Without the pin it is "no decision". The daemon is
+  not trusted blindly: any same-user process can answer on the pipe (review H-2), and ``ask`` or
+  ``deny`` from an impostor can only tighten, while ``allow`` would loosen.
 * The event type comes from ``hook_event_name`` in the event, the command-line argument is only a
   cross-check; a missing or different argument degrades (older Claude Code versions are reported
   to drop ``args``).
@@ -350,6 +355,19 @@ def config_violation(file_path: str) -> str | None:
     env_problem = env_violation(settings)
     if env_problem:
         return env_problem
+    # Imported lazily: only the ConfigChange path needs the settings assessment.
+    from boundkeep import claude_settings
+
+    baseline: dict[str, str] | None = None
+    for record in records:
+        watched = record.get("watched")
+        if isinstance(watched, dict) and all(
+            isinstance(k, str) and isinstance(v, str) for k, v in watched.items()
+        ):
+            baseline = watched
+    reasons = claude_settings.blocking_reasons(settings, baseline)
+    if reasons:
+        return reasons[0]
     for record in records:
         problem = record_problem(settings, record)
         if problem:
@@ -410,8 +428,13 @@ def _notify_config_now(event: dict[str, Any], problem: str | None, deadline: flo
 # --------------------------------------------------------------------------------------------
 
 
-def process(sub: str | None, data: bytes, deadline: float) -> Outcome:
-    """Decide one event. ``sub`` is the command-line argument, ``data`` the raw stdin bytes."""
+def process(sub: str | None, data: bytes, deadline: float, emit_allow: bool = False) -> Outcome:
+    """Decide one event. ``sub`` is the command-line argument, ``data`` the raw stdin bytes.
+
+    ``emit_allow`` is True only when the hook command carries ``--emit-allow`` (written by
+    ``init`` when the policy's ``defaults.emit_allow`` is on): only then is a daemon ``allow``
+    rendered as an explicit PreToolUse allow.
+    """
     arg_kind = sub if sub in protocol.HOOK_EVENTS else None
     try:
         event = _parse_event(data)
@@ -457,16 +480,23 @@ def process(sub: str | None, data: bytes, deadline: float) -> Outcome:
         return degraded(kind, f"boundkeep daemon refused the request ({response.error})")
     if kind != protocol.EVENT_PRE or response.decision == protocol.DECISION_NONE:
         return Outcome()
+    if response.decision == protocol.DECISION_ALLOW and not emit_allow:
+        # We do not speak for the user (an explicit allow overrides Claude Code's own permission
+        # prompt) unless the hook command was installed with --emit-allow. A real daemon sends
+        # "allow" only when the policy sets defaults.emit_allow, so an "allow" without the pin is
+        # either a stale install or an impostor on the pipe (review H-2): same as "no decision".
+        # ask and deny are always honoured: a fake daemon can only tighten with them.
+        return Outcome()
     return Outcome(stdout=render_pre_decision(response.decision, response.reason))
 
 
-def run_hook(sub: str | None, deadline: float) -> Outcome:
+def run_hook(sub: str | None, deadline: float, emit_allow: bool = False) -> Outcome:
     """Read stdin and decide. Runs in the worker thread."""
     try:
         data = _read_stdin()
     except _BadInput as exc:
         return degraded(sub if sub in protocol.HOOK_EVENTS else None, f"boundkeep: {exc}")
-    return process(sub, data, deadline)
+    return process(sub, data, deadline, emit_allow)
 
 
 def _fallback_outcome(sub: str | None) -> Outcome:
@@ -526,6 +556,45 @@ def _budget_for(sub: str | None) -> float:
     return budget
 
 
+def parse_args(args: list[str]) -> tuple[str | None, str | None, bool]:
+    """``(sub-command, pinned home, emit_allow)`` from the hook command's arguments.
+
+    Accepted: ``--home <path>`` and ``--emit-allow`` in any order, then the sub-command (the
+    arguments ``init`` writes are ``[flags..., sub]``). Anything else fails closed: an unknown
+    ``--flag``, a ``--home`` without value or a second positional argument gives sub-command
+    ``None`` (every event type then degrades by its own rule: ask, block or quiet) and never
+    ``emit_allow``. The home is still returned when it parsed, so a pin is never lost to a typo.
+    """
+    sub: str | None = None
+    home: str | None = None
+    emit_allow = False
+    bad = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--home":
+            if index + 1 < len(args):
+                home = args[index + 1]
+            else:
+                bad = True
+            index += 2
+        elif arg == "--emit-allow":
+            emit_allow = True
+            index += 1
+        elif arg.startswith("--"):
+            bad = True
+            index += 1
+        elif sub is None:
+            sub = arg
+            index += 1
+        else:
+            bad = True
+            index += 1
+    if bad:
+        return None, home, False
+    return sub, home, emit_allow
+
+
 def main(argv: list[str] | None = None, *, t0: float | None = None) -> int:
     """Run one hook invocation and return the exit code; the caller exits the process."""
     started = time.monotonic() if t0 is None else t0
@@ -534,19 +603,17 @@ def main(argv: list[str] | None = None, *, t0: float | None = None) -> int:
         if args == ["--version"]:
             _write_all(1, f"boundkeep-hook {__version__}\n".encode("ascii", "replace"))
             return 0
-        if len(args) >= 3 and args[0] == "--home":
+        sub, home, emit_allow = parse_args(args)
+        if home is not None and os.path.isabs(home):
             # init pins the home it used into the hook command: the environment cannot redirect us.
-            if os.path.isabs(args[1]):
-                paths.pin_home(args[1])
-            args = args[2:]
-        sub = args[0] if args else None
+            paths.pin_home(home)
         hard_end = started + _budget_for(sub)
         deadline = hard_end - EXIT_RESERVE_S
         box: list[Outcome] = []
 
         def work() -> None:
             try:
-                box.append(run_hook(sub, deadline))
+                box.append(run_hook(sub, deadline, emit_allow))
             except BaseException:  # noqa: BLE001 - the worker must always leave an answer
                 box.append(_fallback_outcome(sub))
 

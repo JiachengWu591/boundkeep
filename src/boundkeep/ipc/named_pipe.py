@@ -7,6 +7,12 @@ has no Unix sockets, and there is no way to ask for the first-instance flag. So:
 * every instance is created with an explicit DACL that grants the current user only
   (``winsec.SecurityDescriptor.private``), ``PIPE_REJECT_REMOTE_CLIENTS``, and the first one with
   ``FILE_FLAG_FIRST_PIPE_INSTANCE`` (creation fails with ``AddressInUse`` when the name is taken);
+* once all instances exist the DACL is tightened to connect/read/write only, WITHOUT the right to
+  create further instances (``FILE_CREATE_PIPE_INSTANCE``): the pool is fixed (a worker recycles
+  its instance with Disconnect/Connect and never creates one), so no later creation is needed,
+  and a same-user process can no longer join the pipe with an instance of its own and answer
+  requests in the daemon's place (review H-2). Clients must therefore open the pipe with specific
+  rights and not ``GENERIC_WRITE`` (which includes ``FILE_APPEND_DATA``): see ``ipc/client.py``;
 * a pool of instances is created up front (``instances``, default 8): with a single instance 4
   concurrent clients hit "pipe busy" on 76-85% of first attempts, with 8 on 2-4% (M0a E10);
 * one worker thread per instance, all I/O overlapped with a deadline, so a client that connects
@@ -251,7 +257,7 @@ class NamedPipeServer:
             with winsec.SecurityDescriptor.private() as descriptor:
                 attributes = descriptor.attributes
                 for index in range(self._instances):
-                    flags = _PIPE_ACCESS_DUPLEX | _FILE_FLAG_OVERLAPPED
+                    flags = _PIPE_ACCESS_DUPLEX | _FILE_FLAG_OVERLAPPED | winsec.WRITE_DAC
                     if index == 0:
                         flags |= _FILE_FLAG_FIRST_PIPE_INSTANCE
                     handle = api.CreateNamedPipeW(
@@ -275,6 +281,14 @@ class NamedPipeServer:
                             f"cannot create pipe instance {index}: {ctypes.WinError(code)}"
                         )
                     handles.append(handle)
+            # The pool is fixed: instances are recycled (Disconnect/Connect), never created again.
+            # So now nobody, the current user included, needs the right to create an instance, and
+            # a same-user process must not be able to add one and answer in our place (review H-2).
+            try:
+                for handle in handles:
+                    winsec.forbid_new_pipe_instances(handle)
+            except OSError as exc:
+                raise ServerStartError(f"cannot restrict the pipe's DACL: {exc}") from exc
         except BaseException:
             for handle in handles:
                 api.CloseHandle(handle)

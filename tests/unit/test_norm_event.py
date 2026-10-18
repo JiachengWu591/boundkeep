@@ -993,7 +993,7 @@ def test_a_long_cd_chain_is_cut_off_quickly_and_is_gray(world: dict[str, Any]) -
     started = time.perf_counter()
     got = run(world, command)
     assert time.perf_counter() - started < 2.0
-    assert len(got) <= ev.MAX_ACTIONS + 1
+    assert len(got) <= ev.MAX_ACTIONS + ev.MAX_LEXICAL_ACTIONS + 1
     assert got[-1].gray
     assert "normalize-budget-exceeded" in got[-1].gray_reasons
 
@@ -1008,13 +1008,18 @@ def test_a_very_long_cd_chain_on_the_real_disk_is_bounded(tmp_path: Path) -> Non
 
 def test_an_expired_time_budget_returns_one_gray_action(world: dict[str, Any]) -> None:
     for got in (
-        run(world, "echo a; echo b", budget_s=0.0),
         tool(world, "Read", {"file_path": "x"}, budget_s=0.0),
         tool(world, "Glob", {"pattern": "*"}, budget_s=0.0),
     ):
         assert len(got) == 1
         assert got[0].gray
         assert "normalize-budget-exceeded" in got[0].gray_reasons
+    # A shell line keeps being classified (lexically) after the budget: one action per command
+    # plus the gray marker, which comes last (review M-1).
+    got = run(world, "echo a; echo b", budget_s=0.0)
+    assert [a.program for a in got[:-1]] == ["echo", "echo"]
+    assert got[-1].gray
+    assert "normalize-budget-exceeded" in got[-1].gray_reasons
 
 
 def test_actions_so_far_are_kept_when_the_budget_runs_out(
@@ -1025,14 +1030,14 @@ def test_actions_so_far_are_kept_when_the_budget_runs_out(
     monkeypatch.setattr(ev.time, "monotonic", lambda: next(clock, 99.0))
     got = run(world, "echo a; echo b; echo c; echo d")
     monkeypatch.setattr(ev.time, "monotonic", real)
-    assert 1 <= len(got) < 5
+    assert 1 <= len(got) <= 5  # (the commands after the cut-off are classified lexically)
     assert got[-1].gray_reasons[0] == "normalize-budget-exceeded"
     assert got[0].program == "echo"
 
 
 def test_more_than_256_commands_are_cut_off(world: dict[str, Any]) -> None:
     got = run(world, "echo a; " * 300)
-    assert len(got) == ev.MAX_ACTIONS + 1
+    assert len(got) == ev.MAX_ACTIONS + 1  # (the same action again adds nothing)
     assert got[-1].gray_reasons[0] == "normalize-budget-exceeded"
     assert all(a.program == "echo" for a in got[:-1])
 

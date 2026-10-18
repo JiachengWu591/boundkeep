@@ -3,7 +3,8 @@
 Deliberately tiny. A script run as ``__main__`` is compiled from source on every start, while an
 imported module is loaded from cached bytecode; the logic therefore lives in ``hook_main.py``
 (see scripts/bench_hook.py for the difference). Under ``-I -S`` neither this directory nor any
-site-packages is on ``sys.path``, so the package root is added explicitly first.
+site-packages is on ``sys.path``, so the package root is added explicitly (appended: the standard
+library must win over any module of the same name inside the package root).
 
 Importing the package can fail (a half-finished upgrade, a corrupt cache file). An uncaught import
 error would exit 1, which Claude Code treats as "no decision" and lets the tool call run, so the
@@ -18,7 +19,9 @@ _T0 = time.monotonic()  # the hook's time budget counts from here
 
 _SRC_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SRC_ROOT not in sys.path:
-    sys.path.insert(0, _SRC_ROOT)
+    # appended, not inserted: under -I -S the stdlib is already on the path, and a json.py (or any
+    # other stdlib name) inside the package root must not shadow it (review M-3)
+    sys.path.append(_SRC_ROOT)
 
 try:
     from boundkeep import hook_main
@@ -32,9 +35,33 @@ _ASK = (
 )
 
 
+def _find_sub() -> str:
+    """The sub-command in ``sys.argv``, behind any flags (``--home <path>``, ``--emit-allow``).
+
+    ``init`` writes ``--home <path>`` in front of the sub-command, so ``sys.argv[1]`` is NOT the
+    sub-command (review M-3). Flags are skipped in any order, an unknown ``--flag`` too (the answer
+    must still depend on the event type); no sub-command at all means ``pre``, the shape that fails
+    safe.
+    """
+    args = sys.argv[1:]
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--home":
+            index += 2  # the flag and its value
+        elif arg.startswith("--"):
+            index += 1
+        else:
+            return arg
+    return "pre"
+
+
 def _fail_safe() -> None:
     """Answer without the package: ask for PreToolUse, block ConfigChange, stay quiet otherwise."""
-    sub = sys.argv[1] if len(sys.argv) > 1 else "pre"
+    try:
+        sub = _find_sub()
+    except BaseException:  # noqa: BLE001
+        sub = "pre"
     try:
         if sub == "config":
             os.write(2, b"boundkeep: settings change blocked: the hook client could not start\n")

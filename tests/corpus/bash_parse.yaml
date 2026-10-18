@@ -973,13 +973,21 @@
     - {argv: [bash, -c, ls], origin: bash-c}
   gray: [depth-exceeded]
 
-- id: bash-c-depth-four-exceeds-default
+- id: bash-c-depth-four-is-fine-by-default
   adv: true
+  # review M-10: the default depth went from 3 to 8 (four nested bash -c is what LLMs write)
   cmd: |-
-    bash -c 'bash -c "bash -c \"bash -c ls\""'
+    bash -c 'bash -c "bash -c \"bash -c \\\"rm -rf OUT\\\"\""'
   has:
-    - {argv: [bash, -c, ls], origin: bash-c}
-  gray: [depth-exceeded]
+    - {argv: [rm, -rf, OUT], origin: bash-c}
+
+- id: eval-depth-nine-exceeds-default
+  adv: true
+  cmd: "eval eval eval eval eval eval eval eval eval rm -rf OUT"
+  has:
+    - {argv: [eval, rm, -rf, OUT], origin: eval}
+  gray_has: [depth-exceeded]
+  exec: [eval]
 
 - id: bash-c-depth-zero-forbids-recursion
   adv: true
@@ -2116,3 +2124,148 @@
   cmd: '> /tmp/x'
   commands:
     - {argv: [], redirects: [['>', null, /tmp/x]]}
+
+# ---------------------------------------------------------------- review M-10 (reserved words)
+# Not diffed against a real bash (none runs on the review machine); the expectations follow the
+# bash grammar: `time [-p] [--] PIPELINE` and `coproc [NAME] COMPOUND | coproc SIMPLE`.
+- id: m10-coproc-named-group
+  adv: true
+  cmd: "coproc X { rm -rf OUT; }"
+  commands:
+    - {argv: [rm, -rf, OUT], origin: top}
+  gray: ['compound:coproc']
+
+- id: m10-coproc-unnamed-group
+  adv: true
+  cmd: "coproc { rm -rf OUT; }"
+  commands:
+    - {argv: [rm, -rf, OUT], origin: top}
+  gray: ['compound:coproc']
+
+- id: m10-coproc-simple-command
+  adv: true
+  cmd: "coproc rm -rf OUT"
+  commands:
+    - {argv: [rm, -rf, OUT], origin: top}
+  gray: ['compound:coproc']
+
+- id: m10-coproc-name-before-simple-is-the-command
+  adv: true
+  # bash: NAME is only allowed before a compound command, so `X` is the program here
+  cmd: "coproc X rm -rf OUT"
+  commands:
+    - {argv: [X, rm, -rf, OUT], origin: top}
+  gray: ['compound:coproc']
+
+- id: m10-coproc-named-subshell
+  adv: true
+  cmd: "coproc X ( rm -rf OUT )"
+  commands:
+    - {argv: [rm, -rf, OUT], origin: subshell}
+  gray: ['compound:coproc']
+
+- id: m10-coproc-before-if
+  adv: true
+  cmd: "coproc if true; then rm -rf OUT; fi"
+  has:
+    - {argv: [rm, -rf, OUT], origin: top}
+  gray_has: ['compound:coproc', 'compound:if']
+
+- id: m10-time-group
+  adv: true
+  cmd: "time { rm -rf OUT; }"
+  commands:
+    - {argv: [rm, -rf, OUT], origin: top, wrappers: []}
+
+- id: m10-time-p-group
+  adv: true
+  cmd: "time -p { rm -rf OUT; }"
+  commands:
+    - {argv: [rm, -rf, OUT], origin: top, wrappers: []}
+
+- id: m10-time-p-dashdash-group
+  adv: true
+  cmd: "time -p -- { rm -rf OUT; }"
+  commands:
+    - {argv: [rm, -rf, OUT], origin: top, wrappers: []}
+
+- id: m10-time-subshell
+  adv: true
+  cmd: "time ( rm -rf OUT )"
+  commands:
+    - {argv: [rm, -rf, OUT], origin: subshell}
+
+- id: m10-time-negation
+  adv: true
+  cmd: "time ! rm -rf OUT"
+  commands:
+    - {argv: [rm, -rf, OUT]}
+  gray: ['compound:negation']
+
+- id: m10-time-in-pipeline-stage
+  adv: true
+  # real bash REJECTS this (`time` only starts a pipeline), so the parser must stay gray
+  cmd: "echo a | time { rm -rf OUT; }"
+  commands:
+    - {argv: [echo, a], in_pipeline: true}
+    - {argv: ['{', rm, -rf, OUT], in_pipeline: true, wrappers: [time]}
+  gray: [syntax-error]
+
+- id: m10-time-after-and-is-reserved
+  adv: true
+  cmd: "true && time { rm -rf OUT; }"
+  commands:
+    - {argv: ['true']}
+    - {argv: [rm, -rf, OUT]}
+
+- id: m10-time-simple-stays-a-wrapper
+  adv: true
+  cmd: "time -p rm -rf OUT"
+  commands:
+    - {argv: [rm, -rf, OUT], wrappers: [time]}
+
+- id: m10-time-after-assignment-is-not-reserved
+  adv: true
+  # bash: `A=1 time {` runs the program `time` with the argument `{`; the lone `}` is a syntax error
+  cmd: "A=1 time { rm -rf OUT; }"
+  has:
+    - {argv: ['{', rm, -rf, OUT], wrappers: [time]}
+  gray: [syntax-error]
+
+- id: m10-time-alone
+  cmd: "time"
+  commands:
+    - {argv: [time]}
+
+- id: m10-eval-dashdash
+  adv: true
+  cmd: "eval -- rm -rf OUT"
+  commands:
+    - {argv: [eval, --, rm, -rf, OUT]}
+    - {argv: [rm, -rf, OUT], origin: eval}
+  exec: [eval]
+  gray: ['exec:eval']
+
+- id: m10-eval-second-dashdash-is-the-command
+  adv: true
+  # only the FIRST `--` is eval's own: the second one is a (not found) command name
+  cmd: "eval -- -- rm -rf OUT"
+  commands:
+    - {argv: [eval, --, --, rm, -rf, OUT]}
+    - {argv: [--, rm, -rf, OUT], origin: eval}
+  exec: [eval]
+  gray: ['exec:eval']
+
+- id: m10-eval-four-deep
+  adv: true
+  cmd: "eval eval eval eval rm -rf OUT"
+  has:
+    - {argv: [rm, -rf, OUT], origin: eval}
+  exec: [eval]
+  gray: ['exec:eval']
+
+- id: m10-nice-eighteen-layers
+  adv: true
+  cmd: "nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice rm -rf OUT"
+  commands:
+    - {argv: [rm, -rf, OUT], wrappers: [nice, nice, nice, nice, nice, nice, nice, nice, nice, nice, nice, nice, nice, nice, nice, nice, nice, nice]}

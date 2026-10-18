@@ -1739,9 +1739,16 @@ DEFAULT_POSIX_CASES = [
         id="user-guard-config-write",
     ),
     pytest.param(
+        # Review round 2 (M-11): the settings files carry tokens in their "env" block, so the
+        # project-internal allow rule no longer wins for reads (writes stay denied).
         A(("/home/dev/proj/.claude/settings.json", "read", True), tool="Read"),
+        "deny",
+        id="guard-config-read-is-denied",
+    ),
+    pytest.param(
+        A(("/home/dev/proj/.claude/settings.json.bak", "read", True), tool="Read"),
         "allow",
-        id="guard-config-read-is-fine",
+        id="settings-backup-read-is-fine",
     ),
     pytest.param(
         A(("/home/dev/proj/.boundkeep/policy.yaml", "unknown", True), program="vim"),

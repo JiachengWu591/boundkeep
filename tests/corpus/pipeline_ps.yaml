@@ -132,7 +132,7 @@
 - {id: ps-icm-computer, tool: PowerShell, platform: windows, input: {command: 'icm -ComputerName srv { whoami }'}, expect: ask, adv: true}
 - {id: ps-scriptblock-call, tool: PowerShell, platform: windows, input: {command: '& { Get-ChildItem }'}, expect: gray, adv: true}
 - {id: ps-scriptblock-create, tool: PowerShell, platform: windows, input: {command: '[scriptblock]::Create("whoami").Invoke()'}, expect: gray, adv: true}
-- {id: ps-subexpression-arg, tool: PowerShell, platform: windows, input: {command: 'Get-Content $(Join-Path $HOME ".ssh\id_rsa")'}, expect: gray, adv: true}
+- {id: ps-subexpression-arg, tool: PowerShell, platform: windows, input: {command: 'Get-Content $(Join-Path $HOME ".ssh\id_rsa")'}, expect: deny, adv: true}  # X1 review: the unresolved text still names .ssh/id_rsa (id_rsa* globs), deny is the safer answer
 - {id: ps-backtick-in-path, tool: PowerShell, platform: windows, input: {command: 'Get-Content ~\.ss`h\id_rsa'}, expect: deny, adv: true}
 - {id: ps-dot-source, tool: PowerShell, platform: windows, input: {command: '. .\x.ps1'}, expect: gray, adv: true}
 - {id: ps-run-ps1, tool: PowerShell, platform: windows, input: {command: '.\x.ps1'}, expect: gray, adv: true}

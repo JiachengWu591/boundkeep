@@ -204,9 +204,8 @@ def test_the_config_dir_is_protected_like_dot_claude(policy: Policy) -> None:
     )
     assert plain.decision != protocol.DECISION_DENY
     assert guarded.decision == protocol.DECISION_DENY
-    assert (
-        pipeline.runtime_policy(policy, ENV, HOME) is policy
-    )  # nothing to add without the variable
+    # nothing config-dir specific to add without the variable (the guard rules are always added)
+    assert _config_dir_rule_ids(pipeline.runtime_policy(policy, ENV, HOME)) == []
 
 
 def test_shell_command_helper() -> None:
@@ -227,12 +226,24 @@ def _write_to(path: str) -> dict[str, Any]:
     }
 
 
+def _config_dir_rule_ids(extended: Policy) -> list[str]:
+    return [
+        r.id
+        for r in extended.rules
+        if r.id in ("protect-guard-config-dir", "no-claude-config-dir-secret-read")
+    ]
+
+
 def test_runtime_policy_checked_reports_nothing_when_there_is_nothing_to_add(
     policy: Policy,
 ) -> None:
-    assert pipeline.runtime_policy_checked(policy, ENV, HOME) == (policy, None)
+    # Without CLAUDE_CONFIG_DIR only the rules that guard boundkeep's own code are added.
+    extended, error = pipeline.runtime_policy_checked(policy, ENV, HOME)
+    assert error is None
+    assert [r.id for r in extended.rules[:2]] == ["protect-guard-code", "protect-guard-dirs"]
+    assert _config_dir_rule_ids(extended) == []
     env = {**ENV, "CLAUDE_CONFIG_DIR": ""}
-    assert pipeline.runtime_policy_checked(policy, env, HOME) == (policy, None)
+    assert pipeline.runtime_policy_checked(policy, env, HOME) == (extended, None)
 
 
 def test_runtime_policy_checked_adds_the_rule_and_says_nothing(policy: Policy) -> None:
@@ -248,12 +259,12 @@ def test_runtime_policy_checked_adds_the_rule_and_says_nothing(policy: Policy) -
 def test_a_very_long_config_dir_never_raises_and_is_reported(policy: Policy) -> None:
     env = {**ENV, "CLAUDE_CONFIG_DIR": "D:\\" + "x" * 600}
     same, error = pipeline.runtime_policy_checked(policy, env, HOME)
-    assert same is policy
+    assert _config_dir_rule_ids(same) == []
     assert error is not None
     assert "CLAUDE_CONFIG_DIR" in error
     assert error.isprintable()
     assert len(error) < 300
-    assert pipeline.runtime_policy(policy, env, HOME) is policy
+    assert _config_dir_rule_ids(pipeline.runtime_policy(policy, env, HOME)) == []
 
 
 @pytest.mark.parametrize(
@@ -298,7 +309,7 @@ def test_an_unusable_config_dir_is_reported_not_silently_ignored(
 ) -> None:
     env = {**ENV, "CLAUDE_CONFIG_DIR": config_dir}
     same, error = pipeline.runtime_policy_checked(policy, env, HOME)
-    assert same is policy
+    assert _config_dir_rule_ids(same) == []
     assert error is not None
     assert "CLAUDE_CONFIG_DIR" in error
 
@@ -306,7 +317,7 @@ def test_an_unusable_config_dir_is_reported_not_silently_ignored(
 def test_a_config_dir_with_an_unresolved_variable_is_reported(policy: Policy) -> None:
     env = {**ENV, "CLAUDE_CONFIG_DIR": "%NO_SUCH_VARIABLE%\\claude"}
     same, error = pipeline.runtime_policy_checked(policy, env, HOME)
-    assert same is policy
+    assert _config_dir_rule_ids(same) == []
     assert error is not None
 
 
@@ -318,8 +329,8 @@ def test_runtime_policy_never_raises_whatever_it_is_given(
         env = {**ENV, "CLAUDE_CONFIG_DIR": value}
         assert pipeline.runtime_policy(policy, env, HOME) is not None
         result, error = pipeline.runtime_policy_checked(policy, env, HOME)
-        assert result is policy or error is None
-    assert pipeline.runtime_policy(policy, ENV, None) is policy
+        assert _config_dir_rule_ids(result) != [] or error is not None
+    assert pipeline.runtime_policy(policy, ENV, None) is not None
 
     def boom(*_a: Any, **_k: Any) -> Any:
         raise RuntimeError("secret-content")
@@ -327,7 +338,7 @@ def test_runtime_policy_never_raises_whatever_it_is_given(
     monkeypatch.setattr(pipeline.norm_paths, "normalize_path", boom)
     env = {**ENV, "CLAUDE_CONFIG_DIR": "D:\\cfg"}
     same, error = pipeline.runtime_policy_checked(policy, env, HOME)
-    assert same is policy
+    assert same is policy  # neither the config-dir rules nor the guard rules could be built
     assert error is not None
     assert "secret-content" not in error
     assert pipeline.runtime_policy(policy, env, HOME) is policy

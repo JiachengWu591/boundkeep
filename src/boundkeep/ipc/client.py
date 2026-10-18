@@ -84,6 +84,10 @@ def _transact_pipe(address: str, request_line: bytes, deadline: float) -> bytes:
     while True:
         try:
             # Unbuffered binary read/write on the pipe path; M0a verified this works as a client.
+            # GENERIC_WRITE (what open() asks for) includes FILE_APPEND_DATA, but the pipe server
+            # has removed "create instance" from the DACL (review H-2) and this still connects:
+            # the kernel does not require that right of a client
+            # (tests/platform/test_winsec_pipe_instances.py pins this down).
             handle = open(address, "r+b", buffering=0)  # noqa: SIM115 - closed in the with below
             break
         except FileNotFoundError as exc:

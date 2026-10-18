@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import json
 import ntpath
 import os
@@ -31,7 +32,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import IO, Any, Final, Literal
 
-from boundkeep import paths
+from boundkeep import ownhook, paths
 from boundkeep.ownhook import SUBCOMMANDS, is_own_hook
 from boundkeep.settings_io import SettingsError, load_settings, write_atomic
 
@@ -64,6 +65,27 @@ class HookCommand:
 
     def argv_for(self, subcommand: str) -> list[str]:
         return [self.command, *self.args_for(subcommand)]
+
+
+EMIT_ALLOW_FLAG: Final = "--emit-allow"
+
+
+def has_emit_allow(args: Sequence[str]) -> bool:
+    """True when the hook arguments (everything before the subcommand) carry ``--emit-allow``."""
+    return EMIT_ALLOW_FLAG in args[:-1]
+
+
+def with_emit_allow(base_args: Sequence[str], enabled: bool) -> tuple[str, ...]:
+    """``base_args`` with ``--emit-allow`` present exactly when ``enabled``.
+
+    Pins the policy's ``defaults.emit_allow`` into the hook command: the hook client only passes
+    an ``allow`` on to Claude Code when it carries this flag (it is not read from the environment
+    or from a file the agent could edit). ``boundkeep doctor`` compares the pin with the policy.
+    """
+    kept = [arg for arg in base_args if arg != EMIT_ALLOW_FLAG]
+    if enabled:
+        kept.append(EMIT_ALLOW_FLAG)
+    return tuple(kept)
 
 
 @dataclass(frozen=True)
@@ -472,6 +494,14 @@ _MANIFEST_VERSION: Final = 1
 
 
 @dataclass(frozen=True)
+class HookFile:
+    """A file the hook launch depends on, and the SHA-256 of its bytes when ``init`` ran."""
+
+    path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class InstallRecord:
     settings_path: str
     scope: str
@@ -480,6 +510,11 @@ class InstallRecord:
     hook_args: tuple[str, ...]
     post_matcher: str
     installed_at: str  # ISO-8601 UTC
+    # Added after M1b; both are optional in the file, so an older record loads (and doctor says
+    # "run init again"): ``hook_files`` empty means no hashes were recorded, ``watched`` None means
+    # no baseline of command-running keys and foreign hooks (claude_settings.watched_fingerprints).
+    hook_files: tuple[HookFile, ...] = ()
+    watched: tuple[tuple[str, str], ...] | None = None
 
 
 def _strip_extended_prefix(path: str) -> str:
@@ -545,7 +580,34 @@ def _record_from_json(item: object, path: str) -> InstallRecord:
         hook_args=tuple(args),
         post_matcher=strings["post_matcher"],
         installed_at=strings["installed_at"],
+        hook_files=_hook_files_from_json(item.get("hook_files"), bad),
+        watched=_watched_from_json(item.get("watched"), bad),
     )
+
+
+def _hook_files_from_json(value: object, bad: Any) -> tuple[HookFile, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise bad("hook_files must be a list")
+    files: list[HookFile] = []
+    for entry in value:
+        path = entry.get("path") if isinstance(entry, dict) else None
+        digest = entry.get("sha256") if isinstance(entry, dict) else None
+        if not isinstance(path, str) or not path or not isinstance(digest, str):
+            raise bad("hook_files entries need a path and a sha256 string")
+        files.append(HookFile(path, digest))
+    return tuple(files)
+
+
+def _watched_from_json(value: object, bad: Any) -> tuple[tuple[str, str], ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in value.items()
+    ):
+        raise bad("watched must be an object of strings")
+    return tuple(sorted(value.items()))
 
 
 def load_manifest(path: str) -> list[InstallRecord]:
@@ -565,21 +627,27 @@ def save_manifest(path: str, records: Sequence[InstallRecord]) -> None:
     """Write the manifest atomically (JSON, indent 2, LF)."""
     payload = {
         "version": _MANIFEST_VERSION,
-        "installs": [
-            {
-                "settings_path": r.settings_path,
-                "scope": r.scope,
-                "created_file": r.created_file,
-                "hook_command": r.hook_command,
-                "hook_args": list(r.hook_args),
-                "post_matcher": r.post_matcher,
-                "installed_at": r.installed_at,
-            }
-            for r in records
-        ],
+        "installs": [_record_to_json(r) for r in records],
     }
     text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
     write_atomic(path, text.encode("utf-8"))
+
+
+def _record_to_json(r: InstallRecord) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "settings_path": r.settings_path,
+        "scope": r.scope,
+        "created_file": r.created_file,
+        "hook_command": r.hook_command,
+        "hook_args": list(r.hook_args),
+        "post_matcher": r.post_matcher,
+        "installed_at": r.installed_at,
+    }
+    if r.hook_files:  # absent, not empty, for a record without hashes: the old format round-trips
+        item["hook_files"] = [{"path": f.path, "sha256": f.sha256} for f in r.hook_files]
+    if r.watched is not None:
+        item["watched"] = dict(r.watched)
+    return item
 
 
 def _same_settings(a: str, b: str) -> bool:
@@ -617,6 +685,8 @@ def upsert_record(records: Sequence[InstallRecord], record: InstallRecord) -> li
                     hook_args=record.hook_args,
                     post_matcher=record.post_matcher,
                     installed_at=record.installed_at,
+                    hook_files=record.hook_files,
+                    watched=record.watched,
                 )
             )
             placed = True
@@ -627,6 +697,99 @@ def upsert_record(records: Sequence[InstallRecord], record: InstallRecord) -> li
 
 def drop_record(records: Sequence[InstallRecord], settings_path: str) -> list[InstallRecord]:
     return [r for r in records if not _same_settings(r.settings_path, settings_path)]
+
+
+# ---------------------------------------------------------------------------------------------
+# Integrity of the files a hook launch runs (security review M-4)
+# ---------------------------------------------------------------------------------------------
+#
+# ``init`` records the SHA-256 of the interpreter named in the hook command, ``hook_client.py`` and
+# ``hook_main.py``. ``doctor`` and the daemon at startup compare them. This only notices a swap
+# after the fact: it is not a sandbox, and it cannot stop a process that may write those files.
+# Raw bytes are hashed (no line-ending normalization), so editing a development checkout means
+# running ``boundkeep init`` again.
+
+_HASH_CHUNK: Final = 1 << 20
+INTEGRITY_FIX: Final = (
+    "if you changed or upgraded these files on purpose run 'boundkeep init' again, otherwise "
+    "investigate who changed them"
+)
+
+
+def file_sha256(path: str) -> str:
+    """Hex SHA-256 of the file's bytes; raises ``OSError`` when it cannot be read."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while chunk := handle.read(_HASH_CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def hook_files_for(command: HookCommand) -> tuple[HookFile, ...]:
+    """The files to hash for ``command``: its executable, ``hook_client.py`` and ``hook_main.py``.
+
+    The two scripts are the ones in the command's own arguments when it names ``hook_client.py``
+    (python style), else the ones of this installation (launcher style). Raises ``OSError`` when a
+    file cannot be read: ``init`` must not record a file it never saw.
+    """
+    script = next(
+        (
+            arg
+            for arg in command.base_args
+            if arg.replace("\\", "/").rsplit("/", 1)[-1].lower() == ownhook.HOOK_SCRIPT_NAME
+        ),
+        None,
+    )
+    package_dir = os.path.dirname(script or os.path.abspath(__file__))
+    wanted = [
+        command.command,
+        script or os.path.join(package_dir, ownhook.HOOK_SCRIPT_NAME),
+        os.path.join(package_dir, "hook_main.py"),
+    ]
+    files: list[HookFile] = []
+    for path in dict.fromkeys(wanted):
+        files.append(HookFile(path, file_sha256(path)))
+    return tuple(files)
+
+
+def hook_file_problems(files: Sequence[HookFile]) -> list[str]:
+    """One text per recorded file that is unreadable or no longer has the recorded hash."""
+    problems: list[str] = []
+    for recorded in files:
+        try:
+            digest = file_sha256(recorded.path)
+        except OSError as exc:
+            problems.append(f"{recorded.path} cannot be read ({type(exc).__name__})")
+            continue
+        if digest != recorded.sha256:
+            problems.append(
+                f"{recorded.path} no longer matches the SHA-256 recorded by 'boundkeep init'"
+            )
+    return problems
+
+
+def integrity_report(records: Sequence[InstallRecord]) -> list[str]:
+    """Problems of every record's files (each file once), for the daemon's startup warning.
+
+    A record without hashes (written before they existed) is reported too: nothing about its
+    files can be verified. Never raises.
+    """
+    problems: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    unhashed = 0
+    for record in records:
+        if not record.hook_files:
+            unhashed += 1
+            continue
+        fresh = [f for f in record.hook_files if (f.path, f.sha256) not in seen]
+        seen.update((f.path, f.sha256) for f in fresh)
+        problems += hook_file_problems(fresh)
+    if unhashed:
+        problems.append(
+            f"{unhashed} install record(s) have no file hashes (made by an older boundkeep): "
+            "their hook files cannot be verified; run 'boundkeep init' again"
+        )
+    return problems
 
 
 # ---------------------------------------------------------------------------------------------

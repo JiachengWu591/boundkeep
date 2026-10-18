@@ -5,7 +5,9 @@
 #   * every network action asks (no allowlist), every push asks, a force push is denied;
 #   * deleting outside the project is denied, recursive delete anywhere asks, find -delete and
 #     chmod -R / chown -R ask wherever they are, every systemctl call asks, disk tools are denied;
-#   * writing anything outside the project asks, and so does reading outside it.
+#   * writing anything outside the project asks, and so does reading outside it;
+#   * claude with --settings / --permission-mode / --dangerously-skip-permissions and any
+#     pip / pipx uninstall are denied (the default policy asks).
 # Everything else (secrets, credentials, history, the guard's own files) is the same as in
 # default.yaml. Same matching rules as the default: strictest wins, unmatched actions are gray
 # (ask while llm_audit.backend is none), "~/" is your home directory, matching ignores case, path
@@ -37,18 +39,150 @@ rules:
     # switched off by the thing it is meant to constrain (including disableAllHooks). Writes to
     # these paths are therefore refused outright, whichever tool performs them. Rules on paths
     # have no `tool:` filter: whatever tool carries a path is covered.
+    # The directories themselves are listed too ("**/.claude", "~/.claude"): deleting, renaming
+    # or moving the folder takes the settings, hooks and registration with it, which is the same
+    # as editing them ("**/.boundkeep/**" already includes the directory itself). Managed
+    # settings outrank every other settings layer, so they are guard configuration as well.
     match:
       path_glob:
         - "**/.claude/settings*.json"
         - "**/.boundkeep/**"
         - "~/.claude/settings*.json"
+        - "**/.claude"
+        - "~/.claude"
+        - "**/managed-settings.json"
+        - "**/managed-settings.d/**"
       access: write
     action: deny
-    reason: "writing hook settings or boundkeep's own files is not allowed"
+    reason: "writing hook settings, managed settings, the .claude folder or boundkeep's own files is not allowed"
+  - id: deny-boundkeep-state-commands
+    # boundkeep's own command line changes the gate from inside: `mode audit-only` records
+    # decisions and stops enforcing them, `uninstall` removes the hook entries, `init` rewrites
+    # them (and, with --python or --hook-style, names the interpreter they run), `serve` starts a
+    # second daemon, and `--reset-policy`, `--purge`, `--rotate-endpoint` and `--home` replace the
+    # policy, delete the audit log, change the endpoint or point it all somewhere else. The
+    # path rules above cannot see any of that because boundkeep itself writes the files. These
+    # are for the user's own terminal, never for the agent. The subcommand rule needs the
+    # normalizer to report boundkeep's subcommand; the flag rule below works on flags alone.
+    tool: [Bash, PowerShell]
+    match:
+      program: [boundkeep, boundkeep-hook]
+      subcommand: [mode, uninstall, init, serve]
+    action: deny
+    reason: "boundkeep's own mode, uninstall, init and serve commands change the gate and are not allowed for the agent"
+  - id: deny-boundkeep-state-flags
+    # The flag half of deny-boundkeep-state-commands: these options only exist on commands that
+    # replace the policy, delete the audit log, rewrite the hook registration or relocate the
+    # boundkeep home, whatever the subcommand is called.
+    tool: [Bash, PowerShell]
+    match:
+      program: [boundkeep, boundkeep-hook]
+      flags_any:
+        - "--reset-policy"
+        - "--purge"
+        - "--python"
+        - "--hook-style"
+        - "--rotate-endpoint"
+        - "--home"
+    action: deny
+    reason: "boundkeep options that reset the policy, purge the log or rewrite the hook registration are not allowed for the agent"
+  - id: deny-boundkeep-hook-run
+    # boundkeep-hook is the program Claude Code starts for every tool call; nothing in a coding
+    # task runs it by hand, and a hand-run copy can be pointed at another home or endpoint.
+    tool: [Bash, PowerShell]
+    match:
+      program: [boundkeep-hook]
+    action: deny
+    reason: "running boundkeep's hook client by hand is not allowed"
+  - id: ask-boundkeep-cli
+    # Whatever is left of boundkeep's command line (doctor, test, explain, log --tail, llm) only
+    # reads, but those are commands for the user's own terminal and the output can carry command
+    # lines from the audit log. Asking keeps a boundkeep command from ever passing unseen, and
+    # gives the confirmation a reason that names boundkeep (a gray action has none).
+    tool: [Bash, PowerShell]
+    match:
+      program: [boundkeep]
+    action: ask
+    reason: "boundkeep's own command line is meant for the user's terminal"
+  - id: deny-claude-cli-flags
+    # `--settings`, `--permission-mode` and `--dangerously-skip-permissions` load another settings
+    # file or bypass the permission configuration for a second Claude Code session whose tool
+    # calls this gate may not see. Strict: refused.
+    tool: [Bash, PowerShell]
+    match:
+      program: [claude]
+      flags_any:
+        - "--settings"
+        - "--permission-mode"
+        - "--dangerously-skip-permissions"
+        - "--allow-dangerously-skip-permissions"
+    action: deny
+    reason: "claude options that load other settings or bypass permissions are not allowed"
+  - id: ask-claude-cli
+    # `claude config set` rewrites the permission configuration (disableAllHooks, bypassPermissions)
+    # and any other `claude ...` starts a second Claude Code session whose tool calls this gate may
+    # not see (another settings file, another hook set). The subcommand (`config`) is not reported
+    # for a program the tables do not know, so the whole program asks.
+    tool: [Bash, PowerShell]
+    match:
+      program: [claude]
+    action: ask
+    reason: "claude's own command line can change permissions and hooks or start a session outside this review"
+  - id: ask-kill-processes
+    # taskkill, pkill, killall, kill and Stop-Process end processes by name or id; ending the
+    # boundkeep daemon (or the python process it runs in) leaves every tool call unreviewed until
+    # it is restarted, and Stop-Service does the same for Defender and other protections. The
+    # target (python.exe, boundkeep, a PID) is an argument the rule language cannot test, so every
+    # use asks; stopping a dev server of your own is then one extra confirmation.
+    tool: [Bash, PowerShell]
+    match:
+      program: [taskkill, pkill, killall, kill, Stop-Process, Stop-Service]
+    action: ask
+    reason: "ending processes or services could stop the daemon or a protection"
+  - id: deny-package-uninstall
+    # `pip uninstall boundkeep` (also as `python -m pip`, or through pipx) removes the gate's own
+    # code. The package name is an argument the rule language cannot test, so every uninstall is
+    # refused in strict (the user can run it). Program names are matched exactly and the tables
+    # only fold some versioned names, so the common ones are listed.
+    tool: [Bash, PowerShell]
+    match:
+      program:
+        - pip
+        - pip3
+        - pip3.9
+        - pip3.10
+        - pip3.11
+        - pip3.12
+        - pip3.13
+        - pip3.14
+        - pipx
+        - python
+        - python3
+        - python3.9
+        - python3.10
+        - python3.11
+        - python3.12
+        - python3.13
+        - python3.14
+      subcommand: [uninstall, uninstall-all]
+    action: deny
+    reason: "uninstalling a package could remove boundkeep itself"
+  - id: ask-guard-state-read
+    # boundkeep's own state: endpoint.json names the daemon's channel, policy.yaml is the whole
+    # rule set (a map of what is not covered), audit.jsonl holds the redacted command lines of
+    # earlier sessions. The agent has no task that needs them; a person should see the read.
+    match:
+      path_glob:
+        - "**/.boundkeep/**"
+      access: read
+    action: ask
+    reason: "reading boundkeep's endpoint, policy or audit log"
   - id: deny-agent-exec-config
     # These files decide what Claude Code (or an MCP client) runs, or is told to do, next session:
     # MCP servers, hook scripts, slash commands, sub-agents, skills and CLAUDE.md instructions.
     # Changing them changes the agent's future behaviour outside this review, so it is refused.
+    # Rules and output styles are instructions loaded into the context, statusline scripts and
+    # plugins (hooks, commands, MCP servers) are code Claude Code runs.
     match:
       path_glob:
         - "**/.mcp.json"
@@ -57,6 +191,10 @@ rules:
         - "**/.claude/commands/**"
         - "**/.claude/agents/**"
         - "**/.claude/skills/**"
+        - "**/.claude/rules/**"
+        - "**/.claude/output-styles/**"
+        - "**/.claude/statusline.*"
+        - "**/.claude/plugins/**"
         - "**/CLAUDE.md"
         - "**/CLAUDE.local.md"
       access: write
@@ -110,10 +248,19 @@ rules:
     # .envrc or "xenv"; the ".env.*" variants do include templates such as .env.example. The
     # rule has no `tool:` filter on purpose: Grep, Glob, Bash and the rest read files too, and a
     # rule for Read alone would leave every one of them a way around it.
+    # Also the files that are secrets by their conventional name even inside the project: "*.env"
+    # (prod.env), a file called "env", secrets.{yml,yaml,json,toml}, key/password/token text
+    # files, htpasswd, kubeconfig, Azure's local.settings.json and password-manager databases.
+    # Names are matched whole, so env.py, kubeconfig.go or secrets_manager.py stay readable;
+    # a directory called "env" (a virtualenv) can only be listed or searched as a whole, its
+    # files (env/bin/activate) are not matched.
     match:
       path_glob:
         - "**/.env"
         - "**/.env.*"
+        - "**/*.env"
+        - "**/env"
+        - "**/.envs/**"
         - "**/.ssh/**"
         - "**/*.pem"
         - "**/*.key"
@@ -124,6 +271,24 @@ rules:
         - "**/*.tfvars.json"
         - "**/service-account*.json"
         - "**/credentials.json"
+        - "**/credentials.txt"
+        - "**/secrets.yml"
+        - "**/secrets.yaml"
+        - "**/secrets.json"
+        - "**/secrets.toml"
+        - "**/secrets.txt"
+        - "**/secret.txt"
+        - "**/key.txt"
+        - "**/keys.txt"
+        - "**/password.txt"
+        - "**/passwords.txt"
+        - "**/token.txt"
+        - "**/.htpasswd"
+        - "**/kubeconfig"
+        - "**/*.kubeconfig"
+        - "**/local.settings.json"
+        - "**/*.kdbx"
+        - "**/*.kdb"
         - "/etc/shadow*"
         - "/etc/gshadow*"
         - "/etc/sudoers"
@@ -139,7 +304,9 @@ rules:
     # database and S3 clients, password-manager and Vault state, GPG keyrings) and standalone
     # private-key files. Same reasoning as no-secret-read: the content is the credential. Patterns
     # start with **/ so another user's home (/root, /home/bob, a Windows drive mounted in WSL) is
-    # covered as well as this user's.
+    # covered as well as this user's. The private-key names end in "*" so backups and copies
+    # (id_rsa.bak, id_ed25519.old) are covered; the cost is that the public half (id_rsa.pub)
+    # is refused as well.
     match:
       path_glob:
         - "**/.aws/**"
@@ -155,6 +322,8 @@ rules:
         - "**/.dockercfg"
         - "**/.gnupg/**"
         - "**/.git-credentials"
+        - "**/.git/credentials"
+        - "**/.config/git/credentials"
         - "**/.gitconfig"
         - "**/.git/config"
         - "**/.netrc"
@@ -172,10 +341,10 @@ rules:
         - "**/.terraform.d/credentials.tfrc.json"
         - "**/appdata/roaming/github cli/**"
         - "**/appdata/roaming/gcloud/**"
-        - "**/id_rsa"
-        - "**/id_dsa"
-        - "**/id_ecdsa"
-        - "**/id_ed25519"
+        - "**/id_rsa*"
+        - "**/id_dsa*"
+        - "**/id_ecdsa*"
+        - "**/id_ed25519*"
         - "**/*.p12"
         - "**/*.pfx"
         - "**/*.ppk"
@@ -187,17 +356,22 @@ rules:
     # server settings and their tokens), session transcripts (everything every earlier session
     # read, ran and printed, secrets included), prompt history, shell snapshots and the IDE lock
     # files (they hold a connection token). An agent has no task that needs them.
+    # The settings files (settings.json, settings.local.json: the "env" block is where API keys
+    # and gateway tokens end up) and .mcp.json (MCP servers' "headers" and "env") are credential
+    # carriers inside the project too, where an allow rule would otherwise let them be read.
     match:
       path_glob:
         - "**/.claude/.credentials.json"
         - "**/.claude.json"
+        - "**/.claude/settings*.json"
+        - "**/.mcp.json"
         - "**/.claude/projects/**"
         - "**/.claude/history.jsonl"
         - "**/.claude/shell-snapshots/**"
         - "**/.claude/ide/**"
       access: read
     action: deny
-    reason: "reading Claude Code credentials, transcripts and session state is not allowed"
+    reason: "reading Claude Code credentials, settings, MCP configuration, transcripts and session state is not allowed"
   - id: no-history-read
     # Shell, database and REPL history files record everything typed, including passwords given on
     # a command line, connection strings and tokens in URLs. They are a collection of secrets in
@@ -785,3 +959,49 @@ tests:
   - { tool: PowerShell, platform: [windows], input: { command: "net1 user bob hunter2xx" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "git restore src\\a.py" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "Get-Date" }, expect: gray }
+  # Credential carriers inside the project (read): the project-internal allow rule must not win.
+  - { tool: Read, input: { file_path: ".claude/settings.local.json" }, expect: deny }
+  - { tool: Read, input: { file_path: ".claude/settings.json" }, expect: deny }
+  - { tool: Read, input: { file_path: ".mcp.json" }, expect: deny }
+  - { tool: Read, input: { file_path: ".git/credentials" }, expect: deny }
+  - { tool: Read, input: { file_path: "prod.env" }, expect: deny }
+  - { tool: Read, input: { file_path: "config/PROD.ENV" }, expect: deny }
+  - { tool: Read, input: { file_path: "ENV" }, expect: deny }
+  - { tool: Read, input: { file_path: "key.txt" }, expect: deny }
+  - { tool: Read, input: { file_path: "id_rsa.bak" }, expect: deny }
+  - { tool: Read, input: { file_path: "secrets.yml" }, expect: deny }
+  - { tool: Read, input: { file_path: "deploy/secrets.yaml" }, expect: deny }
+  - { tool: Read, input: { file_path: ".htpasswd" }, expect: deny }
+  - { tool: Read, input: { file_path: "kubeconfig" }, expect: deny }
+  - { tool: Read, input: { file_path: "local.settings.json" }, expect: deny }
+  - { tool: Read, input: { file_path: "vault/passwords.kdbx" }, expect: deny }
+  - { tool: Grep, input: { pattern: ".", path: ".mcp.json" }, expect: deny }
+  - { tool: Bash, input: { command: "cat prod.env" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content .claude\\settings.local.json" }, expect: deny }
+  - { tool: Read, input: { file_path: "docker-compose.yml" }, expect: allow }   # not a secret by itself
+  - { tool: Read, input: { file_path: "src/env.py" }, expect: allow }   # whole names only
+  # boundkeep's own command line, claude, process killing, package removal.
+  - { tool: Bash, input: { command: "boundkeep init --reset-policy" }, expect: deny }
+  - { tool: Bash, input: { command: "boundkeep log --purge" }, expect: deny }
+  - { tool: Bash, input: { command: "boundkeep-hook pre" }, expect: deny }
+  - { tool: Bash, input: { command: "boundkeep doctor" }, expect: ask }
+  - { tool: Bash, input: { command: "claude config set -g disableAllHooks true" }, expect: ask }
+  - { tool: Bash, input: { command: "claude --dangerously-skip-permissions" }, expect: deny }
+  - { tool: Bash, input: { command: "claude --settings x.json" }, expect: deny }
+  - { tool: Bash, input: { command: "pkill -f boundkeep" }, expect: ask }
+  - { tool: Bash, input: { command: "pip uninstall -y boundkeep" }, expect: deny }
+  - { tool: Bash, input: { command: "python -m pip uninstall boundkeep" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Stop-Process -Name python" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "taskkill /F /IM python.exe" }, expect: ask }
+  # The guard's directories and the files that configure what runs next session.
+  - { tool: Bash, input: { command: "rm -r .claude" }, expect: deny }
+  - { tool: Bash, input: { command: "mv ~/.claude ~/old-claude" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Rename-Item ~\\.claude x" }, expect: deny }
+  - { tool: Write, input: { file_path: "managed-settings.json", content: "{}" }, expect: deny }
+  - { tool: Write, input: { file_path: ".mcp.json", content: "{}" }, expect: deny }
+  - { tool: Write, input: { file_path: ".claude/rules/r.md", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: ".claude/output-styles/s.md", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: ".claude/statusline.sh", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: "~/.claude/plugins/p/hooks.json", content: "x" }, expect: deny }
+  - { tool: Read, input: { file_path: "~/.boundkeep/policy.yaml" }, expect: ask }
+  - { tool: Read, input: { file_path: "~/.boundkeep/logs/audit.jsonl" }, expect: ask }

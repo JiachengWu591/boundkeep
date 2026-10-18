@@ -28,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from boundkeep import console, paths, protocol
+from boundkeep import console, install, paths, protocol
 from boundkeep.daemon import pipeline
 from boundkeep.ipc.base import DEFAULT_INSTANCES, create_server
 from boundkeep.ipc.endpoint import Endpoint
@@ -513,9 +513,43 @@ class Daemon:
 
     # -- serving -----------------------------------------------------------------------------
 
+    def _check_install_integrity(self) -> None:
+        """Warn loudly (never refuse to start) when a hook file differs from what init recorded.
+
+        The hook scripts and the interpreter are hashed by ``init`` (security review M-4). A daemon
+        that refused to start would turn a swapped file into "every tool call asks"; the warning
+        goes to the console and the audit log, and ``boundkeep doctor`` fails on it. Never raises.
+        """
+        try:
+            problems = install.integrity_report(
+                install.load_manifest(paths.manifest_file(self._home))
+            )
+        except Exception as exc:  # noqa: BLE001 - startup must go on, but not in silence
+            problems = [f"the install manifest could not be checked ({type(exc).__name__})"]
+        if not problems:
+            return
+        for problem in problems:
+            self._report(f"WARNING integrity: {problem}")
+        self._report(
+            "WARNING integrity: the hook files above are not what 'boundkeep init' recorded; "
+            "if you did not change them, treat this machine's gate as untrusted "
+            "('boundkeep doctor' has the details; 'boundkeep init' records the current files)"
+        )
+        with contextlib.suppress(Exception):
+            self._log.append(
+                {
+                    "ts": _now(),
+                    "event": "daemon",
+                    "action": "integrity-warning",
+                    "problems": len(problems),
+                    "pid": os.getpid(),
+                }
+            )
+
     async def serve(self, stop: asyncio.Event) -> None:
         """Serve until ``stop`` is set. Raises ``ServerStartError`` / ``AddressInUse`` on start."""
         self._refresh_policy()
+        self._check_install_integrity()
         server = create_server(
             self._endpoint,
             self.handle,

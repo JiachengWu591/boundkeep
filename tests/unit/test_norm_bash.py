@@ -356,8 +356,11 @@ def test_wrapper_edge_cases() -> None:
     assert argvs("xargs -i{} echo {}") == [["echo", "{}"]]
     assert argvs("xargs --max-args=2 --null rm") == [["rm"]]
     assert argvs("xargs --max-args 2 rm") == [["rm"]]
-    res = parse_bash("sudo " * 20 + "rm x")
+    res = parse_bash("sudo " * 80 + "rm x")  # more than _MAX_WRAPPER_LAYERS (64) layers
     assert "wrapper-layers" in res.gray
+    res = parse_bash("nice " * 18 + "rm x")  # review M-10: 18 layers used to exceed the cap of 16
+    assert "wrapper-layers" not in res.gray
+    assert [w.text for w in res.commands[0].argv] == ["rm", "x"]
     res = parse_bash("ionice -p 3 rm")
     assert res.commands[0].argv[0].text == "ionice"
     res = parse_bash("sudo -u $u rm x")

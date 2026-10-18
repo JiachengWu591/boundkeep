@@ -319,6 +319,84 @@ def load_layers(project_dir: str) -> list[Layer]:
     return result
 
 
+_LEVEL_STATUS = {"block": FAIL, "warn": WARN, "info": INFO}
+
+
+def _concern_fix(concern: claude_settings.Concern) -> str:
+    if concern.key == "disableAllHooks":
+        return "remove the disableAllHooks entry"
+    if concern.key == "env":
+        return "remove that env entry"
+    watched = {f"hooks.{event}" for event in claude_settings.WATCHED_HOOK_EVENTS}
+    if concern.key in claude_settings.EXEC_KEYS or concern.key in watched:
+        return (
+            "if you made this change, run 'boundkeep init' to record it as the new baseline; "
+            "otherwise remove it"
+        )
+    if concern.key.startswith("hooks."):
+        return "fix the event name (Claude Code event names are case-sensitive)"
+    return "review the setting; remove it unless you meant it"
+
+
+def _concern_checks(
+    name: str,
+    layer: Layer,
+    data: dict[str, Any],
+    record: install.InstallRecord | None,
+    *,
+    has_own: bool,
+) -> list[Check]:
+    """Everything in this layer that may weaken the gate: every layer, not only ours (M-6)."""
+    baseline = dict(record.watched) if record is not None and record.watched is not None else None
+    checks: list[Check] = []
+    for concern in claude_settings.assess_settings(data, baseline=baseline):
+        level = concern.level
+        if concern.layer_only and not has_own and level == "block":
+            level = "warn"  # a file without our hooks: its key typos cannot break our entries
+        status = _LEVEL_STATUS[level]
+        fix = _concern_fix(concern) if status in (FAIL, WARN) else ""
+        checks.append(Check(name, status, f"{layer.path}: {concern.message}", fix))
+    if record is not None and record.watched is None and claude_settings.watched_fingerprints(data):
+        checks.append(
+            Check(
+                name,
+                WARN,
+                f"{layer.path}: the install record has no baseline of command-running keys and "
+                "other hooks (made by an older boundkeep), so a later change to them cannot "
+                "be told from what was there",
+                "run 'boundkeep init' again",
+            )
+        )
+    return checks
+
+
+def check_record_integrity(name: str, path: str, record: install.InstallRecord) -> list[Check]:
+    """The hook scripts and the interpreter still hash to what ``init`` recorded (M-4)."""
+    if not record.hook_files:
+        return [
+            Check(
+                name,
+                WARN,
+                f"{path}: the install record has no file hashes (made by an older boundkeep), so "
+                "the hook scripts and the interpreter cannot be verified",
+                "run 'boundkeep init' again",
+            )
+        ]
+    problems = install.hook_file_problems(record.hook_files)
+    if problems:
+        return [
+            Check(name, FAIL, f"{path}: {problem}", install.INTEGRITY_FIX) for problem in problems
+        ]
+    return [
+        Check(
+            name,
+            OK,
+            f"{path}: the hook scripts and interpreter match the hashes recorded by init "
+            f"({len(record.hook_files)} files)",
+        )
+    ]
+
+
 def check_layer(layer: Layer, record: install.InstallRecord | None) -> list[Check]:
     name = f"settings:{layer.name}"
     if layer.error is not None or layer.doc is None:
@@ -336,28 +414,20 @@ def check_layer(layer: Layer, record: install.InstallRecord | None) -> list[Chec
         return [Check(name, INFO, f"{layer.path} does not exist")]
     checks: list[Check] = []
     data = layer.doc.data
+    own = list(ownhook.own_hooks_in(data))
     if layer.doc.had_bom:
+        # Fail closed (spec section 10): the CLI tolerates a BOM, the Desktop app is reported to
+        # ignore such a file (#81355), and a hook configuration that is ignored is a silent gate.
         checks.append(
             Check(
                 name,
-                WARN,
-                f"{layer.path} starts with a UTF-8 BOM (some readers ignore such files)",
+                FAIL if own else WARN,
+                f"{layer.path} starts with a UTF-8 BOM (some readers ignore such files, and then "
+                "the hooks in it do not load)",
                 "re-save it without BOM, or run 'boundkeep init' which rewrites it without one",
             )
         )
-    if ownhook.disables_hooks(data):
-        checks.append(
-            Check(
-                name,
-                FAIL,
-                f"{layer.path} sets disableAllHooks: every hook is off, with no warning anywhere",
-                "remove the disableAllHooks entry",
-            )
-        )
-    for finding in claude_settings.find_suspicious_top_level_keys(data):
-        if finding.severity == "warning":
-            checks.append(Check(name, WARN, f"{layer.path}: {finding.message}"))
-    own = list(ownhook.own_hooks_in(data))
+    checks += _concern_checks(name, layer, data, record, has_own=bool(own))
     if not own:
         if record is not None:
             checks.append(
@@ -372,6 +442,8 @@ def check_layer(layer: Layer, record: install.InstallRecord | None) -> list[Chec
             checks.append(Check(name, INFO, f"no boundkeep hooks in {layer.path}"))
         return checks
     checks += _check_own_hooks(name, layer.path, own, record, data)
+    if record is not None:
+        checks += check_record_integrity(name, layer.path, record)
     return checks
 
 
@@ -449,9 +521,7 @@ def _check_own_hooks(
                     "run 'boundkeep init' again, or investigate who changed it",
                 )
             )
-    env_problem = hook_main.env_violation(data)
-    if env_problem:
-        checks.append(Check(name, FAIL, f"{path}: {env_problem}", "remove that env entry"))
+
     commands = {(h.get("command"), tuple(h.get("args", [])[:-1])) for _e, _m, h in own}
     for command, base_args in sorted(commands, key=repr):
         if not isinstance(command, str):
@@ -507,6 +577,42 @@ def _check_pinned_home(
 
 def paths_same(a: str, b: str) -> bool:
     return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def check_emit_allow(home: str, layers: list[Layer]) -> list[Check]:
+    """The ``--emit-allow`` pin in the hook commands matches the policy's ``defaults.emit_allow``.
+
+    The hook client only passes an ``allow`` on to Claude Code when it carries the flag, so a
+    policy that says one thing and a hook command that says the other would do the opposite of
+    what the policy says (an allow nobody asked for, or none where one was asked for).
+    """
+    try:
+        policy = load_policy(paths.policy_file(home), home=os.path.expanduser("~"))
+    except PolicyError:
+        return []  # check_policy reports an unusable policy
+    wanted = bool(policy.defaults.emit_allow)
+    wrong: list[str] = []
+    for layer in layers:
+        if layer.doc is None:
+            continue
+        for _event, _matcher, hook in ownhook.own_hooks_in(layer.doc.data):
+            args = hook.get("args")
+            pinned = isinstance(args, list) and install.has_emit_allow(args)
+            if pinned != wanted:
+                wrong.append(layer.name)
+                break
+    if not wrong:
+        return []
+    where = ", ".join(wrong)
+    detail = (
+        f"the policy has defaults.emit_allow on but the hook command in the {where} settings does "
+        "not carry --emit-allow: allow verdicts are not passed on to Claude Code (its own "
+        "permission rules decide those calls)"
+        if wanted
+        else f"the hook command in the {where} settings carries --emit-allow but the policy has "
+        "defaults.emit_allow off: allow verdicts may be passed on to Claude Code against the policy"
+    )
+    return [Check("emit-allow", WARN, detail, "run 'boundkeep init' again")]
 
 
 def check_hook_command_self_test(layers: list[Layer]) -> list[Check]:
@@ -615,18 +721,31 @@ def check_managed_settings() -> list[Check]:
     return checks
 
 
+def claude_json_path() -> str:
+    """Where Claude Code keeps its global state (``.claude.json``, with the trust decisions).
+
+    With ``CLAUDE_CONFIG_DIR`` set it is ``<that directory>/.claude.json`` (the same directory
+    ``resolve_settings_path`` uses for the user settings; this location is from memory of Claude
+    Code's behavior and has not been verified here), otherwise ``~/.claude.json``.
+    """
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if config_dir:
+        return os.path.join(config_dir, ".claude.json")
+    return os.path.join(os.path.expanduser("~"), ".claude.json")
+
+
 def check_workspace_trust(project_dir: str) -> list[Check]:
-    path = os.path.join(os.path.expanduser("~"), ".claude.json")
+    path = claude_json_path()
     try:
         with open(path, "rb") as f:
             data = f.read(_MAX_CLAUDE_JSON_BYTES + 1)
         if len(data) > _MAX_CLAUDE_JSON_BYTES:
-            return [Check("workspace-trust", INFO, "~/.claude.json is too large to inspect")]
+            return [Check("workspace-trust", INFO, f"{path} is too large to inspect")]
         parsed = json.loads(data.decode("utf-8-sig"))
     except FileNotFoundError:
-        return [Check("workspace-trust", INFO, "~/.claude.json not found; trust state unknown")]
+        return [Check("workspace-trust", INFO, f"{path} not found; trust state unknown")]
     except (OSError, ValueError):
-        return [Check("workspace-trust", INFO, "~/.claude.json could not be parsed")]
+        return [Check("workspace-trust", INFO, f"{path} could not be parsed")]
     projects = parsed.get("projects") if isinstance(parsed, dict) else None
     wanted = project_dir.replace("\\", "/").rstrip("/").casefold()
     if isinstance(projects, dict):
@@ -640,7 +759,7 @@ def check_workspace_trust(project_dir: str) -> list[Check]:
         Check(
             "workspace-trust",
             WARN,
-            f"{project_dir} is not marked trusted in ~/.claude.json: Claude Code is documented to "
+            f"{project_dir} is not marked trusted in {path}: Claude Code is documented to "
             "skip hooks in untrusted folders (the VS Code extension still ran them in M0a; "
             "unverified)",
             "open the folder in Claude Code once and accept the trust dialog",
@@ -715,7 +834,20 @@ def check_environment() -> list[Check]:
     return checks
 
 
-def check_activity(home: str) -> list[Check]:
+def _inside(path: str, directory: str) -> bool:
+    """``path`` is ``directory`` or below it (lexical, case-insensitive on Windows)."""
+    folded = os.path.normcase(os.path.normpath(path))
+    base = os.path.normcase(os.path.normpath(directory))
+    return folded == base or folded.startswith(base.rstrip("\\/") + os.sep)
+
+
+def check_activity(home: str, project_dir: str | None = None) -> list[Check]:
+    """Is the gate being used at all, and (with ``project_dir``) in this project?
+
+    Always INFO, never a warning: a session opened in the wrong folder runs NO hook, so it leaves
+    nothing in the audit log, and events from other folders prove nothing about this one (other
+    projects or a user-level install log theirs). Only the absence of anything is worth saying.
+    """
     log = AuditLog(paths.audit_log_file(home))
     records = [r for r in log.tail(50) if r.get("event") != "daemon"]
     if not records:
@@ -728,7 +860,42 @@ def check_activity(home: str) -> list[Check]:
             )
         ]
     last = records[-1]
-    return [Check("activity", INFO, f"last event: {last.get('ts')} {last.get('event')}")]
+    detail = f"last event: {last.get('ts')} {last.get('event')}"
+    if project_dir is not None:
+        cwds = [c for r in records if isinstance(c := r.get("cwd"), str)]
+        if cwds and not any(_inside(cwd, project_dir) for cwd in cwds):
+            detail += (
+                f"; none of the last {len(cwds)} logged events was in {project_dir}, so this "
+                "project may not have been used with the hooks (events from other folders say "
+                "nothing about it)"
+            )
+    return [Check("activity", INFO, detail)]
+
+
+def check_scope(project_dir: str, dir_given: bool, layers: list[Layer]) -> list[Check]:
+    """Which folder was checked, and that a project-level install covers only that one (H-3)."""
+
+    def holds_hooks(layer: Layer) -> bool:
+        return layer.doc is not None and any(True for _ in ownhook.own_hooks_in(layer.doc.data))
+
+    user_level = any(holds_hooks(layer) for layer in layers if layer.name == "user")
+    project_level = any(holds_hooks(layer) for layer in layers if layer.name != "user")
+    only_here = (
+        f"protection applies only to Claude Code sessions opened in {project_dir}: a session "
+        "opened in its parent folder or any other folder has no boundkeep hooks, and Claude Code "
+        "does not warn about it"
+    )
+    fix = "for every folder run 'boundkeep init --scope user'"
+    if not dir_given:
+        head = (
+            f"checking {project_dir} (the current directory; pass --project-dir to check another)"
+        )
+        if project_level and not user_level:
+            return [Check("scope", WARN, f"{head}; {only_here}", fix)]
+        return [Check("scope", INFO, head)]
+    if project_level and not user_level:
+        return [Check("scope", INFO, f"project-level install: {only_here}")]
+    return []
 
 
 # --------------------------------------------------------------------------------------------
@@ -743,7 +910,7 @@ def _guard(name: str, fn: Callable[[], list[Check]]) -> list[Check]:
         return [Check(name, FAIL, f"the check itself crashed ({type(exc).__name__}: {exc})")]
 
 
-def run_checks(project_dir: str, home: str | None = None) -> list[Check]:
+def run_checks(project_dir: str, home: str | None = None, *, dir_given: bool = True) -> list[Check]:
     home = home if home is not None else paths.home_dir()
     checks: list[Check] = []
     checks += _guard("python", check_python)
@@ -783,16 +950,19 @@ def run_checks(project_dir: str, home: str | None = None) -> list[Check]:
             Check(
                 "install",
                 FAIL,
-                "boundkeep's hooks are not in any settings file Claude Code reads for this project",
+                "boundkeep's hooks are not in any settings file Claude Code reads for the project "
+                f"{project_dir} (a project-level install covers only the folder it was made in)",
                 "run 'boundkeep init' (project scope) or 'boundkeep init --scope user'",
             )
         )
+    checks += _guard("scope", lambda: check_scope(project_dir, dir_given, layers))
+    checks += _guard("emit-allow", lambda: check_emit_allow(home, layers))
     checks += _guard("hook-command", lambda: check_hook_command_self_test(layers))
     checks += _guard("managed-settings", check_managed_settings)
     checks += _guard("workspace-trust", lambda: check_workspace_trust(project_dir))
     checks += _guard("claude-code", check_claude_code)
     checks += _guard("environment", check_environment)
-    checks += _guard("activity", lambda: check_activity(home))
+    checks += _guard("activity", lambda: check_activity(home, project_dir))
     return checks
 
 
@@ -808,7 +978,7 @@ _TAGS = {OK: "[ OK ]", WARN: "[WARN]", FAIL: "[FAIL]", INFO: "[info]"}
 
 def run(args: argparse.Namespace) -> int:
     project_dir = os.path.abspath(args.project_dir or os.getcwd())
-    checks = run_checks(project_dir)
+    checks = run_checks(project_dir, dir_given=bool(args.project_dir))
     if args.json:
         console.out(json.dumps([asdict(c) for c in checks], ensure_ascii=False, indent=2))
     else:

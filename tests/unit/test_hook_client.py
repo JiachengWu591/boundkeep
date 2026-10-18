@@ -538,6 +538,25 @@ def test_disable_all_hooks_is_blocked_even_without_a_manifest(
     _blocked(_config(path), "disableAllHooks")
 
 
+@pytest.mark.parametrize(
+    ("extra", "needle"),
+    [
+        ({"permissions": {"defaultMode": "bypassPermissions"}}, "bypassPermissions"),
+        ({"permissions": {"allow": ["Bash(*)"]}}, "Bash"),
+        ({"permissions": {"allow": ["PowerShell(*)"]}}, "PowerShell"),
+        ({"env": {"PATH": "x"}}, "PATH"),
+        ({"env": {"NODE_OPTIONS": "--require x"}}, "NODE_OPTIONS"),
+    ],
+)
+def test_settings_that_may_weaken_the_gate_are_blocked(
+    settings_file: Callable[..., Path], extra: dict[str, Any], needle: str
+) -> None:
+    # M-6 of the X1 review: the ConfigChange hook must apply claude_settings.blocking_reasons
+    data = _intact_settings()
+    data.update(extra)
+    _blocked(_config(settings_file(data)), needle)
+
+
 @pytest.mark.parametrize("value", [False, None])
 def test_disable_all_hooks_false_is_fine(settings_file: Callable[..., Path], value: object) -> None:
     assert _config(settings_file({"disableAllHooks": value}, manifest=False)).exit_code == 0
@@ -816,7 +835,7 @@ def test_deliver_blocks_when_the_decision_cannot_be_written(
 def test_main_degrades_when_the_worker_hangs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BOUNDKEEP_HOOK_BUDGET_S", "0.6")
 
-    def hang(sub: str | None, deadline: float) -> hc.Outcome:
+    def hang(sub: str | None, deadline: float, emit_allow: bool = False) -> hc.Outcome:
         time.sleep(30)
         return hc.Outcome()
 
@@ -833,7 +852,7 @@ def test_main_degrades_when_the_worker_hangs(monkeypatch: pytest.MonkeyPatch) ->
 def test_main_survives_a_crashing_worker_and_a_crashing_degrade_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def boom(sub: str | None, deadline: float) -> hc.Outcome:
+    def boom(sub: str | None, deadline: float, emit_allow: bool = False) -> hc.Outcome:
         raise MemoryError
 
     delivered: list[hc.Outcome] = []
@@ -899,7 +918,7 @@ def test_an_allow_decision_from_the_daemon_is_rendered_as_an_explicit_allow(
     fake_daemon: Callable[..., list[bytes]],
 ) -> None:
     fake_daemon("allow", reason="rule x says fine")
-    out = hc.process("pre", _bytes(PRE_EVENT), _deadline())
+    out = hc.process("pre", _bytes(PRE_EVENT), _deadline(), emit_allow=True)  # pinned: --emit-allow
     decision = _decision_json(out)
     assert decision["permissionDecision"] == "allow"
     assert decision["permissionDecisionReason"] == "rule x says fine"

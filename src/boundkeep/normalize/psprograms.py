@@ -1285,6 +1285,7 @@ def _finish(
         network=network,
         tags=_tag_union(tags, extra_tags),
         gray=tuple(dict.fromkeys(a.gray)),
+        recursive=a.recursive,
     )
 
 
@@ -1318,6 +1319,7 @@ def _external(
         a.urls.extend(info.urls)
         a.network = info.network
         a.gray.extend(info.gray)
+        a.recursive = info.recursive
         extra.extend(info.tags)
         if base in _BUILD_TOOLS and _runs_build_code(ctx, base, args):
             a.known = True
@@ -1401,6 +1403,8 @@ def _h_copytool(ctx: _Ctx, base: str, args: Sequence[Word]) -> None:
         elif sw[1]:
             _generic_arg(a, replace(w, text=sw[1]))
     moves = bool(set(a.flags) & {"/move", "/mov"})
+    if base == "robocopy" or set(a.flags) & {"/s", "/e"}:
+        a.recursive = True  # the source directory is copied with (robocopy: all of) its contents
     if not plain:
         return
     sources, dests, names = plain[:1], plain[1:2], plain[2:]
@@ -1417,6 +1421,14 @@ def _h_copytool(ctx: _Ctx, base: str, args: Sequence[Word]) -> None:
                 _copy_into(a, d, names, dirlike=True, parents=False)
             else:  # robocopy copies the members of the source directory
                 a.gray.append("directory-write")
+
+
+# cmdlet (lower case) -> the switch that makes it walk the subtree (None: always)
+_RECURSIVE_CMDLETS: dict[str, frozenset[str] | None] = {
+    "get-childitem": frozenset({"-recurse", "-depth"}),  # -Depth implies -Recurse
+    "copy-item": frozenset({"-recurse"}),
+    "compress-archive": None,
+}
 
 
 def _cmdlet(
@@ -1436,6 +1448,14 @@ def _cmdlet(
     for w in bound.loose:
         if _pathlike(w.text) or w.expands or w.glob:
             ctx.put(w, "unknown")
+    key = spec.name.lower()
+    switches = _RECURSIVE_CMDLETS.get(key, frozenset())
+    if key in _RECURSIVE_CMDLETS and (
+        switches is None or switches & {f.lower() for f in bound.flags}
+    ):
+        ctx.a.recursive = True  # reads the whole subtree of its directory operands
+        if not ctx.a.paths and key == "get-childitem":
+            ctx.a.path(Word("."), "read")  # no path: the current directory
     reasons = exec_reasons_of(spec.name, args)
     if reasons:
         ctx.a.exec_hint = True

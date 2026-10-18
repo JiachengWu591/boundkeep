@@ -577,7 +577,9 @@ def test_doctor_finds_every_way_the_gate_can_be_silently_off(machine: Machine) -
     )
 
     machine.settings.write_bytes(b"\xef\xbb\xbf" + good.encode())
-    assert "warn" in statuses(doctor(machine), "settings:project")
+    # Security review round 2 (M-6): a BOM in a file that holds our hooks is a failure, not a
+    # warning (fail closed: some readers ignore such a file; the fix is one 'boundkeep init').
+    assert "fail" in statuses(doctor(machine), "settings:project")
 
     machine.settings.write_text("{not json", encoding="utf-8")
     assert "fail" in statuses(doctor(machine), "settings:project")

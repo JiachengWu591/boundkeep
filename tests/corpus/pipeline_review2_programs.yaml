@@ -1,0 +1,93 @@
+# End-to-end corpus for the second security review (docs/reviews/M1-M1b-security-review.md) in
+# normalize/{programs,bash}.py: M-8 (programs that read a credential file were judged "write only"),
+# M-9 (REV:PATH operands of git), M-10 (parser vs. real bash). Same format as pipeline.yaml.
+# The recursive-read part of M-9 (CmdInfo.recursive) is judged in event.py and has its own entries
+# there; the facts it needs are unit-tested in tests/unit/test_review2_programs_classify.py.
+
+# ---- M-8: sources of consumer programs are read (and maybe written) --------------------------------
+- {id: r2-git-mv-env, tool: Bash, input: {command: "git mv .env x.txt"}, expect: deny, adv: true}
+- {id: r2-gzip-k-env, tool: Bash, input: {command: "gzip -k .env"}, expect: deny, adv: true}
+- {id: r2-bzip2-k-env, tool: Bash, input: {command: "bzip2 -k .env"}, expect: deny, adv: true}
+- {id: r2-xz-k-env, tool: Bash, input: {command: "xz -k .env"}, expect: deny, adv: true}
+- {id: r2-zstd-o-env, tool: Bash, input: {command: "zstd -o x.zst .env"}, expect: deny, adv: true}
+- {id: r2-git-add-f-env, tool: Bash, input: {command: "git add -f .env"}, expect: deny, adv: true}
+- {id: r2-git-update-index-env, tool: Bash, input: {command: "git update-index --add .env"}, expect: deny, adv: true}
+- {id: r2-git-stash-push-env, tool: Bash, input: {command: "git stash push .env"}, expect: deny, adv: true}
+- {id: r2-git-stash-push-dd-env, tool: Bash, input: {command: "git stash push -- .env"}, expect: deny, adv: true}
+- {id: r2-git-rm-cached-env, tool: Bash, input: {command: "git rm --cached .env"}, expect: deny, adv: true}
+- {id: r2-git-checkout-index-env, tool: Bash, input: {command: "git checkout-index .env"}, expect: deny, adv: true}
+- {id: r2-git-commit-path-env, tool: Bash, input: {command: "git commit -m x .env"}, expect: deny, adv: true}
+- {id: r2-rsync-remove-source-env, tool: Bash, input: {command: "rsync --remove-source-files .env /tmp/x"}, expect: deny, adv: true}
+- {id: r2-gzip-k-ssh-key, tool: Bash, input: {command: "gzip -k ~/.ssh/id_rsa"}, expect: deny, adv: true}
+- {id: r2-git-mv-ssh-key, tool: Bash, input: {command: "git mv ~/.ssh/id_rsa x"}, expect: deny, adv: true}
+- {id: r2-7z-a-env, tool: Bash, input: {command: "7z a x.7z .env"}, expect: deny, adv: true}
+- {id: r2-ps-git-mv-env, tool: PowerShell, platform: windows, input: {command: "git mv .env x.txt"}, expect: deny, adv: true}
+- {id: r2-ps-gzip-k-env, tool: PowerShell, platform: windows, input: {command: "gzip -k .env"}, expect: deny, adv: true}
+# ordinary operands stay undecided (no rule: gray -> ask), never allow and never deny
+- {id: r2-git-mv-ordinary, tool: Bash, input: {command: "git mv a.py b.py"}, expect: gray, adv: true}
+- {id: r2-gzip-k-ordinary, tool: Bash, input: {command: "gzip -k a.py"}, expect: gray, adv: true}
+- {id: r2-git-add-f-ordinary, tool: Bash, input: {command: "git add -f a.py"}, expect: gray, adv: true}
+- {id: r2-git-rm-ordinary, tool: Bash, input: {command: "git rm a.py"}, expect: gray, adv: true}
+- {id: r2-rsync-remove-source-ordinary, tool: Bash, input: {command: "rsync --remove-source-files a.py /tmp/x"}, expect: gray, adv: true}
+
+# ---- M-9: REV:PATH operands are reads of PATH -----------------------------------------------------
+- {id: r2-git-show-rev-env, tool: Bash, input: {command: "git show HEAD:.env"}, expect: deny, adv: true}
+- {id: r2-git-show-index-env, tool: Bash, input: {command: "git show :.env"}, expect: deny, adv: true}
+- {id: r2-git-show-stage-env, tool: Bash, input: {command: "git show :0:.env"}, expect: deny, adv: true}
+- {id: r2-git-show-reflog-env, tool: Bash, input: {command: "git show HEAD@{1}:.env"}, expect: deny, adv: true}
+- {id: r2-git-cat-file-env, tool: Bash, input: {command: "git cat-file -p HEAD:.env"}, expect: deny, adv: true}
+- {id: r2-git-cat-file-blob-env, tool: Bash, input: {command: "git cat-file blob HEAD:.env"}, expect: deny, adv: true}
+- {id: r2-git-archive-env, tool: Bash, input: {command: "git archive HEAD .env"}, expect: deny, adv: true}
+- {id: r2-git-archive-secret-dir-file, tool: Bash, input: {command: "git archive HEAD certs/server.pem"}, expect: deny, adv: true}
+- {id: r2-git-diff-rev-env, tool: Bash, input: {command: "git diff HEAD~1:.env HEAD:.env"}, expect: deny, adv: true}
+- {id: r2-git-log-L-env, tool: Bash, input: {command: "git log -L 1,5:.env"}, expect: deny, adv: true}
+- {id: r2-git-blame-nested-secret, tool: Bash, input: {command: "git blame certs/server.pem"}, expect: deny, adv: true}
+- {id: r2-git-show-rev-env-in-subdir, tool: Bash, input: {command: "git show HEAD:sub/dir/.env"}, expect: deny, adv: true}
+- {id: r2-ps-git-show-rev-env, tool: PowerShell, platform: windows, input: {command: "git show HEAD:.env"}, expect: deny, adv: true}
+- {id: r2-git-show-rev-ordinary, tool: Bash, input: {command: "git show HEAD:src/a.py"}, expect: gray, adv: true}
+- {id: r2-git-cat-file-batch, tool: Bash, input: {command: "git cat-file --batch"}, expect: gray, adv: true}
+
+# ---- M-10: reserved words and nesting that the parser used to get wrong ------------------------
+# (a recursive delete of ~ is a deny however it is spelled; the plain form is the control)
+- {id: r2-rm-home-control, tool: Bash, input: {command: "rm -rf ~"}, expect: deny, adv: true}
+- {id: r2-coproc-named-group-rm, tool: Bash, input: {command: "coproc X { rm -rf ~; }"}, expect: deny, adv: true}
+- {id: r2-coproc-unnamed-group-rm, tool: Bash, input: {command: "coproc { rm -rf ~; }"}, expect: deny, adv: true}
+- {id: r2-coproc-simple-rm, tool: Bash, input: {command: "coproc rm -rf ~"}, expect: deny, adv: true}
+- {id: r2-time-group-rm, tool: Bash, input: {command: "time { rm -rf ~; }"}, expect: deny, adv: true}
+- {id: r2-time-p-group-rm, tool: Bash, input: {command: "time -p { rm -rf ~; }"}, expect: deny, adv: true}
+- {id: r2-time-subshell-rm, tool: Bash, input: {command: "time ( rm -rf ~ )"}, expect: deny, adv: true}
+- {id: r2-eval-dashdash-rm, tool: Bash, input: {command: "eval -- rm -rf ~"}, expect: deny, adv: true}
+- {id: r2-eval-x4-rm, tool: Bash, input: {command: "eval eval eval eval rm -rf ~"}, expect: deny, adv: true}
+- {id: r2-bash-c-x4-rm, tool: Bash, input: {command: "bash -c 'bash -c \"bash -c \\\"bash -c \\\\\\\"rm -rf ~\\\\\\\"\\\"\"'"}, expect: deny, adv: true}
+- {id: r2-nice-x18-rm, tool: Bash, input: {command: "nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice rm -rf ~"}, expect: deny, adv: true}
+- {id: r2-time-group-benign, tool: Bash, input: {command: "time { ls; }"}, expect: gray, adv: true}
+- {id: r2-coproc-group-benign, tool: Bash, input: {command: "coproc X { ls; }"}, expect: gray, adv: true}
+
+# ---- policy fixer's request: boundkeep commands, python -m boundkeep, runner wrappers ---------------
+- {id: r2-boundkeep-mode, tool: Bash, input: {command: "boundkeep mode audit-only"}, expect: deny, adv: true}
+- {id: r2-boundkeep-exe-mode, tool: Bash, input: {command: "boundkeep.exe mode audit-only"}, expect: deny, adv: true}
+- {id: r2-boundkeep-home-uninstall, tool: Bash, input: {command: "boundkeep --home D uninstall"}, expect: deny, adv: true}
+- {id: r2-boundkeep-init-reset, tool: Bash, input: {command: "boundkeep init --reset-policy"}, expect: deny, adv: true}
+- {id: r2-boundkeep-serve, tool: Bash, input: {command: "boundkeep serve"}, expect: deny, adv: true}
+- {id: r2-python-m-boundkeep-mode, tool: Bash, input: {command: "python -m boundkeep mode audit-only"}, expect: deny, adv: true}
+- {id: r2-python3-m-boundkeep-init, tool: Bash, input: {command: "python3 -m boundkeep init --reset-policy"}, expect: deny, adv: true}
+- {id: r2-py-m-boundkeep-uninstall, tool: Bash, input: {command: "py -m boundkeep uninstall"}, expect: deny, adv: true}
+- {id: r2-python-flags-m-boundkeep, tool: Bash, input: {command: "python -I -m boundkeep serve"}, expect: deny, adv: true}
+- {id: r2-python-attached-m-boundkeep, tool: Bash, input: {command: "python -mboundkeep mode audit-only"}, expect: deny, adv: true}
+- {id: r2-uv-run-boundkeep, tool: Bash, input: {command: "uv run boundkeep uninstall"}, expect: deny, adv: true}
+- {id: r2-uv-run-with-boundkeep, tool: Bash, input: {command: "uv run --with x boundkeep mode audit-only"}, expect: deny, adv: true}
+- {id: r2-uvx-boundkeep, tool: Bash, input: {command: "uvx boundkeep uninstall"}, expect: deny, adv: true}
+- {id: r2-uvx-from-boundkeep, tool: Bash, input: {command: "uvx --from boundkeep boundkeep init"}, expect: deny, adv: true}
+- {id: r2-uv-tool-run-boundkeep, tool: Bash, input: {command: "uv tool run boundkeep uninstall"}, expect: deny, adv: true}
+- {id: r2-pipx-run-boundkeep, tool: Bash, input: {command: "pipx run boundkeep uninstall"}, expect: deny, adv: true}
+- {id: r2-poetry-run-boundkeep, tool: Bash, input: {command: "poetry run boundkeep uninstall"}, expect: deny, adv: true}
+- {id: r2-uv-run-rm-home, tool: Bash, input: {command: "uv run rm -rf ~"}, expect: deny, adv: true}
+- {id: r2-uv-run-dd-rm-home, tool: Bash, input: {command: "uv run -- rm -rf ~"}, expect: deny, adv: true}
+- {id: r2-poetry-run-rm-home, tool: Bash, input: {command: "poetry run rm -rf ~"}, expect: deny, adv: true}
+- {id: r2-uv-run-unknown-option, tool: Bash, input: {command: "uv run --weird boundkeep uninstall"}, expect: ask, adv: true}
+- {id: r2-ps-boundkeep-mode, tool: PowerShell, platform: windows, input: {command: "boundkeep mode audit-only"}, expect: deny, adv: true}
+- {id: r2-ps-python-m-boundkeep, tool: PowerShell, platform: windows, input: {command: "python -m boundkeep init --reset-policy"}, expect: deny, adv: true}
+- {id: r2-ps-py-m-boundkeep, tool: PowerShell, platform: windows, input: {command: "py -m boundkeep uninstall"}, expect: deny, adv: true}
+- {id: r2-ps-uv-run-boundkeep, tool: PowerShell, platform: windows, input: {command: "uv run boundkeep uninstall"}, expect: deny, adv: true}
+- {id: r2-ps-uvx-boundkeep, tool: PowerShell, platform: windows, input: {command: "uvx boundkeep uninstall"}, expect: deny, adv: true}
+- {id: r2-ps-uv-run-rm-home, tool: PowerShell, platform: windows, input: {command: "uv run rm -rf ~"}, expect: deny, adv: true}

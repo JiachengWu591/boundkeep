@@ -244,6 +244,7 @@ class _Api:
         )
         sig(a, "GetSecurityInfo", u32, vp, ctypes.c_int, u32, pvp, pvp, pvp, pvp, pvp)
         sig(a, "SetNamedSecurityInfoW", u32, ctypes.c_wchar_p, ctypes.c_int, u32, vp, vp, vp, vp)
+        sig(a, "SetSecurityInfo", u32, vp, ctypes.c_int, u32, vp, vp, vp, vp)
         sig(a, "GetSecurityDescriptorDacl", ctypes.c_int, vp, pint, pvp, pint)
         sig(a, "GetSecurityDescriptorOwner", ctypes.c_int, vp, pvp, pint)
         sig(
@@ -322,6 +323,23 @@ def private_sddl(*, include_system: bool = False) -> str:
     if include_system:
         sddl += "(A;;GA;;;SY)"
     return sddl
+
+
+# FILE_GENERIC_READ | FILE_GENERIC_WRITE without FILE_APPEND_DATA (0x4), which on a named pipe is
+# FILE_CREATE_PIPE_INSTANCE: the right to create one more server instance of the pipe.
+FILE_APPEND_DATA = 0x4
+FILE_CREATE_PIPE_INSTANCE = FILE_APPEND_DATA
+PIPE_CLIENT_ACCESS_MASK = 0x0012019B
+
+
+def pipe_clients_only_sddl() -> str:
+    """Protected DACL for a pipe whose server instances all exist already.
+
+    The current user may connect, read and write (and read the DACL), but nobody, the current user
+    included, may create another instance: a same-user process can no longer answer on the daemon's
+    pipe by adding an instance of its own (review H-2). The owner can always change the DACL again.
+    """
+    return f"D:P(A;;0x{PIPE_CLIENT_ACCESS_MASK:X};;;{current_user_sid()})"
 
 
 # --- security descriptor -------------------------------------------------------------------
@@ -724,6 +742,43 @@ def read_acl_of_pipe(pipe_name: str | os.PathLike[str]) -> AclInfo:
 
 
 # --- writing ACLs --------------------------------------------------------------------------
+
+WRITE_DAC = 0x00040000  # access right a handle needs for ``forbid_new_pipe_instances``
+
+
+def forbid_new_pipe_instances(pipe_handle: int) -> None:
+    """Replace the DACL of the pipe behind ``pipe_handle`` by ``pipe_clients_only_sddl()``.
+
+    ``pipe_handle`` is a server handle that was created with ``WRITE_DAC`` in its open mode. Call
+    it only after every instance the server will ever need has been created: afterwards
+    ``CreateNamedPipeW`` for the same name fails with ``ERROR_ACCESS_DENIED`` for everybody.
+    Raises ``OSError`` on any failure (the old DACL then stays in place).
+    """
+    api = _api()
+    with SecurityDescriptor.from_sddl(pipe_clients_only_sddl()) as descriptor:
+        present = ctypes.c_int(0)
+        acl_ptr = ctypes.c_void_p()
+        defaulted = ctypes.c_int(0)
+        _check(
+            api.adv.GetSecurityDescriptorDacl(
+                descriptor.address,
+                ctypes.byref(present),
+                ctypes.byref(acl_ptr),
+                ctypes.byref(defaulted),
+            )
+        )
+        if not present.value or not acl_ptr.value:
+            raise OSError("pipe descriptor has no DACL")
+        code = api.adv.SetSecurityInfo(
+            pipe_handle,
+            _SE_KERNEL_OBJECT,
+            _DACL_SECURITY_INFORMATION | _PROTECTED_DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            acl_ptr,
+            None,
+        )
+        _check_code(code)
 
 
 def _file_sddl(*, is_dir: bool, include_system: bool) -> str:

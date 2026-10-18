@@ -92,13 +92,14 @@ from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from boundkeep.normalize.model import BashResult, Redirect, SimpleCmd, Word
-from boundkeep.normalize.programs import is_code_env
+from boundkeep.normalize.programs import is_code_env, peel_runner
 
 __all__ = ["parse_bash"]
 
 _MAX_NEST = 32  # structural nesting ($(, (, {, ${, `...`, bash -c, ...): bounds Python recursion
 _TICK_FACTOR = 16  # token budget = factor * max_words
-_MAX_WRAPPER_LAYERS = 16
+_MAX_WRAPPER_LAYERS = 64  # nice nice nice ... : each layer is one linear pass over the arguments
+_DEFAULT_MAX_DEPTH = 8  # bash -c / eval / here-doc recursion (the global word budget still applies)
 _RAW_CAP = 2048  # SimpleCmd.raw is for audit only and truncated
 
 _PLAIN = re.compile(r"[^ \t\n;&|()<>$`'\"\\]+")
@@ -110,6 +111,13 @@ _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=")
 _ARRAY_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 _FD_REDIR = re.compile(r"(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})(?=[<>])")
 _FUNC = re.compile(r"\([ \t]*\)")
+# the start of a compound command: what may follow ``time`` / ``coproc NAME`` as a reserved word
+_COMPOUND_START = (
+    r"(?:\{(?=[ \t\n])|\((?!\))|(?:if|while|until|for|select|case)(?=[ \t\n;(])"
+    r"|\[\[(?=[ \t])|!(?=[ \t]))"
+)
+_TIME_RESERVED = re.compile(r"(?:[ \t]+(?:-p|--)(?=[ \t]))*[ \t]+(?=" + _COMPOUND_START + ")")
+_COPROC_NAME = re.compile(r"[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]+(?=" + _COMPOUND_START + ")")
 _BT_STOP = re.compile(r"[\\`]")
 _ANSI_STOP = re.compile(r"['\\]")
 _SCAN_RUN = re.compile(r"[^\\$`'\"{}()\[\]]+")
@@ -129,6 +137,9 @@ _KEYWORD_SKIP = frozenset(
     {"if", "then", "elif", "else", "fi", "while", "until", "do", "done", "esac", "coproc", "!", "}"}
 )
 _KEYWORD_NAME = {"!": "negation", "[[": "[["}
+_RESERVED_AFTER_COPROC = frozenset(
+    {"if", "while", "until", "for", "select", "case", "time", "function", "coproc", "do", "then"}
+)  # a reserved word right after ``coproc`` is the command, not the coprocess NAME
 
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash", "mksh", "yash", "rbash"})
 _FOREIGN_SHELLS = frozenset({"csh", "tcsh", "fish"})
@@ -1058,6 +1069,14 @@ class _Parser:
                             self.nest -= 1
                             self._group_redirects(start)
                             return
+                        if kw == "time" and not self.piped:
+                            # (only at the START of a pipeline: bash rejects ``a | time { x; }``)
+                            tm = _TIME_RESERVED.match(s, self.i)
+                            if tm is not None:
+                                # ``time { rm x; }`` / ``time -p ( ... )``: ``time`` is a reserved
+                                # word here and the compound command after it starts a new command
+                                self.i = tm.end()
+                                return
                         if self._keyword(kw):
                             return
                 words.append(wi)
@@ -1092,6 +1111,11 @@ class _Parser:
                 self._for_loop()
             elif kw == "case":
                 self._parse_case()
+            elif kw == "coproc":
+                # ``coproc NAME { cmd; }``: NAME is not a command (only before a compound command)
+                cm = _COPROC_NAME.match(self.s, self.i)
+                if cm is not None and cm.group(1) not in _RESERVED_AFTER_COPROC:
+                    self.i = cm.end()
             elif kw == "function":
                 self._skip_blanks()
                 self._read_word()
@@ -1788,7 +1812,17 @@ class _Parser:
             name = _canon(w0.word.text)
             spec = _WRAPPERS.get(name)
             if spec is None:
-                break
+                peeled = peel_runner([w.word for w in cur])
+                if peeled is None:
+                    break
+                if isinstance(peeled, str):
+                    self._gray(f"wrapper-options:{name}")
+                    break
+                n_drop, marker, synthetic = peeled
+                lead = [_W(synthetic, False, synthetic.text)] if synthetic is not None else []
+                wrappers.append(marker)
+                cur = lead + cur[n_drop:]
+                continue
             res = self._strip(name, spec, cur[1:])
             if res is None:
                 self._gray(f"wrapper-options:{name}")
@@ -1887,6 +1921,8 @@ class _Parser:
             self._exec("eval")
             if "xargs" in wrappers:
                 self._exec("xargs-interpreter:eval")
+            if args and not args[0].dyn and not args[0].word.glob and args[0].word.text == "--":
+                args = args[1:]  # ``eval -- cmd``: eval ends its options at ``--`` like any builtin
             text = " ".join(a.word.text for a in args)
             if any(a.dyn or a.word.glob for a in args):
                 self._gray("dynamic-code:eval")
@@ -2023,7 +2059,7 @@ class _Parser:
 def parse_bash(
     command: str,
     *,
-    max_depth: int = 3,
+    max_depth: int = _DEFAULT_MAX_DEPTH,
     max_words: int = 4000,
     max_length: int = 1 << 20,
 ) -> BashResult:

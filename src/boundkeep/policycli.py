@@ -80,7 +80,11 @@ def _run_one(
         "session_id": "policy-test",
     }
     runtime, _problem = _runtime(policy, fake["env"], fake["home"])
-    return pipeline.review(payload, runtime, platform=platform, env=fake["env"], home=fake["home"])
+    # The fake machines are not on this disk: a look into real directories would make the verdict
+    # depend on whatever the host happens to hold (`../..` from the fake project is a real dir).
+    return pipeline.review(
+        payload, runtime, platform=platform, env=fake["env"], home=fake["home"], scan_disk=False
+    )
 
 
 def cmd_test(args: argparse.Namespace) -> int:

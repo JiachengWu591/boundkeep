@@ -167,7 +167,7 @@ WRITE_CASES = [
     c("sort-output", "sort", ["-o", "out", "in"], paths=[("out", W_), ("in", R)]),
     c("sort-plain", "sort", ["-r", "f"], paths=[("f", R)], tags=()),
     c("uniq-out", "uniq", ["a", "b"], paths=[("a", R), ("b", W_)]),
-    c("gzip-in-place", "gzip", ["f"], paths=[("f", W_)]),
+    c("gzip-in-place", "gzip", ["f"], paths=[("f", U)]),  # M-8: the source is read AND replaced
     c("gzip-stdout", "gzip", ["-c", "f"], paths=[("f", R)]),
     c("xxd-out", "xxd", ["in", "out"], paths=[("in", R), ("out", W_)]),
     c("mktemp-dir", "mktemp", ["-p", "/var/tmp"], paths=[("/var/tmp", W_)]),
@@ -646,7 +646,7 @@ NET_CASES = [
         "rsync-remove-source",
         "rsync",
         ["--remove-source-files", "a", "b"],
-        paths=[("a", W_), ("b", W_), ("b/a", W_)],
+        paths=[("a", U), ("b", W_), ("b/a", W_)],  # M-8: the source is read, then removed
     ),
     c(
         "rsync-rsh-exec",
@@ -779,7 +779,7 @@ GIT_CASES = [
         tags_has=["exec"],
         gray_has=["git-exec-option"],
     ),
-    c("git-add-paths", "git", ["add", "-A", "src/a.py"], paths=[("src/a.py", W_)], flags=["-A"]),
+    c("git-add-paths", "git", ["add", "-A", "src/a.py"], paths=[("src/a.py", U)], flags=["-A"]),
     c(
         "git-commit-message-not-path",
         "git",
@@ -888,7 +888,7 @@ GIT_CASES = [
         "git-archive-output",
         "git",
         ["archive", "-o", "/tmp/a.tar", "HEAD"],
-        paths=[("/tmp/a.tar", W_)],
+        paths=[("/tmp/a.tar", W_), (".", R)],  # M-9: no pathspec, the whole tree is archived
     ),
     c(
         "git-archive-remote",

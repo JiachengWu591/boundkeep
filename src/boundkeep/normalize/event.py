@@ -15,8 +15,16 @@ What this layer adds on top of the pieces:
   (symlink / junction / 8.3 / ``..``-after-symlink) form of every path next to the lexical one;
 * arguments that arrive **at run time** (``xargs``, ``find -exec``): a synthetic uncertain path;
 * lines that **write a file and then execute it**, or reassign ``HOME``/``PWD``/``OLDPWD``: gray;
-* a **work budget** (time, action count, disk lookups): over it, the actions so far plus one gray
-  Action ``normalize-budget-exceeded``. ``normalize_event`` runs on the daemon's event loop.
+* a **work budget** (time, action count, disk lookups): over it, the rest of the line is classified
+  lexically only (no glob expansion, no disk) and one gray Action ``normalize-budget-exceeded`` is
+  added, so a deny that the words alone show never turns into a gray. ``normalize_event`` runs on
+  the daemon's event loop;
+* **recursive reads**: a directory that Grep / Glob search, or that a command reads with all of its
+  subtree (``CmdInfo.recursive``), is walked within a budget (``normalize.subtree``) and the files
+  the policy protects against reads become read paths of the action; a walk that cannot finish
+  makes the action gray;
+* **UNC and WebDAV paths** (``\\\\host\\share``, ``host@80``) are network access: the host goes into
+  ``Action.domains`` and the action is gray (``unc-network``).
 
 ``normalize_event`` never raises: an internal error becomes one gray Action.
 """
@@ -29,7 +37,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from boundkeep.normalize import bash, domains, paths, programs, psparse
+from boundkeep.normalize import bash, domains, paths, programs, psparse, subtree
 from boundkeep.normalize.model import (
     Access,
     Action,
@@ -40,6 +48,7 @@ from boundkeep.normalize.model import (
     SimpleCmd,
     Word,
 )
+from boundkeep.policy.glob import GlobError, compile_glob
 
 SHELL_TOOLS: dict[str, Shell] = {"Bash": "bash", "PowerShell": "powershell"}
 FILE_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
@@ -53,6 +62,12 @@ PS_PARSE_BUDGET_S = 0.3  # the PowerShell helper's own limit (not charged to TIM
 TIME_BUDGET_S = 0.25  # normalize_event runs on the daemon's event loop
 MAX_ACTIONS = 256  # simple commands handled per command line
 MAX_DISK_KEYS = 64  # distinct paths looked up on disk per request
+MAX_GLOB_DISK_KEYS = 256  # ... for the files a glob matched (a budget of their own)
+# After the budget above ran out, the remaining commands are still classified, lexically only (no
+# glob expansion, no disk lookups, no subtree scans), so a deny rule still sees their paths.
+MAX_LEXICAL_ACTIONS = 1024  # further actions kept in that mode
+MAX_LEXICAL_REFS = 16384
+LEXICAL_TIME_BUDGET_S = 0.5
 MAX_KEY_DEPTH = 64  # path components; deeper keys are uncertain and never looked up
 MAX_CWDS = 8  # possible working directories tracked at once (one of them may be "unknown")
 MAX_BRACE_RESULTS = 64
@@ -135,21 +150,31 @@ class _Budget:
     deadline: float
     resolved: dict[tuple[str, tuple[str, ...]], paths.NormPath] = field(default_factory=dict)
     realpaths: dict[str, str] = field(default_factory=dict)
+    glob_resolved: dict[tuple[str, tuple[str, ...]], paths.NormPath] = field(default_factory=dict)
     refs: int = 0
+    lexical: bool = False  # the budget ran out: classify without touching the disk
+    scan: subtree.ScanBudget = field(
+        default_factory=lambda: subtree.ScanBudget(
+            subtree.MAX_SCAN_ENTRIES, subtree.SCAN_TIME_BUDGET_S
+        )
+    )
 
     def check(self) -> None:
         if time.monotonic() >= self.deadline:
             raise _BudgetExceeded("time")
 
-    def disk_slot(self) -> None:
-        """Account for one more distinct disk lookup."""
+    def disk_slot(self, *, glob: bool = False) -> None:
+        """Account for one more distinct disk lookup (those for glob matches count apart)."""
         self.check()
-        if len(self.resolved) + len(self.realpaths) >= MAX_DISK_KEYS:
+        if glob:
+            if len(self.glob_resolved) >= MAX_GLOB_DISK_KEYS:
+                raise _BudgetExceeded("glob-matches")
+        elif len(self.resolved) + len(self.realpaths) >= MAX_DISK_KEYS:
             raise _BudgetExceeded("disk-lookups")
 
     def add_refs(self, count: int) -> None:
         self.refs += count
-        if self.refs > MAX_REFS:
+        if self.refs > (MAX_LEXICAL_REFS if self.lexical else MAX_REFS):
             raise _BudgetExceeded("paths")
 
 
@@ -165,6 +190,9 @@ class _Ctx:
     )  # the project root after symlink/junction/short-name resolution
     base: dict[str, Any]  # fields every Action of this event shares
     budget: _Budget
+    protected: subtree.ProtectedMatcher = field(
+        default_factory=lambda: subtree.matcher_for(subtree.DEFAULT_PROTECTED_GLOBS)
+    )  # the read-protection globs a recursive read is checked against
 
 
 @dataclass(slots=True)
@@ -566,15 +594,19 @@ def _make_ref(
     )
 
 
-def _disk_resolve(ctx: _Ctx, norm: paths.NormPath) -> paths.NormPath:
-    """``paths.resolve_on_disk`` with the request's budget and a per-request memo."""
+def _disk_resolve(ctx: _Ctx, norm: paths.NormPath, *, glob: bool = False) -> paths.NormPath:
+    """``paths.resolve_on_disk`` with the request's budget and a per-request memo.
+
+    ``glob``: the path is one a wildcard matched; those lookups are counted on their own, so a
+    ``cat *`` in a big directory cannot use up the lookups of the paths the command names.
+    """
     memo_key = (norm.key, norm.reasons)
-    cached = ctx.budget.resolved.get(memo_key)
+    cached = ctx.budget.resolved.get(memo_key) or ctx.budget.glob_resolved.get(memo_key)
     if cached is not None:
         return cached
-    ctx.budget.disk_slot()
+    ctx.budget.disk_slot(glob=glob)
     result = paths.resolve_on_disk(norm)
-    ctx.budget.resolved[memo_key] = result
+    (ctx.budget.glob_resolved if glob else ctx.budget.resolved)[memo_key] = result
     return result
 
 
@@ -637,7 +669,7 @@ def _resolved_forms(
     ]
     if norm.key.count("/") > MAX_KEY_DEPTH:
         return refs
-    resolved = _disk_resolve(ctx, norm)
+    resolved = _disk_resolve(ctx, norm, glob="glob-match" in extra_reasons)
     if resolved.key != norm.key:
         refs.append(
             _make_ref(
@@ -685,8 +717,8 @@ def _refs_one(
         uncertain = True
         reasons.append("path-too-deep")
     refs = [_make_ref(ctx, text, norm, access, uncertain=uncertain, reasons=reasons)]
-    if dynamic or deep:
-        return refs
+    if dynamic or deep or ctx.budget.lexical:
+        return refs  # (lexical mode: the budget ran out; no glob expansion, no disk lookups)
     if "glob" in norm.reasons and not glob_literal:
         return refs + _glob_refs(ctx, norm, access, notes, dotfiles=dialect == "powershell")
     if "brace" in norm.reasons:
@@ -808,6 +840,139 @@ def _synthetic_ref(ctx: _Ctx, raw: str, access: Access) -> PathRef:
         uncertain=True,
         reasons=("args-from-stdin", "unknown-target"),
     )
+
+
+# --------------------------------------------------------------------------------------------
+# UNC / WebDAV paths are network access
+# --------------------------------------------------------------------------------------------
+
+# Servers of a UNC path that are this machine (or its WSL), not the network.
+_LOCAL_UNC_SERVERS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "wsl$", "wsl.localhost"})
+
+
+def _unc_server(ctx: _Ctx, key: str) -> str | None:
+    """The remote server named by a UNC key (``//server/share/...``), None for anything else.
+
+    WebDAV spellings ``server@80``, ``server@SSL`` and ``server@SSL@8443`` name ``server``. The
+    machine's own name (COMPUTERNAME), ``localhost`` and the WSL providers are not remote.
+    """
+    if not key.startswith("//") or key.startswith("//./") or key.startswith("///"):
+        return None
+    server = key[2:].split("/", 1)[0].split("@", 1)[0]
+    if not server or server == "?":
+        return None
+    low = server.casefold()
+    computer = ctx.env.get("COMPUTERNAME") or ctx.env.get("computername")
+    if low in _LOCAL_UNC_SERVERS or (computer and low == computer.casefold()):
+        return None
+    return server
+
+
+def _unc_refs(ctx: _Ctx, refs: Sequence[PathRef]) -> tuple[tuple[str, ...], bool]:
+    """(canonical remote hosts, whether one had no usable host name) of the UNC paths in ``refs``.
+
+    A UNC path is a network access: reading it sends the user's NTLM credentials to the server,
+    writing it uploads. The host goes into ``Action.domains`` so ``net-allowlist`` sees it.
+    """
+    names: list[str] = []
+    unknown = False
+    for ref in refs:
+        if ref.flavor != "windows":
+            continue
+        if ctx.platform != "windows" and "\\" not in ref.raw:
+            continue  # on a POSIX machine ``//host/x`` is just ``/host/x``: a local path
+        server = _unc_server(ctx, ref.key)
+        if server is None:
+            continue
+        host = domains.canonical_host(server)
+        if host is None or host.kind == "unknown":
+            unknown = True
+        elif host.kind == "localhost" or (host.kind == "ip" and host.name in ("127.0.0.1", "::1")):
+            continue
+        else:
+            names.append(host.name)
+    return tuple(dict.fromkeys(names)), unknown
+
+
+# --------------------------------------------------------------------------------------------
+# Recursive reads: what is below a directory
+# --------------------------------------------------------------------------------------------
+
+
+def _native_dir(ref: PathRef) -> str | None:
+    """The directory ``ref`` names, as a path this machine can scan; None when it cannot be."""
+    if ref.uncertain or not ref.key or ref.key == _SYNTHETIC_KEY:
+        return None
+    norm = paths.NormPath(ref.raw, ref.key, ref.flavor, True, False, ())
+    if not paths.is_local_disk(norm):
+        return None
+    return ref.key.replace("/", "\\") if ref.flavor == "windows" else ref.key
+
+
+def _scan_refs(
+    ctx: _Ctx,
+    notes: list[str],
+    refs: Sequence[PathRef],
+    access: Access,
+    *,
+    select: subtree.Selector | None = None,
+    follow_links: bool = True,
+) -> list[PathRef]:
+    """Read refs for the protected files below the directories among ``refs``.
+
+    ``refs`` are the PathRefs of ONE operand (its lexical and resolved forms, or what its glob
+    matched). Each directory is walked (``normalize.subtree``, breadth first, within the request's
+    scan budget) and the entries selected by the read-protection globs become PathRefs, so the
+    policy sees ``<dir>/.env`` where the command only named ``<dir>``. A walk that could not finish
+    (budget, unreadable directory) adds a gray note: the caller must not treat the tree as clean.
+    ``follow_links``: the command may follow a link to a directory (``Get-ChildItem -Recurse``,
+    ``grep -R``): one that is met makes the action gray; ripgrep never follows them.
+    """
+    if ctx.budget.lexical or ctx.protected.empty:
+        return []
+    out: list[PathRef] = []
+    seen: set[str] = set()
+    for ref in refs:
+        root = _native_dir(ref)
+        if root is None or ref.key in seen:
+            continue
+        seen.add(ref.key)
+        if ctx.budget.scan.spent:
+            notes.append("recursive-scan-budget")
+            break
+        before = ctx.budget.scan.elapsed
+        result = subtree.scan(
+            root,
+            [ref.key],
+            windows=ref.flavor == "windows",
+            matcher=ctx.protected,
+            budget=ctx.budget.scan,
+            select=select,
+        )
+        ctx.budget.deadline += ctx.budget.scan.elapsed - before  # not charged to the request
+        if result.status == "budget":
+            notes.append("recursive-scan-budget")
+        elif result.status == "unreadable":
+            notes.append("recursive-scan-unreadable")
+        if result.dir_links and follow_links:
+            notes.append("recursive-scan-link")
+        for hit in result.hits:
+            norm = paths.NormPath(
+                f"{ref.raw}/{hit.rel}"[:512], hit.key, ref.flavor, True, False, ()
+            )
+            out.append(
+                _make_ref(
+                    ctx,
+                    norm.raw,
+                    norm,
+                    access,
+                    uncertain=False,
+                    reasons=("recursive-scan",),
+                    resolved="resolved-on-disk" in ref.reasons,
+                )
+            )
+    ctx.budget.add_refs(len(out))
+    return list(dict.fromkeys(out))
 
 
 # --------------------------------------------------------------------------------------------
@@ -1048,11 +1213,12 @@ def _command_action(
         refs += _refs(
             ctx, notes, cmd.argv[0].text, "read", cwds=st.cwds, dialect=st.shell, dynamic=False
         )
+    recursive = bool(getattr(info, "recursive", False))  # reads the whole subtree of a directory
     for word, access in info.paths:
         if exec_child and "{}" in word.text:
             refs += _placeholder_refs(ctx, notes, st, cmd, word, access)
         else:
-            refs += _refs(
+            word_refs = _refs(
                 ctx,
                 notes,
                 word.text,
@@ -1062,10 +1228,17 @@ def _command_action(
                 dynamic=_dynamic(word, globs=False, shell=st.shell),
                 glob_literal=_ps_literal_glob(ctx, word) if st.shell == "powershell" else False,
             )
+            refs += word_refs
+            if recursive and access != "write":
+                refs += _scan_refs(ctx, notes, word_refs, access)
     names, unknown_host = _domains_of(info.urls)
     if unknown_host:
         gray_reasons.append("unparseable-url")
-    network = info.network or bool(info.urls)
+    unc_names, unc_unknown = _unc_refs(ctx, refs)
+    if unc_names or unc_unknown:
+        names = tuple(dict.fromkeys([*names, *unc_names]))
+        gray_reasons.append("unc-network")
+    network = info.network or bool(info.urls) or bool(unc_names) or unc_unknown
     tags: list[RiskTag] = list(info.tags)
     if network and "network_egress" not in tags:
         tags.append("network_egress")
@@ -1115,16 +1288,49 @@ def _shell_actions(ctx: _Ctx, tool: str, shell: Shell, command: str) -> list[Act
         result = bash.parse_bash(command)
     actions: list[Action] = []
     st = _Line(cwds=(ctx.cwd,), shell=shell)
-    try:
-        for cmd in result.commands:
-            if len(actions) >= MAX_ACTIONS:
-                raise _BudgetExceeded("actions")
+    marker: Action | None = None
+    seen: set[Action] = set()
+    lexical_actions = 0
+    for cmd in result.commands:
+        try:
+            if not ctx.budget.lexical:
+                if len(actions) >= MAX_ACTIONS:
+                    raise _BudgetExceeded("actions")
+                ctx.budget.check()
+            action = _command_action(ctx, tool, st, cmd, common)
+        except _BudgetExceeded as exc:
+            if ctx.budget.lexical:
+                break  # the lexical pass ran out as well (time, refs): nothing more can be said
+            # The budget ran out. A deny that is visible from the words alone must stay a deny, so
+            # this command and the rest are classified again without glob expansion, disk lookups
+            # and subtree scans; the gray marker below still keeps the line from being allowed.
+            marker = _budget_action(ctx, tool, exc, **common)
+            seen = set(actions)
+            _enter_lexical_mode(ctx)
+            try:
+                action = _command_action(ctx, tool, st, cmd, common)
+            except _BudgetExceeded:
+                break
+        else:
+            if ctx.budget.lexical:
+                if lexical_actions >= MAX_LEXICAL_ACTIONS:
+                    break
+                if action in seen:
+                    continue  # the same action again (``true;`` x 300) adds nothing to a verdict
+                seen.add(action)
+                lexical_actions += 1
+            actions.append(action)
+            continue
+        # (the command that used up the budget, retried lexically)
+        if action not in seen:
+            seen.add(action)
+            lexical_actions += 1
+            actions.append(action)
+    if marker is None:
+        try:
             ctx.budget.check()
-            actions.append(_command_action(ctx, tool, st, cmd, common))
-        ctx.budget.check()
-    except _BudgetExceeded as exc:
-        actions.append(_budget_action(ctx, tool, exc, **common))
-        return actions
+        except _BudgetExceeded as exc:
+            marker = _budget_action(ctx, tool, exc, **common)
     if result.gray or not result.commands:
         reasons = result.gray or ("empty-command",)
         tags_extra: tuple[RiskTag, ...] = ("exec",) if result.exec_reasons else ()
@@ -1142,7 +1348,15 @@ def _shell_actions(ctx: _Ctx, tool: str, shell: Shell, command: str) -> list[Act
         )
     if st.line_gray:
         actions.append(_gray(ctx, tool, *st.line_gray, **common))
+    if marker is not None:
+        actions.append(marker)
     return actions
+
+
+def _enter_lexical_mode(ctx: _Ctx) -> None:
+    """From now on classify without the disk (see ``MAX_LEXICAL_ACTIONS``)."""
+    ctx.budget.lexical = True
+    ctx.budget.deadline = time.monotonic() + LEXICAL_TIME_BUDGET_S
 
 
 def _budget_action(ctx: _Ctx, tool: str, exc: _BudgetExceeded, **extra: Any) -> Action:
@@ -1162,12 +1376,18 @@ def _file_action(ctx: _Ctx, tool: str, raw: str | None, access: Access) -> Actio
     # a Windows name cannot hold "*" or "?", so there they can only be a pattern: stay uncertain.
     literal = not (ctx.platform == "windows" and ("*" in raw or "?" in raw))
     refs = _refs(ctx, notes, raw, access, cwds=(ctx.cwd,), dialect="tool", glob_literal=literal)
-    tags: tuple[RiskTag, ...] = ("file_write",) if access == "write" else ()
+    tags: list[RiskTag] = ["file_write"] if access == "write" else []
+    names, unknown = _unc_refs(ctx, refs)
+    if names or unknown:
+        notes.append("unc-network")
+        tags.append("network_egress")
     return Action(
         tool=tool,
         paths=tuple(refs),
+        domains=names,
+        network=bool(names) or unknown,
         inside_project=_inside(refs),
-        risk_tags=tags,
+        risk_tags=tuple(tags),
         gray=bool(notes),
         gray_reasons=tuple(dict.fromkeys(notes)),
         **ctx.base,
@@ -1194,6 +1414,93 @@ def _pattern_is_path(pattern: str) -> bool:
     return any(_dotdot_segment(s) for s in pattern.replace("\\", "/").split("/"))
 
 
+# ripgrep file types (``Grep type=py``) that narrow a search to files with these names. Only the
+# types listed here narrow; any other type name leaves the search unnarrowed (the cautious side).
+_RG_TYPES: dict[str, tuple[str, ...]] = {
+    "py": ("*.py", "*.pyi"),
+    "python": ("*.py", "*.pyi"),
+    "js": ("*.js", "*.jsx", "*.mjs", "*.cjs"),
+    "ts": ("*.ts", "*.tsx", "*.mts", "*.cts"),
+    "rust": ("*.rs",),
+    "rs": ("*.rs",),
+    "go": ("*.go",),
+    "java": ("*.java",),
+    "md": ("*.md", "*.markdown"),
+    "markdown": ("*.md", "*.markdown"),
+    "json": ("*.json",),
+    "yaml": ("*.yaml", "*.yml"),
+    "toml": ("*.toml",),
+    "html": ("*.html", "*.htm"),
+    "css": ("*.css",),
+}
+_MAX_SELECTOR_PATTERNS = 32
+
+
+def _glob_alternatives(text: str) -> list[str] | None:
+    """The positive gitignore-style globs ``text`` stands for; None when they cannot be known.
+
+    ``text`` as a whole, its whitespace- and comma-separated parts, and every brace alternative of
+    those are all taken (more patterns select more files: the cautious side). ``!negations`` are
+    dropped: a file they exclude is still treated as searched.
+    """
+    parts = {text}
+    for sep in (",", None):
+        parts.update(p for p in text.split(sep) if p)
+    found: list[str] = []
+    for part in sorted(parts):
+        part = part.strip()
+        if not part or part.startswith("!"):
+            continue
+        alternatives = expand_braces(part)
+        if alternatives is None:
+            return None
+        found.extend(a.strip("/") for a in alternatives if a.strip("/"))
+        if len(found) > _MAX_SELECTOR_PATTERNS:
+            return None
+    return found
+
+
+def _search_selector(tool: str, tool_input: Mapping[str, Any]) -> subtree.Selector | None:
+    """Which files a Grep / Glob call reads below its directory: its ``glob`` (Grep), its
+    ``pattern`` (Glob) and its ``type`` (Grep) narrow the search; None means every file.
+
+    A glob without ``/`` selects by file name at any depth (ripgrep's rule); one with ``/`` is
+    tried both anchored at the directory and at any depth. Case is ignored (the policy's glob
+    compiler folds case), so the selection is never narrower than ripgrep's.
+    """
+    text = _text(tool_input.get("pattern" if tool == "Glob" else "glob"))
+    name_globs: list[Any] = []
+    path_globs: list[Any] = []
+    if text and text.strip():
+        alternatives = _glob_alternatives(text)
+        if alternatives:
+            try:
+                for pattern in alternatives:
+                    if "/" in pattern:
+                        path_globs.append(compile_glob(pattern))
+                        path_globs.append(compile_glob("**/" + pattern))
+                    else:
+                        name_globs.append(compile_glob(pattern))
+            except GlobError:
+                name_globs, path_globs = [], []  # not understood: do not narrow
+    type_globs: list[Any] = []
+    kind = _text(tool_input.get("type")) if tool == "Grep" else None
+    if kind and kind.strip().lower() in _RG_TYPES:
+        type_globs = [compile_glob(p) for p in _RG_TYPES[kind.strip().lower()]]
+    if not (name_globs or path_globs or type_globs):
+        return None
+    has_glob = bool(name_globs or path_globs)
+
+    def select(rel: str, name: str) -> bool:
+        if has_glob and not (
+            any(g.match(name) for g in name_globs) or any(g.match(rel) for g in path_globs)
+        ):
+            return False
+        return not type_globs or any(g.match(name) for g in type_globs)
+
+    return select
+
+
 def _search_action(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> Action:
     directory = _text(tool_input.get("path")) or ctx.cwd
     if not directory:
@@ -1201,6 +1508,12 @@ def _search_action(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> Actio
     notes: list[str] = []
     refs = _refs(ctx, notes, directory, "read", cwds=(ctx.cwd,), dialect="tool", glob_literal=True)
     pattern = _text(tool_input.get("pattern" if tool == "Glob" else "glob"))
+    if not (pattern and _pattern_is_path(pattern)):
+        # A directory target reads (or lists) everything below it that the glob / type lets
+        # through: look for protected files there (ripgrep does not follow links).
+        refs += _scan_refs(
+            ctx, notes, refs, "read", select=_search_selector(tool, tool_input), follow_links=False
+        )
     if pattern and _pattern_is_path(pattern):
         # A pattern that carries its own (possibly absolute or climbing) location reads there too.
         base = paths.normalize_path(
@@ -1216,11 +1529,17 @@ def _search_action(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> Actio
         refs += _refs(
             ctx, notes, joined, "read", cwds=(ctx.cwd,), dialect="tool", glob_literal=True
         )
+    names, unknown = _unc_refs(ctx, refs)
+    if names or unknown:
+        notes.append("unc-network")
     reasons = tuple(dict.fromkeys(notes))
     return Action(
         tool=tool,
         paths=tuple(refs),
+        domains=names,
+        network=bool(names) or unknown,
         inside_project=_inside(refs),
+        risk_tags=("network_egress",) if names or unknown else (),
         gray=bool(reasons),
         gray_reasons=reasons,
         **ctx.base,
@@ -1262,13 +1581,20 @@ def normalize_event(
     env: Mapping[str, str] | None = None,
     home: str | None = None,
     budget_s: float = TIME_BUDGET_S,
+    protected_globs: Sequence[str] | None = None,
 ) -> list[Action]:
     """The Actions for one PreToolUse payload (never raises; never empty).
 
     Runs on the daemon's event loop, so the work is bounded: after ``budget_s`` seconds, more than
     ``MAX_ACTIONS`` commands, more than ``MAX_DISK_KEYS`` distinct disk lookups or ``MAX_REFS``
-    paths, the Actions built so far are returned plus one gray Action whose reasons start with
-    ``normalize-budget-exceeded``.
+    paths, the rest of a shell line is classified lexically only (no glob expansion, no disk) and
+    one gray Action whose reasons start with ``normalize-budget-exceeded`` is added last: the
+    paths the words name still meet the deny and ask rules, the line can never be allowed.
+
+    ``protected_globs``: the read-protection path globs (canonical keys) a recursive read of a
+    directory is checked against (Grep / Glob on a directory, ``grep -r``, ...): the daemon derives
+    them from the loaded policy; None means ``subtree.DEFAULT_PROTECTED_GLOBS``, an empty
+    sequence turns the subtree look off.
     """
     env = env if env is not None else os.environ
     base: dict[str, Any] = {"platform": platform}
@@ -1289,6 +1615,11 @@ def normalize_event(
             root_resolved=root_resolved,
             base=base,
             budget=budget,
+            protected=subtree.matcher_for(
+                subtree.DEFAULT_PROTECTED_GLOBS
+                if protected_globs is None
+                else tuple(protected_globs)
+            ),
         )
         tool = payload.get("tool_name")
         if not isinstance(tool, str) or not tool:

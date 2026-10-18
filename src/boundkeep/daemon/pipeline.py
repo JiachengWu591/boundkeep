@@ -132,6 +132,142 @@ def _config_dir_rules(env: Mapping[str, str], home: str | None) -> tuple[Rule, .
     )
 
 
+_GUARD_CODE_RULE_ID = "protect-guard-code"
+_GUARD_DIRS_RULE_ID = "protect-guard-dirs"
+
+
+def _guard_key(path: object) -> str | None:
+    """The canonical key of an absolute, certain path (None for anything else)."""
+    if not isinstance(path, str) or not path or "\x00" in path:
+        return None
+    norm = norm_paths.normalize_path(path, cwd=None, home=None, dialect="tool", literal=True)
+    if not norm.absolute or norm.uncertain or norm.is_device or not norm.key:
+        return None
+    return norm.key
+
+
+def _guard_globs(key: str, *, tree: bool) -> str | None:
+    """``key`` as a literal glob (``/**`` appended for a whole tree); None when it is unusable."""
+    base = escape_glob_literal(key).rstrip("/")
+    glob = f"{base}/**" if tree else base
+    if not base or len(glob) > MAX_PATTERN_LENGTH:
+        return None
+    return glob
+
+
+def _installed_paths() -> tuple[list[str], list[str], list[str]]:
+    """(directories to protect as trees, files to protect, the boundkeep home) of this install.
+
+    Everything the gate runs from: the package directory (its modules, the hook scripts and the
+    default policy file inside it) and, in a source checkout, the policies directory; the
+    interpreter that runs the daemon, the base interpreter, the ``boundkeep-hook`` launcher and
+    whatever ``init`` recorded in ``installs.json`` (the hook command and its script); the home
+    directory with the policy, the endpoint and the audit log. Nothing here raises.
+    """
+    import boundkeep
+    from boundkeep import hookcmd, install
+    from boundkeep import paths as bk_paths
+
+    trees: list[str] = []
+    files: list[str] = []
+    homes: list[str] = []
+    package = os.path.dirname(os.path.abspath(boundkeep.__file__))
+    trees.append(package)
+    trees.append(os.path.realpath(package))
+    checkout = os.path.dirname(os.path.dirname(package))
+    if os.path.isfile(os.path.join(checkout, "pyproject.toml")):
+        policies = os.path.join(checkout, "policies")
+        if os.path.isdir(policies):
+            trees.append(policies)
+    for script in ("hook_client.py", "hook_main.py"):
+        files.append(os.path.join(package, script))
+    for interpreter in (sys.executable, getattr(sys, "_base_executable", None)):
+        if isinstance(interpreter, str) and interpreter:
+            files.append(os.path.abspath(interpreter))
+            files.append(os.path.realpath(interpreter))
+    files.append(hookcmd.launcher_path())
+    homes.append(bk_paths.home_dir())
+    try:
+        records = install.load_manifest(bk_paths.manifest_file())
+    except Exception:  # noqa: BLE001 - a missing or corrupt manifest only means fewer paths
+        records = []
+    for record in records:
+        files.append(record.hook_command)
+        files.extend(arg for arg in record.hook_args if arg.lower().endswith(".py"))
+        for index, arg in enumerate(record.hook_args[:-1]):
+            if arg == "--home":
+                homes.append(record.hook_args[index + 1])
+    return trees, files, homes
+
+
+def _guard_rules(env: Mapping[str, str], home: str | None) -> tuple[tuple[Rule, ...], list[str]]:
+    """The rules that protect what the gate itself runs from, and problems that left holes.
+
+    * ``protect-guard-code``: no write (``unknown`` access counts) to the installed package, the
+      hook scripts, the policy source files, the interpreters, the ``boundkeep-hook`` launcher or
+      boundkeep's home. Without it a ``Set-Content hook_main.py`` is only a question.
+    * ``protect-guard-dirs``: no write to the DIRECTORIES ``.claude`` (any depth: the project's and
+      the user's), ``.boundkeep``, boundkeep's home or ``CLAUDE_CONFIG_DIR`` themselves: the rules
+      on ``.claude/settings*.json`` guard the files, but renaming, moving or deleting the
+      directory (``Rename-Item ~\\.claude x``, ``robocopy <empty> .claude /mir``) removes them
+      all at once.
+    """
+    problems: list[str] = []
+    trees, files, homes = _installed_paths()
+    code: dict[str, None] = {}
+    for path in trees:
+        key = _guard_key(path)
+        glob = _guard_globs(key, tree=True) if key else None
+        if glob is None:
+            if path == trees[0]:
+                problems.append("the boundkeep package directory cannot be protected by a rule")
+            continue
+        code[glob] = None
+    for path in files:
+        key = _guard_key(path)
+        glob = _guard_globs(key, tree=False) if key else None
+        if glob is not None:
+            code[glob] = None
+    dirs: dict[str, None] = {"**/.claude": None, "**/.boundkeep": None}
+    for path in homes:
+        key = _guard_key(path)
+        glob = _guard_globs(key, tree=True) if key else None
+        if glob is not None:
+            code[glob] = None
+        glob = _guard_globs(key, tree=False) if key else None
+        if glob is not None:
+            dirs[glob] = None
+    config_dir = env.get("CLAUDE_CONFIG_DIR")
+    if isinstance(config_dir, str) and config_dir:
+        norm = norm_paths.normalize_path(config_dir, cwd=None, home=home, env=env, dialect="tool")
+        glob = _guard_globs(norm.key, tree=False) if norm.absolute else None
+        if glob is not None and not [r for r in norm.reasons if r != "glob"]:
+            dirs[glob] = None
+    rules: list[Rule] = []
+    if code:
+        rules.append(
+            Rule.model_validate(
+                {
+                    "id": _GUARD_CODE_RULE_ID,
+                    "match": {"path_glob": list(code), "access": "write"},
+                    "action": "deny",
+                    "reason": "do not modify boundkeep's code, interpreter or home directory",
+                }
+            )
+        )
+    rules.append(
+        Rule.model_validate(
+            {
+                "id": _GUARD_DIRS_RULE_ID,
+                "match": {"path_glob": list(dirs), "access": "write"},
+                "action": "deny",
+                "reason": "do not move, rename or delete a Claude Code or boundkeep directory",
+            }
+        )
+    )
+    return tuple(rules), problems
+
+
 def runtime_policy_checked(
     policy: Policy, env: Mapping[str, str], home: str | None
 ) -> tuple[Policy, str | None]:
@@ -139,34 +275,64 @@ def runtime_policy_checked(
 
     ``protect-guard-config`` names ``~/.claude``, but ``CLAUDE_CONFIG_DIR`` can move it; when it
     is set, that directory's settings files get the same write protection and its credentials and
-    transcripts a read denial (glob characters in the name are escaped). NEVER raises: when the
-    rules cannot be built (a relative or unresolvable directory, one longer than a glob may be,
-    any unexpected error) the policy comes back unchanged together with a short, printable
-    message, so the caller can log it and keep serving with a policy it knows is incomplete,
-    instead of failing the reload and silently keeping an OLDER policy. ``(policy, None)`` means
-    there was nothing to add or everything was added.
+    transcripts a read denial (glob characters in the name are escaped). Independently of it,
+    ``_guard_rules`` protects the installed code, the interpreter and the guarded directories.
+    NEVER raises: when the rules cannot be built (a relative or unresolvable directory, one
+    longer than a glob may be, any unexpected error) the policy comes back with what could be
+    built together with a short, printable message, so the caller can log it and keep serving
+    with a policy it knows is incomplete, instead of failing the reload and silently keeping an
+    OLDER policy. ``(policy, None)`` means there was nothing to add; an extended policy with
+    ``None`` that everything was added.
     """
+    built: list[Rule] = []
+    problems: list[str] = []
     try:
-        rules = tuple(
-            rule
-            for rule in _config_dir_rules(env, home)
-            if not any(existing.id == rule.id for existing in policy.rules)
-        )
-        if not rules:
-            return policy, None
-        return policy.model_copy(update={"rules": (*rules, *policy.rules)}), None
+        built.extend(_config_dir_rules(env, home))
     except _RuntimeRuleSkipped as exc:
-        return policy, str(exc)
+        problems.append(str(exc))
     except Exception as exc:  # noqa: BLE001 - this must never take the daemon's reload down
-        return policy, (
+        problems.append(
             "CLAUDE_CONFIG_DIR: the runtime rules could not be built "
             f"({_clean(type(exc).__name__, 40)}); its settings are not protected by them"
         )
+    try:
+        guard, guard_problems = _guard_rules(env, home)
+        built.extend(guard)
+        problems.extend(guard_problems)
+    except Exception as exc:  # noqa: BLE001 - never raises
+        problems.append(
+            "the runtime rules that protect boundkeep's own code could not be built "
+            f"({_clean(type(exc).__name__, 40)})"
+        )
+    rules = tuple(r for r in built if not any(existing.id == r.id for existing in policy.rules))
+    error = _clean("; ".join(problems), 400) if problems else None
+    if not rules:
+        return policy, error
+    return policy.model_copy(update={"rules": (*rules, *policy.rules)}), error
 
 
 def runtime_policy(policy: Policy, env: Mapping[str, str], home: str | None) -> Policy:
     """``runtime_policy_checked`` without the error text (never raises)."""
     return runtime_policy_checked(policy, env, home)[0]
+
+
+def protected_read_globs(policy: Policy) -> tuple[str, ...]:
+    """Every path glob of a deny or ask rule that can fire on a READ (access read or unspecified).
+
+    The normalizer checks the subtree of a directory that a command reads recursively (Grep on a
+    project, ``grep -r``, ``tar c``) against these, so a protected file inside it becomes a read
+    path of the action and the rules above decide on it. Rules are taken whatever their ``tool``
+    filter says: a few extra paths cost nothing, a missing one is a bypass.
+    """
+    out: dict[str, None] = {}
+    for rule in policy.rules:
+        match = rule.match
+        if rule.action == "allow" or match.path_glob is None:
+            continue
+        if match.access is not None and match.access != "read":
+            continue
+        out.update(dict.fromkeys(match.path_glob))
+    return tuple(out)
 
 
 def review(
@@ -176,11 +342,26 @@ def review(
     platform: Platform | None = None,
     env: Mapping[str, str] | None = None,
     home: str | None = None,
+    scan_disk: bool = True,
 ) -> Review:
-    """Normalize ``payload`` and evaluate ``policy`` on it (never raises)."""
+    """Normalize ``payload`` and evaluate ``policy`` on it (never raises).
+
+    ``scan_disk`` False turns off the look into the subtree of a directory that is read
+    recursively (Grep on a directory, ``grep -r`` ...). It is for fake machines (``boundkeep test``
+    runs the policy's tests on made-up home and project paths): there the real disk behind a
+    made-up path must not decide the verdict.
+    """
     platform = platform or local_platform()
     env = env if env is not None else os.environ
-    actions = tuple(normalize_event(payload, platform=platform, env=env, home=home))
+    actions = tuple(
+        normalize_event(
+            payload,
+            platform=platform,
+            env=env,
+            home=home,
+            protected_globs=protected_read_globs(policy) if scan_disk else (),
+        )
+    )
     verdict = evaluate(policy, actions, platform=platform)
     tool = payload.get("tool_name")
     if verdict.decision == "gray" and isinstance(tool, str) and tool in HARMLESS_TOOLS:
@@ -261,6 +442,7 @@ def decide(
     platform: Platform | None = None,
     env: Mapping[str, str] | None = None,
     home: str | None = None,
+    scan_disk: bool = True,
 ) -> Decision:
     if event != protocol.EVENT_PRE:
         return Decision(protocol.DECISION_NONE, "", "no-decision-for-event")
@@ -271,5 +453,5 @@ def decide(
             "fix it or run 'boundkeep doctor'",
             "policy-invalid",
         )
-    result = review(payload, policy, platform=platform, env=env, home=home)
+    result = review(payload, policy, platform=platform, env=env, home=home, scan_disk=scan_disk)
     return _finish(result, mode, policy)

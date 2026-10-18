@@ -16,7 +16,16 @@ import sys
 import tempfile
 from collections.abc import Sequence
 
-from boundkeep import __version__, console, fsperm, hookcmd, install, paths, settings_io
+from boundkeep import (
+    __version__,
+    claude_settings,
+    console,
+    fsperm,
+    hookcmd,
+    install,
+    paths,
+    settings_io,
+)
 from boundkeep.daemon.lifecycle import AlreadyRunning, SingleInstance, install_stop_handlers
 from boundkeep.daemon.server import Daemon
 from boundkeep.ipc.base import ServerStartError
@@ -105,11 +114,27 @@ def cmd_init(args: argparse.Namespace) -> int:
             f"policy: {exc}\n  fix {policy_path} by hand, or run 'boundkeep init --reset-policy' "
             "to replace it with the default policy (a backup is kept)"
         )
+    # defaults.emit_allow is pinned into the hook command (an allow is only passed on to Claude
+    # Code by a client started with --emit-allow); doctor warns when the pin and the policy differ.
+    command = install.HookCommand(
+        command.command, install.with_emit_allow(command.base_args, policy.defaults.emit_allow)
+    )
     try:
         groups = install.build_hook_groups(command, post_matcher=post_matcher)
         merged, report = install.merge_hooks(doc.data, groups)
     except (SettingsError, ValueError) as exc:
         return _fail(str(exc))
+    concerns = claude_settings.assess_settings(merged)
+    refused = [c for c in concerns if c.refuse]
+    if refused:
+        console.err(
+            f"boundkeep init: {settings_path} would leave the gate switched off or redirected; "
+            "nothing was written:"
+        )
+        for concern in refused:
+            console.err(f"  - {concern.message}")
+        console.err("Remove that from the file (or choose another --scope), then run init again.")
+        return EXIT_PROBLEM
 
     # Launch the hook exactly as Claude Code will, in a scratch home so the check neither needs
     # nor writes to the real one. A hook that cannot work would leave the gate silently open.
@@ -126,9 +151,21 @@ def cmd_init(args: argparse.Namespace) -> int:
         for r in failed:
             console.err(f"  - {r.subcommand} ({r.env_variant}): {r.detail}")
         return EXIT_PROBLEM
+    try:
+        hook_files = install.hook_files_for(command)
+    except OSError as exc:
+        return _fail(f"cannot read a hook file to record its hash ({exc}); nothing was written")
 
     console.out(f"hook command : {command.command} {' '.join(command.base_args)}".rstrip())
     console.out(f"settings file: {settings_path} ({args.scope} scope)")
+    if policy.defaults.emit_allow:
+        console.out(
+            "emit_allow   : on in the policy, so --emit-allow is pinned into the hook command"
+        )
+    for line in _scope_notice(args.scope, _project_dir(args), settings_path):
+        console.out(line)
+    for line in _settings_warnings(args, settings_path, concerns):
+        console.out(line)
     unchanged = (
         report.unchanged and not doc.had_bom
     )  # a BOM is rewritten even if the hooks are fine
@@ -152,10 +189,76 @@ def cmd_init(args: argparse.Namespace) -> int:
         console.out("dry run      : nothing was written")
         return EXIT_OK
 
+    record = install.InstallRecord(
+        settings_path=settings_path,
+        scope=args.scope,
+        created_file=not doc.exists,
+        hook_command=command.command,
+        hook_args=command.base_args,
+        post_matcher=post_matcher,
+        installed_at=_utc_now(),
+        hook_files=hook_files,
+        watched=tuple(sorted(claude_settings.watched_fingerprints(merged).items())),
+    )
     try:
-        return _apply_init(args, home, settings_path, doc, merged, unchanged, command, post_matcher)
+        return _apply_init(args, home, settings_path, doc, merged, unchanged, record)
     except (OSError, SettingsError) as exc:
         return _fail(f"init stopped part-way ({type(exc).__name__}: {exc}); run it again")
+
+
+def _scope_notice(scope: str, project_dir: str, settings_path: str) -> list[str]:
+    """What the chosen scope does and does not cover (security review H-3).
+
+    A project-level install is silent everywhere else: a session opened in a parent folder or in
+    another folder has none of these hooks and Claude Code does not say so.
+    """
+    if scope == "project":
+        return [
+            "",
+            "NOTICE       : this is a PROJECT-LEVEL install. Protection applies ONLY to Claude "
+            f"Code sessions opened in {project_dir}",
+            "               (and below it, where no other settings take over). A session opened "
+            "in its parent folder or in any other folder has NO boundkeep hooks,",
+            "               and Claude Code gives no warning. To protect every folder, run "
+            "'boundkeep init --scope user' instead.",
+            "",
+        ]
+    return [
+        "NOTICE       : this is a USER-LEVEL install: it applies to every folder opened with the "
+        f"Claude Code configuration that owns {settings_path}.",
+    ]
+
+
+def _settings_warnings(
+    args: argparse.Namespace, settings_path: str, concerns: list[claude_settings.Concern]
+) -> list[str]:
+    """Loud lines about settings (this file and the other layers) that may weaken the gate."""
+    lines: list[str] = []
+    for concern in concerns:
+        label = "WARNING     " if concern.level != "info" else "note        "
+        lines.append(f"{label} : {settings_path}: {concern.message}")
+    from boundkeep import doctor
+
+    try:
+        layers = doctor.load_layers(_project_dir(args))
+    except (SettingsError, ValueError) as exc:
+        return [*lines, f"WARNING      : the other settings files could not be checked ({exc})"]
+    for layer in layers:
+        if paths.same_file(layer.path, settings_path):
+            continue
+        if layer.error is not None or layer.doc is None:
+            lines.append(
+                f"WARNING      : {layer.path} cannot be read ({layer.error}); a settings file "
+                "Claude Code cannot read may switch every hook off"
+            )
+            continue
+        for concern in claude_settings.assess_settings(layer.doc.data):
+            if concern.level == "block" and not concern.layer_only:
+                lines.append(
+                    f"WARNING      : {layer.path} ({layer.name} layer): {concern.message}; it may "
+                    "weaken the hooks installed here"
+                )
+    return lines
 
 
 def _apply_init(
@@ -165,8 +268,7 @@ def _apply_init(
     doc: settings_io.SettingsDoc,
     merged: dict[str, object],
     unchanged: bool,
-    command: install.HookCommand,
-    post_matcher: str,
+    record: install.InstallRecord,
 ) -> int:
     for directory in (home, paths.log_dir(home), paths.backups_dir(home)):
         fsperm.ensure_private_dir(directory)
@@ -209,15 +311,6 @@ def _apply_init(
         console.out(f"backup       : {backup}" if backup else "backup       : (file did not exist)")
 
     manifest_path = paths.manifest_file(home)
-    record = install.InstallRecord(
-        settings_path=settings_path,
-        scope=args.scope,
-        created_file=not doc.exists,
-        hook_command=command.command,
-        hook_args=command.base_args,
-        post_matcher=post_matcher,
-        installed_at=_utc_now(),
-    )
     records = install.upsert_record(install.load_manifest(manifest_path), record)
     install.save_manifest(manifest_path, records)
     fsperm.ensure_private_file(manifest_path)

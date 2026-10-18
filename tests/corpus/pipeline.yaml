@@ -192,7 +192,7 @@
 - {id: read-win-short-name, tool: Read, platform: windows, input: {file_path: "C:\\Users\\testuser\\PROJ~1\\a.py"}, expect: gray, adv: true}
 - {id: read-win-device, tool: Read, platform: windows, input: {file_path: "NUL"}, expect: gray, adv: true}
 - {id: read-win-drive-relative, tool: Read, platform: windows, input: {file_path: "D:foo.txt"}, expect: gray, adv: true}
-- {id: read-win-unc, tool: Read, platform: windows, input: {file_path: "\\\\server\\share\\a.txt"}, expect: gray, adv: true}
+- {id: read-win-unc, tool: Read, platform: windows, input: {file_path: "\\\\server\\share\\a.txt"}, expect: ask, adv: true}  # X1 review M-12: a UNC host is network egress (net-allowlist asks)
 - {id: read-no-path, tool: Read, input: {}, expect: gray}
 - {id: toolsearch, tool: ToolSearch, input: {query: "x"}, expect: allow}
 - {id: unknown-tool, tool: SomeNewTool, input: {}, expect: gray, adv: true}
