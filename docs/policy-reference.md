@@ -124,7 +124,7 @@ tests:
 | `ask-user-config-write` | ask | 写 `~/.gitconfig`、`~/.npmrc`、`~/.pypirc`、`~/.config/pip/pip.conf`、`~/.netrc`、`~/.docker/config.json` |
 | `no-secret-read` | deny | 读 `.env`、`.env.*`、`*.env`、名为 `env` 的文件、`.envs/**`、`**/.ssh/**`、`*.pem`、`*.key`、`*.jks`、`*.keystore`、`*.tfstate*`、`*.tfvars`、`service-account*.json`、`credentials.json` / `credentials.txt`、`secrets.{yml,yaml,json,toml,txt}`、`secret.txt`、`key.txt` / `keys.txt`、`password(s).txt`、`token.txt`、`.htpasswd`、`kubeconfig`、`*.kubeconfig`、`local.settings.json`、`*.kdbx` / `*.kdb`、`/etc/shadow*`、`/etc/sudoers*`、`/etc/ssh/ssh_host_*`、`/proc/*/environ`。名字整体匹配，所以 `env.py`、`kubeconfig.go`、`docker-compose.yml`、`README` 仍可读 |
 | `no-credential-store-read` | deny | 读云 CLI 与容器配置（`.aws`、`.azure`、gcloud、gh、op、doctl、rclone、kube、docker）、`.gnupg`、`.git-credentials`、`.git/credentials`、`.config/git/credentials`、`.gitconfig`、`.git/config`、`.netrc` / `_netrc`、`.npmrc`、`.pypirc`、`.pgpass`、`.my.cnf`、`.s3cfg`、`.boto`、`.vault-token`、`.cargo/credentials*`、`.gem/credentials`、`.m2/settings.xml`、Terraform 凭据、GitHub CLI 与 gcloud 的 `%APPDATA%` 目录、私钥文件（`id_rsa*`、`id_ed25519*` 等，含 `.bak` 备份；代价是公钥 `id_rsa.pub` 也读不了） |
-| `no-agent-state-read` | deny | 读 `~/.claude/.credentials.json`、`~/.claude.json`、`.claude/settings*.json`（项目与用户级；`env` 块里常放令牌）、`.mcp.json`（MCP 服务器的 headers 与 env）、`.claude/projects/**`（会话记录）、`history.jsonl`、`shell-snapshots`、`ide` |
+| `no-agent-state-read` | deny | 读 `~/.claude/.credentials.json`、`~/.claude.json`、用户级 `~/.claude/settings.json` 与 `~/.claude/settings.local.json`、项目的 `.claude/settings.local.json`（这几个的 `env` 块里常放令牌）、`.mcp.json`（MCP 服务器的 headers 与 env）、`.claude/projects/**`（会话记录）、`history.jsonl`、`shell-snapshots`、`ide` |
 | `no-history-read` | deny | 读 `.bash_history`、`.zsh_history`、`.python_history`、`.psql_history`、`.mysql_history`、PSReadLine 的 `ConsoleHost_history.txt` 等 |
 | `no-windows-credential-read` / `no-browser-profile-read` | deny | Windows 凭据、DPAPI、保险库、`System32\config`、`windows\repair`；Windows / Linux / macOS 浏览器配置目录与钥匙串。都含 `**/users/*/...` 形式，WSL 看到的 `/mnt/c/Users/x/...` 也被拦 |
 | `no-raw-disk-access` | deny | 读写 `/dev/sd*`、`nvme*`、`mmcblk*`、`/dev/mem`、`\\.\PhysicalDrive*` 等裸设备 |
@@ -144,6 +144,7 @@ tests:
 | `net-allowlist` | ask | 访问 pypi.org、files.pythonhosted.org、github.com、registry.npmjs.org 之外的主机（目标未知也算） |
 | `read-inside-project` | allow | `Read` / `Glob` / `Grep` 且路径确定在项目内（唯一的 allow 规则） |
 
+**settings 文件的读与写保护不对称（有意如此，X1 复审 U-2）**：写保护覆盖所有 settings 文件（`**/.claude/settings*.json`、`~/.claude/settings*.json`，`protect-guard-config`）；读保护只覆盖真正放凭据的文件：`~/.claude/settings.json`、`~/.claude/settings.local.json`（含 WSL 看到的 `/mnt/c/Users/x/.claude/...`）和项目的 `.claude/settings.local.json`，外加 `.mcp.json`。**项目级 `.claude/settings.json` 可以读**：它通常提交进仓库，`init` 默认就把 hook 条目写在这里；如果把它读保护，每个受保护项目里没有 glob 的 `Grep`、`Glob **/*`、`grep -rn TODO .`、`ls -R` 都会被 deny（目录遍历命中受保护文件名）。代价：项目级 settings.json 里若有人写了令牌（`env` 块），agent 能读到；令牌应放 `settings.local.json` 或用户级文件。
 `PowerShell` 工具的命令由辅助进程（Windows PowerShell 5.1 或 pwsh，只调用解析器、不执行任何用户文本）解析，结果和 Bash 一样是 Action 列表，命令类规则与路径规则同样适用。仍然灰色的构造见下一节。
 
 ## PowerShell 命令的规则写法

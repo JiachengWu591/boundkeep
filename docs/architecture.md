@@ -59,9 +59,9 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 
 ## 4. 本机 IPC
 
-- **端点**：`init` 生成并写入 `<home>/endpoint.json`（原子写）。Windows 的管道名是 `\\.\pipe\boundkeep-<32 位随机令牌>`，令牌防止别的进程抢先创建同名管道。
+- **端点**：`init` 生成并写入 `<home>/endpoint.json`（原子写）。Windows 的管道名是 `\\.\pipe\boundkeep-<32 位随机令牌>`，令牌只防止**其他用户**抢先创建同名管道；同一用户能读到令牌，所以不是边界（规格 §3 范围外）。
 - **Windows 服务端**（`ipc/named_pipe.py`）：用 ctypes 调 `CreateNamedPipeW`。
-  - DACL 只授予当前用户（`SecurityDescriptor.private()`）；`PIPE_REJECT_REMOTE_CLIENTS`；第一个实例带 `FILE_FLAG_FIRST_PIPE_INSTANCE`，名字被占用时启动失败（`AddressInUse`）。
+  - DACL 只授予当前用户（`SecurityDescriptor.private()`）；`PIPE_REJECT_REMOTE_CLIENTS`；第一个实例带 `FILE_FLAG_FIRST_PIPE_INSTANCE`，名字被占用时启动失败（`AddressInUse`）；所有实例建完后收紧 DACL，去掉创建实例权限，并加 OWNER RIGHTS ACE 只给 `READ_CONTROL`（提高同一用户的门槛，提权管理员仍可接管所有权）。客户端永不输出守护进程回答的 `allow`，除非 hook 命令带 `--emit-allow`。
   - 预建 8 个实例，每个实例一个线程，全部重叠 I/O 加期限：连上后 1 秒内一个字节都不写的客户端被放弃（hook 客户端连上就写），已开始的请求总共 5 秒；应答写完后最多再等 0.5 秒让客户端读完，再回收实例。同用户的恶意进程仍可用大量连接拖慢服务（实测：8 个沉默连接把一次真实请求延迟约 1 秒），这是已知局限，不是防线。
   - 请求交给常驻进程的 asyncio 事件循环处理；关闭服务端时不会因为等待事件循环而死锁。
   - 不用 asyncio 自带的管道服务端：它创建管道时传空安全属性，Everyone 与匿名账户可读（M0a E10 实测）。

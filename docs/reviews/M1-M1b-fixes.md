@@ -17,9 +17,9 @@
 | 编号 | 状态 | 做了什么 | 没做 / 残留 |
 |---|---|---|---|
 | **H-1** 目录目标的 Grep/Glob 被 allow | 已修 | 新模块 `normalize/subtree.py`：对目录目标做有界的广度优先遍历（`os.scandir`，不跟随链接/联接点），把命中策略读保护 glob 的文件作为读路径交给规则；Grep 的 `glob`/`type` 与 Glob 的 `pattern` 用来缩小范围；受保护 glob 由 `pipeline.protected_read_globs(policy)` 从已加载的策略里取。预算 3 万个条目 / 0.2 秒，超出则灰色 `recursive-scan-budget`，目录读不了则灰色 `recursive-scan-unreadable`。**不按目录名跳过任何目录**（攻击者可以自己建 `node_modules`）。真实 Claude Code 冒烟：对项目目录 Grep、不带 glob，`.env` 被拒绝，密钥没有返回 | 见第 3 节的可用性代价 |
-| **H-2** 同用户进程冒充守护进程 | 已修（两项） | ① 客户端默认不再输出 `allow`：守护进程回答 `allow` 时按"无决定"处理，只有 hook 参数里带 `--emit-allow` 才放行；`init` 在策略 `defaults.emit_allow` 打开时写入该参数，`doctor` 检查两者是否一致。`ask`/`deny` 始终有效，冒充者只能收紧。② 管道实例创建完后收紧 DACL，去掉"创建新实例"的权限，同一用户也不能再建同名实例（实测第二次 `CreateNamedPipeW` 返回错误 5，对照组可以）；`serve` 在收紧失败时拒绝启动 | **③ 客户端校验服务端进程 ID 没做**：标准库没有 `GetNamedPipeServerProcessId`，需要在快速客户端里加 ctypes，且重启时序有误报风险。残留风险：同用户进程在守护进程启动**之前**占住管道名（此时 `serve` 会响亮失败，客户端也会忽略它回答的 `allow`） |
+| **H-2** 同用户进程冒充守护进程 | 已修（两项） | ① 客户端默认不再输出 `allow`：守护进程回答 `allow` 时按"无决定"处理，只有 hook 参数里带 `--emit-allow` 才放行；`init` 在策略 `defaults.emit_allow` 打开时写入该参数，`doctor` 检查两者是否一致。`ask`/`deny` 始终有效。**更正（复审）**：这不等于"冒充者只能收紧"——客户端无法区分合法的 `none` 与冒充的 `none`，所以同一用户的冒充者回答 `none` 仍可静默关掉 boundkeep 的全部 deny；这次去掉的只是"用显式 `allow` 跳过 Claude Code 自己的确认框"这一档。真实残余：冒充者能**关掉** boundkeep，但不能放宽到比没装 boundkeep 更宽。② 管道实例创建完后收紧 DACL，去掉"创建新实例"的权限，直接再建同名实例会得到错误 5（对照组可以）。**更正（复审）**：所有者隐含拥有 `WRITE_DAC`，同一用户用三次调用（以 `WRITE_DAC` 打开、改 DACL、再建实例）就能撤销，所以这只是提高门槛；第二轮已加 OWNER RIGHTS ACE 堵这条路径；`serve` 在收紧失败时拒绝启动 | **③ 客户端校验服务端进程 ID 没做**：标准库没有 `GetNamedPipeServerProcessId`，需要在快速客户端里加 ctypes，且重启时序有误报风险。残留风险：同用户进程在守护进程启动**之前**占住管道名（此时 `serve` 会响亮失败，客户端也会忽略它回答的 `allow`） |
 | **H-3** 在别处打开会话时没有任何告警 | 已修（最低限度） | `init` 项目级安装时打印醒目提示"只对在 `<路径>` 里打开的会话生效，其他目录没有任何 hook，Claude Code 也不会警告；要对所有目录生效用 `--scope user`"；`doctor` 不带 `--project-dir` 时明确说明检查的是哪个目录（新增 `scope` 检查，项目级安装为 WARN）；`check_workspace_trust` 现在尊重 `CLAUDE_CONFIG_DIR` | **没有加 SessionStart hook**（报告自己说可放进 M2 第一批）。`check_activity` 仍是 INFO：在错误目录里开的会话不会运行任何 hook，也不会留下日志，别的目录里的事件也证明不了这个项目，所以 WARN 不可靠。`CLAUDE_CONFIG_DIR` 下 `.claude.json` 的位置是凭记忆写的，没有验证 |
-| **M-1** 预算耗尽丢掉 deny | 已修 | 预算触发后，触发的命令和之后的命令继续做**纯词法**分类（不展开通配符、不查磁盘、不遍历），`cd` 跟踪保留，仍追加灰色 `budget:*` 标记，所以永远不会是 allow；磁盘查询预算与通配符预算拆开（`MAX_GLOB_DISK_KEYS` 256 与 `MAX_DISK_KEYS` 64） | 一行里**不同**的命令超过约 1300 条时，尾部仍会被丢，结果是灰色，不是 allow |
+| **M-1** 预算耗尽丢掉 deny | 已修 | 预算触发后，触发的命令和之后的命令继续做**纯词法**分类（不展开通配符、不查磁盘、不遍历），`cd` 跟踪保留，仍追加灰色 `budget:*` 标记，所以永远不会是 allow；磁盘查询预算与通配符预算拆开（`MAX_GLOB_DISK_KEYS` 256 与 `MAX_DISK_KEYS` 64） | （第二轮已去掉条数上限，见第 8 节） |
 | **M-3** `_fail_safe` 读错参数位置 | 已修 | 新增 `_find_sub()`，跳过 `--home <值>`、`--emit-allow` 与未知 `--flag` 再找子命令；`sys.path.insert(0, …)` 改成 `append`（`-I -S` 下包根里的 `json.py` 不能再遮蔽标准库）。回归测试覆盖 config/pre/post/prompt 与五种参数布局 | — |
 | **M-4** 守闸门自己的代码没有保护 | 已修 | 运行时规则（`pipeline.py`）`protect-guard-code`：已安装的包目录（含 hook 脚本与策略文件）、`sys.executable` 与基础解释器、`boundkeep-hook`、`installs.json` 记录的解释器、boundkeep home；`protect-guard-dirs`：`**/.claude`、`**/.boundkeep`、boundkeep home、`CLAUDE_CONFIG_DIR` 目录本身（写、删、改名、移动）。YAML 里 `protect-guard-config` 补了 `**/.claude`、`~/.claude`、`managed-settings*`，`ask-agent-exec-config`（strict 为 deny）补了 `.claude/rules|output-styles|statusline.*|plugins/**`。完整性：`init` 把 hook 解释器、`hook_client.py`、`hook_main.py` 的 sha256 记入 `installs.json`（`hook_files`），`doctor` 不一致即 FAIL，守护进程启动时校验并记一条 `integrity-warning`（只警告、不拒绝启动） | L-11 中其余的持久化路径（`package.json`、`Makefile`、`pyproject.toml` 等）没做 |
 | **M-5** boundkeep 自己的命令行只有 gray | 已修 | `boundkeep` 的 `mode`/`uninstall`/`init`/`serve` 子命令、`--reset-policy`/`--purge`/`--python`/`--hook-style`/`--rotate-endpoint`/`--home` 开关、`boundkeep-hook` 一律 deny；其余 boundkeep 命令 ask；`claude …` 一律 ask（strict 对 `--settings`/`--permission-mode`/`--dangerously-skip-permissions` deny）；杀进程类（`taskkill`/`pkill`/`killall`/`kill`/`Stop-Process`/`Stop-Service`）ask；`pip|pipx|python -m pip uninstall` ask（strict deny）。`programs.py` 现在给 `boundkeep` 报出子命令，`python -m boundkeep …` 归一成 `boundkeep`，`uv run`/`uvx`/`pipx run`/`poetry run` 解包（带包装标记，allow 规则永不匹配） | 规则语言没有"位置参数"匹配，所以 `pip uninstall boundkeep` 与 `taskkill /IM python.exe` 无法只针对目标，只能对整个程序 ask；`claude config` 是子命令不是开关，只能对整个 `claude` ask；不认识的运行器选项（如 `uv run --weird`）保持灰色 |
@@ -38,8 +38,8 @@
 
 这些是修复带来的实际副作用，不是理论风险：
 
-1. **目录目标的 Grep / Glob**：项目里只要有受保护文件，对该目录的 `Grep`、`Glob *`、`Glob **/*` 都会被 deny，除非 `glob` 或 `type` 把它排除在外（`Glob` 只列名字，本来可以只 ask，我按"保守"保持 deny）。超过约 3 万个条目的树（大的 `node_modules`、`.git/objects`）变成灰色，会弹确认。没有按目录名跳过，是因为攻击者可以自己建这个名字的目录。
-2. `.claude/settings.json`（项目与用户级）现在**读取**也被拒绝：agent 看不到自己的设置了，写入本来就是拒绝的。
+1. **目录目标的 Grep / Glob**：项目里只要有受保护文件，对该目录的 `Grep`、`Glob *`、`Glob **/*` 都会被 deny，除非 `glob` 或 `type` 把它排除在外（`Glob` 只列名字，本来可以只 ask，我按"保守"保持 deny；**第二轮已改：Glob 不再扫描、Grep 在没有用户 glob 时跳过 `.git` 等版本控制目录，见第 8 节**）。超过约 3 万个条目的树（大的 `node_modules`、`.git/objects`）变成灰色，会弹确认。没有按目录名跳过，是因为攻击者可以自己建这个名字的目录。
+2. ~~`.claude/settings.json`（项目与用户级）现在**读取**也被拒绝~~ **第二轮已改**：只保护 `settings.local.json`、用户级 `settings*.json` 与 `.mcp.json` 的读取；项目级 `.claude/settings.json` 可以读（它通常提交进仓库，且 `init` 默认就写它），写入保护不变，见第 8 节。
 3. 名叫 `env` 的目录（比如 virtualenv）被 `ls env` 或 `Grep path=env` 会拒绝；`env/bin/activate`、`python -m venv env`、`rm -rf env` 不受影响。
 4. `id_rsa*` 连公钥 `id_rsa.pub` 一起拒绝。
 5. `key.txt`、`keys.txt`、`password.txt`、`token.txt`、`secret(s).txt`、`credentials.txt`、`secrets.*`、`*.env` 这些名字即使内容无害也会拒绝。
@@ -94,3 +94,45 @@
 说明：
 - 第一次 Linux 全量有 11 个失败：10 个是核心修复者的新测试写死了 Windows 风格的工作目录（测试写法问题，运行时规则本身在 POSIX 上正确），1 个是 `echo a | time { …; }`（真 bash 拒绝这种语法，解析器却当成合法，已改为灰色）。修复后重跑全绿。
 - 手工验收（VS Code 与终端 CLI）这一轮**没有重做**：这批改动影响 hook 客户端、`init` 的写入与运行时保护，建议你在提交前重做 `docs/manual-acceptance-m1b.md` 的 P1–P3、A0–A3、C1，至少确认守护进程、`doctor`、读 `.env`、删除界外目录仍按预期工作，并留意 `init` 新增的项目级提示。
+
+## 8. 第二轮修复（复审，2026-10-18）
+
+对应复审：`docs/reviews/M1-M1b-fixes-rereview.md`（审查对象 `8ca058c` 与 `21eb98f`）。复审结论：第一轮修复大体有效，但 H-1 的修复自己留下了一个新绕过（R-1），并带来三处会让日常用不下去的误拒（U-1 至 U-3）。
+
+**先做了一个实验来决定 ConfigChange 该拦什么**（真实 Claude Code CLI 引擎，`-p` 模式，几分钱，2026-10-18）：hook 对一条灰色命令回答 `ask` 时，项目设置里加 `permissions.allow: ["PowerShell(*)"]`，命令**仍然没有执行**；加 `permissions.defaultMode: "bypassPermissions"`，命令也**没有执行**。所以这两类设置没有可演示的削弱能力。其他模式与宿主未测。
+
+| 编号 | 状态 | 做了什么 | 残留 |
+|---|---|---|---|
+| **R-1**（高）Grep 的 `glob`＋`type` 绕过扫描器 | 已修 | 选择器按 ripgrep 的规则：只要给了正的 `glob`（哪怕不认识），`type` 一律不参与收窄；`glob` 编译失败或没有可用部分时不收窄（扫描全部）；只有否定 glob 时 `type` 仍然生效；只有 `type` 时行为不变。回归测试用真实临时目录（`.env`、`sub/.env`、`certs/x.pem`、`a.py`），含复审的 `.e?v`+`py`、`[.]env`+`json`、`*.p[e]m`+`py`、`.e\nv`+`py`、`.e?v`+`markdown` | 复审用真实 ripgrep 15.0.0 验证了语义；"Claude Code 把这些参数原样传给 ripgrep"仍来自二进制字符串，没有用真 Claude Code 对这条路径单独跑 |
+| **U-1** 任何 git 仓库里无 glob 的 Grep 被拒（`.git/config`） | 已修 | Grep 工具在**没有用户 glob** 时跳过 `.git .svn .hg .bzr .jj .sl`（精确大小写、任意深度，不计预算；扫描根本身不跳）；给了任何非空 glob（包括否定 glob）就照常扫描（复审实测 `-g '*'` 会让 `.git/config` 重新出现）。shell 的递归读只在 `program == git` 时跳过（`git grep/log -p/show/archive` 读对象库，不读 `.git/config`）；`grep -r`、`tar`、`cp -r` 仍会扫 `.git` 并 deny | — |
+| **U-2** 默认安装让项目里的 Grep 失效 | 已修 | `no-agent-state-read` 不再包含 `**/.claude/settings*.json`，改为 `**/.claude/settings.local.json`、用户级 `~/.claude/settings.json` 与 `settings.local.json`（含从 WSL 看 Windows home 的 `**/users/*/.claude/…`）、`**/.mcp.json`；**项目级 `.claude/settings.json` 可以读**；所有 settings 的**写入**保护不变（`protect-guard-config`）。两个策略保持超集，`boundkeep test` 0 失败（default 245、strict 178，两平台合计） | `CLAUDE_CONFIG_DIR` 指向的自定义配置目录的 `settings*.json` 读取不受保护（运行时规则只保护 `.credentials.json` 与 `projects/**`），要保护需要改 Python |
+| **U-3** 只列名字的命令被当"读内容" | 已修 | `Glob` 工具不再扫描子树（仍检查基础路径与向上爬出项目的模式）；`ls -R`、`dir /s`、`Get-ChildItem -Recurse`/`-Depth`、`find` 不带 `-exec`/`-ok`、`rsync --list-only`、`robocopy`/`xcopy /L`、`tree`、`du` 不再标成递归（仍把目录操作数当读路径）；同时把 `gzip -r`/`zstd -r` 等、`docker cp`（本地源）、`bsdtar`/`gtar`、`pax -w/-rw` 这几类**读内容**的命令补成递归 | **管道喂给读取者**的写法（`ls -R \| xargs cat`、`find . \| xargs cat`、`Get-ChildItem -Recurse \| Get-Content`）原来因为 `ls -R` 被扫描而 deny，现在是灰色（ask）——回到 M1 原有水平，不是比审查时更差；要恢复 deny 需要"管道上游是递归列举、下游是读取者"的信号（`model.py` + `event.py` 一起改）。`git diff`/`git format-patch` 没标成递归（否则任何存在被忽略的 `.env` 的仓库里这些常用命令都会被拒） |
+| **M-1 残余**（1400 条不同命令后的 `cat .env` 仍灰色） | 已修 | 去掉词法分类的条数上限；改为：外形相同的命令只保留一份，项目内且没有任何 deny/ask 规则能选中的路径被丢弃（`pipeline.rule_path_globs` 提供规则的 glob、程序与访问方式），可能被规则看到的路径最多 1024 个，墙钟上限 0.8 秒；解析器的词数上限在 `event.py` 里提到 20000。实测：1400 条不同 `echo` 后的 `cat .env` 约 0.07 秒、deny；10 万字节一行（9000 条不同 `echo`）后的 `cat .env` 约 0.3–0.4 秒、deny | 一行里几千条各不相同又都带路径的命令，可能因 0.8 秒上限变灰色（ask），绝不会是 allow；词法模式下递归读（`grep -r x .`）仍不扫描、仍是灰色 |
+| **DACL** 同一用户三次调用即可撤销收紧 | 已修 | 在 DACL 里加 OWNER RIGHTS ACE：`D:P(A;;0x12019B;;;<用户SID>)(A;;0x20000;;;OW)`，只授予 `READ_CONTROL`，关掉所有者隐含的 `WRITE_DAC`。测试里先复现了旧 DACL 的三步撤销（以 `WRITE_DAC` 打开、`SetSecurityInfo`、再建实例），再显示新 DACL 下第一步就得到错误 5；直接再建实例仍是错误 5；客户端 `open(addr,'r+b')`、`read_acl_of_pipe`、`AddressInUse`、重启都正常。`doctor` 的管道 ACL 检查只接受 mask 恰好为 `0x20000` 的 OWNER RIGHTS 条目（更宽的 mask 或其他 SID 仍然 FAIL） | 这只是**提高门槛**，提权的管理员（`SeTakeOwnershipPrivilege`）可以接管所有权；同一用户在守护进程**启动之前**占住管道名仍然可能（`serve` 响亮失败，但客户端在这期间会对占位者说话，`doctor` 看不出来）；一个工作线程在连续失败后退出会永久少一个实例（M-7，未做）；没测"默认所有者是 Administrators 组的非提权令牌" |
+| **C-1**（中）外来 hook 靠形状伪装绕过 | 已修 | 一个条目只有在命令与参数**精确等于**某条安装记录的 `hook_command` + `[*hook_args, 对应子命令]` 时才算"自己的"，其余长得像的一律按外来处理；`record_problem` 现在会报"发现一个长得像 boundkeep 的额外 hook"；`init` 对无法替换的长得像的条目警告，`doctor` 对它报 FAIL。复审的三种伪装与变体（独立组、放进我们的组、放在前面、更窄的 matcher、其他事件）都有测试 | 没有安装记录时只有形状启发式，只用于 `doctor` 警告，不阻断 |
+| **C-2**（中）监视范围太窄 | 已修 | `watched_fingerprints` 现在覆盖**所有事件**里的外来命令 hook，以及 `enabledPlugins`、`extraKnownMarketplaces`、`mcpServers`、`appendPlugins`、`prependPlugins`、`pluginConfigs`、`enabledMcpjsonServers`、`enableAllProjectMcpServers`、`managedMcpServers`；基线加版本标记，旧基线只判断它原来覆盖的部分，新增标签只提示"请重新 init" | **没有基线的文件**（项目级安装时的用户级 settings、`settings.local.json`）仍然不拦（ConfigChange 事件不带差异，无法"首次使用即信任"），只 warn/info，文字里写明"不拦截"；只是停用一个插件也会触发阻断，直到重新 `init`（试过容忍并放弃，过度设计）；没有用真实的 ConfigChange 事件端到端测过 |
+| **C-3**（低）误拦与没有证据的阻断 | 已修 | 笼统的 `permissions.allow`、`bypassPermissions`、`skipDangerousModePermissionPrompt` 降为 **WARN**（文字写明"2026-10-18 在 CLI 引擎 `-p` 模式下观察到 hook 的 ask 仍然优先；其他模式与宿主未测"）；阻断的环境变量只剩会重定向 home、项目目录或关闭 hook 的：`USERPROFILE`、`HOME`、`HOMEDRIVE`、`HOMEPATH`、`APPDATA`、`LOCALAPPDATA`、`CLAUDE_CONFIG_DIR`、`CLAUDE_CODE_SIMPLE`、`CLAUDE_CODE_SAFE_MODE`、`CLAUDE_PROJECT_DIR`、`BOUNDKEEP_*`；`PATH`、`PATHEXT`、`COMSPEC`、`PSMODULEPATH`、`NODE_OPTIONS`、`NODE_PATH`、`LD_*`、`DYLD_*` 只警告，`PYTHON*` 只提示（`PYTHONUTF8`、`Path` 不再被拦）；"粘性阻断"的提示文字写明做法：`boundkeep init` 接受新的命令类条目，在此之前对该文件的任何 settings 改动都会被拦（基线不会自动更新） | — |
+| **init 顺序** | 已修 | `init` 先写 manifest（含新基线与 `hook_files`）再写 settings；settings 写失败时按字节还原旧 manifest（原来没有则删除）；测试用注入的 `OSError` 覆盖首次 init、已有外来记录、改钉参数的重 init | — |
+| **完整性哈希范围** | 已修 | 除解释器、`hook_client.py`、`hook_main.py` 外，还包括 `hook_main` 运行时导入的模块（由 AST 静态计算，含延迟导入与传递依赖：`protocol`、`paths`、`ownhook`、`claude_settings`、各包的 `__init__`、`ipc/client`、`ipc/endpoint`）；一个 `python -I -S` 子进程测试保证 `sys.modules` 里的每个 `boundkeep.*` 模块都在列表里；旧的三文件记录只警告"请重新 init" | 若以后加入动态导入，静态计算会漏掉（目前没有） |
+
+**复审里的措辞更正（已改正文）**：第一轮"冒充者只能收紧"和"同一用户也不能再建同名实例"说得过强，已在第 2 节的表格里就地更正，规格 §3、§5.1 也按复审的表述写成了"冒充者能关掉 boundkeep，但关不到比没装更宽""收紧 DACL 只是提高门槛"。
+
+**第二轮之后仍然没做的**：M-2、M-7、M-13、L-1 到 L-18、H-2 的服务端 PID 校验、SessionStart 心跳；"管道上游是递归列举、下游是读取者"的信号；`CLAUDE_CONFIG_DIR` 自定义目录的 `settings*.json` 读保护；ConfigChange 的端到端测试（真实事件）。
+
+### 第二轮的验证结果（2026-10-18）
+
+| 项目 | 结果 |
+|---|---|
+| Windows 全量 pytest | 9479 通过、73 跳过、0 失败（约 30 分钟） |
+| Linux 容器（python:3.12，uid 1000，含真 bash） | 8882 通过、670 跳过、0 失败 |
+| ruff check / ruff format --check | 干净（144 个文件） |
+| mypy（strict，`src`） | 47 个源文件无问题（Windows 与 Linux） |
+| 真实 Claude Code 冒烟 `scripts/smoke_claude_m1.py` | 11/11 |
+| 真实 Claude Code 冒烟 `scripts/smoke_claude_m1b.py` | 16/16；新增 `grep-glob-type`（R-1）场景，并改成比较前后的 Grep deny 条数，不会被前一个场景留下的记录蒙混 |
+| 实验：hook 的 `ask` 与 `permissions.allow` / `bypassPermissions` 谁优先 | 两种设置下命令都没有执行（hook 的 ask 优先）；CLI 引擎 `-p` 模式，其他模式与宿主未测 |
+
+第二轮过程中的两点：
+- 第二轮的单元与语料测试变多（含带真实磁盘的遍历测试），Windows 全量从约 13 分钟变成约 30 分钟，主要是 `tests/unit/test_pipeline_corpus.py`；后续可以考虑给带磁盘的测试加标记、日常只跑子集。
+- 第一次 Linux 重跑失败是 Docker Desktop 的守护进程没有运行（不是测试失败），启动后重跑全绿。
+
+**手工验收这一轮没有重做**（上一轮你做了复测并通过；第二轮又改了 `init` 的写入顺序、ConfigChange 的阻断面、管道 DACL）。建议你至少重做：`init` + `doctor`（确认没有 FAIL，尤其 `pipe-acl` 与新的完整性哈希检查）、`serve`、读 `.env`、对项目目录 Grep。

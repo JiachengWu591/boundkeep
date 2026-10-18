@@ -1,4 +1,4 @@
-# boundkeep（守界）— 项目规格 v0（修订 3）
+# boundkeep（守界）— 项目规格 v0（修订 4）
 
 > 状态：设计稿。标注 `[待验证]` 的条目依赖外部产品的实际行为，编码前先用最小实验确认。
 > 本文件是开发会话的唯一事实来源：要改设计，先改这里，再改代码。
@@ -7,6 +7,8 @@
 > **修订 2（2026-10-05）**：LLM 审计后端改为可插拔（OpenAI 兼容接口，DeepSeek 为参考预设，Anthropic 为可选后端，默认关闭）；依据 Claude Code 官方 hooks 文档修正配置、超时、降级与 allow 语义；加入"订阅凭证不得用作运行时后端"的约束；M3 拆为 M3a / M3b，M4 增加离线模式；新增 §17 仓库元数据。
 >
 > **修订 3（2026-10-06）**：加入 Windows 原生与 WSL2 作为 v0 目标平台（此前 Windows 在范围外）。依据官方文档（hooks、tools-reference、permissions、settings、setup，2026-10-06 读取）与开发机初测（Windows 11 build 26200、Python 3.12.7、简体中文区域、代码页 936）：hook 通道在 Windows 改用命名管道；hook 客户端的 I/O 一律按字节与显式 UTF-8；新增 PowerShell 方言与路径规范化要求；新增 §5.1 平台支持、§16-D 平台待验证项与里程碑 M1b。各平台"支持"以实测为准，未实测不声明。
+>
+> **修订 4（2026-10-18）**：采纳 M1+M1b 的 X1 安全审查（`docs/reviews/M1-M1b-security-review.md`）与复审（`docs/reviews/M1-M1b-fixes-rereview.md`）提出的规格变更：§1 核心承诺补"在 `enforce` 下可日常使用"这一前置条件；§3 范围外写明同一用户的进程可以冒充守护进程；§5.1 管道令牌只防其他用户、DACL 收紧只是提高门槛、客户端永不输出 `allow`（除非 `--emit-allow`）；§7 目录目标的读类动作要检查子树、预算耗尽不得使已可见的 deny 变弱、实测 hook 的 `ask` 优先于 `permissions.allow` 与 `bypassPermissions`；§10 增加"hook 配置层与会话目录不匹配"与"settings 被削弱"两行。
 
 ---
 
@@ -23,6 +25,8 @@ boundkeep 是一个在本机运行的编码 agent 动作审查层。首先支持
 一句话定位：cc-audit 一类的工具检查"你装了什么"（装前扫描 skills / hooks / MCP 配置），boundkeep 检查"agent 正在做什么"（运行时逐个动作审查）。两者互补，不替代。
 
 **核心承诺**（写进 README 之前必须有评测数据支撑）：在不明显增加日常打扰的前提下，提高针对编码 agent 的攻击成本。
+
+**前置条件（M1+M1b 的 X1 审查 M-13，2026-10-18 批准）**：在 `enforce` 下能日常使用，必须在 M2 评测之前达成（allow 规则或 LLM 审计）。否则默认配置里防护只有两种状态：`audit-only`（什么都不防）或每条命令都弹确认。"在 `audit-only` 下日常使用"不得作为推荐用法写进 README。
 
 **项目前提**
 
@@ -63,6 +67,7 @@ boundkeep 是一个在本机运行的编码 agent 动作审查层。首先支持
 **范围外（README 必须明说）**
 
 - 恶意用户本人、已被攻陷的本机；用户或管理员自己关闭 hook。
+- **同一用户下已经在运行的进程**（M1+M1b 的 X1 审查 H-2，2026-10-18 批准）：它能读到管道令牌，能冒充守护进程（抢先占用管道名，或在 DACL 未收紧时再建同名实例），也能让客户端收到"无决定"从而绕过 boundkeep 的全部 deny。boundkeep 只做到：客户端永不执行守护进程回答的 `allow`（除非 hook 命令显式带 `--emit-allow`），所以冒充者能**关掉** boundkeep，但不能把动作放宽到比"没装 boundkeep"更宽（Claude Code 自己的权限流程仍然生效）；管道创建完所有实例后收紧 DACL（去掉创建实例权限，并用 OWNER RIGHTS ACE 只给 `READ_CONTROL`），这只是**提高门槛**，不是边界（提权的管理员可以接管所有权）。
 - Claude Code 之外的程序。
 - 不经过工具调用的路径：官方文档说明，用 `@` 引用加入提示的文件不会触发 PreToolUse，`EndConversation` 也不触发。需要靠 Claude Code 自身的权限规则（如 Read 的 deny 规则）补充。
 - hook 机制本身的绕过漏洞（发现后向 Anthropic 报告）。
@@ -219,7 +224,7 @@ Claude Code
 - **hook 客户端 I/O（所有平台）**：按字节读 stdin、显式按 UTF-8 解码；按字节写 stdout，输出的 JSON 只含 ASCII（`ensure_ascii`，非 ASCII 用 `\u` 转义）；不用 `print` 与文本层；不依赖 `PYTHONIOENCODING`、`PYTHONUTF8` 或系统代码页。最外层捕获所有异常（含 `BaseException`），输出 `ask` 并以 0 退出，绝不以 1 退出。事件类型以 stdin 里的 `hook_event_name` 为准，命令行参数（`pre` / `post` / `prompt`）只作交叉检查；缺参数（较早版本的 Claude Code 可能丢弃 `args`）或两者不一致 → 输出 `ask` 并说明原因；`doctor` 检查 Claude Code 版本。
 - **hook 命令**：`init` 写入解析后的真实可执行文件（当前环境 `Scripts` 目录里的 `boundkeep-hook.exe`），不写 PATH 上的 shim（mise、pyenv-win、uv 的 shim 都多一层间接）。`init` 自检与 `doctor` 按 exec 形式原样启动它，喂入含中文的 UTF-8 样例事件，并在清除 `PYTHON*` 环境变量的条件下再来一遍，校验输出是合法决定。exec 写法的选择（E10 实测）：默认 `python.exe -I -S <独立脚本>`（不经过 shell、忽略 `PYTHON*` 环境变量、比 `.exe` 启动器快约 17 ms），`.exe` 启动器作备选（路径更短，但慢、首次运行要过杀毒软件）。**M0 实测**（`scripts/bench_hook.py`，开发机，每项 60 次，结果文件 `scripts/bench_hook_result.json`）：用**基础解释器**的 `python.exe -I -S hook_client.py`，带常驻进程时 p50 约 41 ms、p95 约 48 ms（空进程约 21 ms）；用虚拟环境的 `python.exe`（uv 的跳板，会再起一个子进程）p50 约 60 ms；`boundkeep-hook.exe` 启动器 p50 约 87 ms；常驻进程一侧处理一个请求约 0.1 ms，开销全在 Python 进程启动与导入（`json` 约 9 ms）。**M1 起 hook 命令的参数里带 `--home <绝对路径>`（子命令仍是最后一个参数）**，客户端用它而不是环境变量定位 `endpoint.json` 与 `installs.json`，防止环境被改而被引到伪造的守护进程；`init` 的自检用一次性的临时 home 替换它。所以默认写**基础解释器**，`init` 拒绝 shim、Microsoft Store 别名与 `.cmd` / `.bat`；主脚本 `hook_client.py` 只有几行（主脚本每次都要重新编译，被导入的模块走字节码缓存），逻辑在 `hook_main.py`。
 - **`ConfigChange` hook**（E12）：`init` 同时注册一个，拦下会引入 `disableAllHooks` 或移除 boundkeep 自身 hook 的 settings 变更（退出码 2；托管策略来源拦不了）。它拦不住"会话开始前文件里就已经有 `disableAllHooks`"，那种情况由 `doctor` 与 SessionStart 时的自检补。M0 的规则（hook 客户端本地判断，不依赖常驻进程，**失败即关闭**）：变更后的文件读不了或不是合法 JSON → 阻断；`disableAllHooks` 取任何不是 `null` / `false` 的值 → 阻断；对 `init` 在安装清单（`~/.boundkeep/installs.json`）里记录过的文件，被删除、boundkeep 的条目被删或指向别处、被加上 `if` 等额外字段、`timeout` 短到来不及应答、PreToolUse 的 matcher 被收窄，都阻断；来源是托管策略（`policy_settings`）时放行（Claude Code 不让 hook 阻断它）。**M0 真实宿主实测**（`scripts/smoke_claude.py`，Claude Code 2.1.292，Windows 11，CLI 引擎，各一次观察）：会话中途有人写入 `disableAllHooks: true`，被拒绝，之后的 PreToolUse 照常触发；会话中途把 `hooks` 整个清空（连 ConfigChange 自己的条目一起删），也被否决，之后的命令仍然经过闸门。VS Code 界面里未测。
-- **IPC（`ipc/`）**：POSIX 与 Windows 两个传输实现同一接口。Windows 服务端用 ctypes 调 `CreateNamedPipeW`：管道名含 `init` 生成的随机令牌（令牌存在用户配置目录）；DACL 只授予当前用户 SID；`PIPE_REJECT_REMOTE_CLIENTS`；首实例带 `FILE_FLAG_FIRST_PIPE_INSTANCE`（创建失败即报错，`doctor` 提示管道名被占用）；预建多个实例。不用 asyncio 的管道服务端（无法指定安全属性）；asyncio 在 Windows 上也没有 Unix 套接字服务、不支持 `loop.add_signal_handler`。客户端：`FileNotFoundError` 表示常驻进程没起，立即降级 `ask`；其他 `OSError` 视为"管道忙"，在总预算内退避重试；总预算从进程启动起算、覆盖读 stdin 与 IPC 全程，由"工作线程 + `join` 超时 + `os._exit`"实现，且小于 settings 里的 `timeout`。
+- **IPC（`ipc/`）**：POSIX 与 Windows 两个传输实现同一接口。Windows 服务端用 ctypes 调 `CreateNamedPipeW`：管道名含 `init` 生成的随机令牌（令牌存在用户配置目录；它只防**其他用户**抢占名称，同一用户能读到）；DACL 只授予当前用户 SID；`PIPE_REJECT_REMOTE_CLIENTS`；首实例带 `FILE_FLAG_FIRST_PIPE_INSTANCE`（创建失败即报错，`doctor` 提示管道名被占用）；预建多个实例，建完之后收紧 DACL：去掉"创建新实例"权限，并加一条 OWNER RIGHTS ACE 只授予 `READ_CONTROL`（提高同一用户的门槛）；工作线程只做 Disconnect/Connect 复用实例。客户端永不输出守护进程回答的 `allow`，除非 hook 命令显式带 `--emit-allow`（见 §7）。不用 asyncio 的管道服务端（无法指定安全属性）；asyncio 在 Windows 上也没有 Unix 套接字服务、不支持 `loop.add_signal_handler`。客户端：`FileNotFoundError` 表示常驻进程没起，立即降级 `ask`；其他 `OSError` 视为"管道忙"，在总预算内退避重试；总预算从进程启动起算、覆盖读 stdin 与 IPC 全程，由"工作线程 + `join` 超时 + `os._exit`"实现，且小于 settings 里的 `timeout`。
 - **路径规范化**分两层，以便跨平台测试（设计原则 10）：
   - **词法层**（纯函数，不碰文件系统；显式使用 `ntpath` / `PureWindowsPath` / `posixpath`，不用当前平台默认的 `os.path`）：展开 `~`、`%VAR%`、`$env:VAR`、`$HOME` 等已知变量（无法解析的变量 → 灰色）；统一分隔符；去掉 `\\?\` 与 `\\.\` 前缀；去掉 NTFS 备用数据流后缀（`:stream`、`::$DATA`）与尾随的点和空格；折叠 `..`；识别驱动器相对路径、UNC 与设备名（`NUL`、`CON`、`COMn` 等，设备名不算项目内）；MSYS 路径（`/c/Users/...`、`/cygdrive/c/...`）与 WSL 的 `/mnt/<盘>/...` 翻译为 Windows 路径；Git Bash 的 `/`、`/usr`、`/tmp` 等无法可靠映射，一律按项目外处理。
   - **文件系统层**（仅本机）：`realpath`，展开符号链接、联接点与存在路径上的 8.3 短名。
@@ -230,7 +235,7 @@ Claude Code
   - Bash（含 Git Bash）：沿用 §7 的 bashlex，按 Bash 语义（反斜杠是转义）解析，不"修复" Windows 路径。
   - PowerShell：优先用 PowerShell 自带的 AST 解析器（`System.Management.Automation.Language.Parser`，只解析不执行），由常驻进程托管一个长驻的辅助进程（`-NoProfile`，请求经 stdin 传入，绝不拼进命令行）。开发机初测：Windows PowerShell 5.1（FullLanguage）下 `Parser::ParseInput` 可用，常见命令能解析出命令名、参数名与字面量参数；动态命令（`& $x`）取不到命令名；5.1 不认识的 `&&` 产生解析错误（应灰色）；单次解析约 0.02 毫秒，但新起一个 `powershell.exe -NoProfile` 要约 1 秒，所以辅助进程必须长驻、在常驻进程启动时预热，未就绪时这次调用按灰色处理，不占用 hook 的时间预算。别名还原用 `AliasInfo.Definition`（总有值）；`ResolvedCommandName` 在模块尚未自动加载时为空，不能依赖；取不到或不唯一一律灰色。退路是自写的保守词法器，只认"单条简单命令 + 字面量参数"，其余灰色 `[待验证]`（M1b）。M1b 完成前，PowerShell 命令一律灰色并带 `exec` 标签。M1b 之后，下列构造仍一律灰色：`Invoke-Expression` / `iex`、`-EncodedCommand`、`& $变量`、反引号拼接、`$(...)` 子表达式、`cmd /c`、`Start-Process`、脚本块、经 `.ps1` 间接执行。5.1 与 7 的语法不同（5.1 没有 `&&`、`||`、三元运算符），解析失败即灰色。
 - **策略**：规则与测试可带 `platform`（§8）；Windows 特有的目标（凭据与浏览器配置目录、PowerShell profile、启动文件夹、`Run` 注册表项、计划任务）放进 `platform: windows` 的规则；覆盖范围逐项记在 `docs/threat-model.md`，没覆盖的明说。
-- **文件与日志**：Windows 默认目录为 `%USERPROFILE%\.boundkeep\`；`init` 读 settings 时容忍 UTF-8 BOM，写入时不带 BOM，并用"写临时文件再 `os.replace`"保证原子；`doctor` 对含 BOM 的 settings 给出警告（PowerShell 5.1 的 `Set-Content -Encoding utf8` 会写入 BOM）；`0600` 在 Windows 上没有意义，`doctor` 检查该目录与管道的 ACL 没有授予其他用户。
+- **文件与日志**：Windows 默认目录为 `%USERPROFILE%\.boundkeep\`；`init` 读 settings 时容忍 UTF-8 BOM，写入时不带 BOM，并用"写临时文件再 `os.replace`"保证原子；`doctor` 对含 BOM 的 settings 在含 boundkeep hook 的层里报 FAIL、在其他层报 WARN（PowerShell 5.1 的 `Set-Content -Encoding utf8` 会写入 BOM）；`installs.json` 除安装记录外还记 `hook_files`（hook 解释器与脚本的 sha256，`doctor` 与守护进程启动时校验）与 `watched`（会运行命令的配置键与外来 hook 的哈希基线，供 ConfigChange 判断改动）；`0600` 在 Windows 上没有意义，`doctor` 检查该目录与管道的 ACL 没有授予其他用户。
 - **控制台输出**：CLI 的文本输出在 Windows 上显式用 UTF-8 并设 `errors="replace"`，避免代码页 936 下打印 `✓` 一类字符时崩溃。
 
 ---
@@ -293,6 +298,12 @@ event(pre) ─> normalize ─> Action
 | 降级（任何失败） | `permissionDecision: ask` + 原因 | 同左 |
 
 `emit_allow` 默认关闭：开启后 boundkeep 会替用户自动批准规则或审计判为安全的动作，能明显减少确认框，但可能比用户原有的权限设置更宽松，必须由用户显式开启，`doctor` 要提示这一点。实测语义（M0a E11）：`allow` 会跳过本该弹出的确认，但压不过用户的 `ask` / `deny` 规则，所以 `emit_allow` 放宽的只是"本来会弹确认"的那部分；`bypassPermissions` 下的行为未测 `[待验证]`。
+
+**客户端不变量（M1+M1b 的 X1 审查 H-2，2026-10-18 批准）**：hook 客户端永不输出 `allow`，除非 hook 命令显式钉入 `--emit-allow`（`init` 按策略的 `defaults.emit_allow` 写入，`doctor` 检查两者一致）；守护进程回答 `allow` 而没有钉入该参数时，客户端按"无决定"处理。`ask` 与 `deny` 始终有效。实测（2026-10-18，Claude Code CLI 引擎，`-p` 模式）：hook 的 `ask` 优先于 settings 里的 `permissions.allow: ["PowerShell(*)"]` 与 `permissions.defaultMode: "bypassPermissions"`；其他模式与宿主未测 `[待验证]`。
+
+**目录目标的读类动作（M1+M1b 的 X1 审查 H-1，2026-10-18 批准）**：`Grep` / 递归读取命令（`grep -r`、`tar`、`zip -r`、`cp -r`、`rsync -a` 等）的目标是目录时，只有在确认其子树不含受保护路径时才可 `allow`：对子树做有界遍历（条目数与时间预算；不按目录名跳过任何目录；不跟随链接），命中策略读保护 glob 的文件按读路径判定；预算耗尽或读不了目录 → 灰色，绝不 `allow`。只列名字的动作（`Glob`、`ls -R`、`Get-ChildItem -Recurse`）不触发遍历。
+
+**预算耗尽不得使已可见的 deny 变弱（M1 不变量，X1 审查 M-1）**：归一化预算（动作数、磁盘查询、时间）耗尽后，触发预算的命令与其后的命令仍做纯词法分类（不展开通配符、不查磁盘、不遍历），deny / ask 规则照常匹配词法路径；结果仍带灰色 `budget:*` 标记，所以不会是 `allow`。
 
 **Action（归一化后的动作）**
 
@@ -551,6 +562,8 @@ if tainted and action 命中 sensitive_tags 且 final == ALLOW:  final = ASK
 | hook 输出非法 JSON 或非 UTF-8 字节（退出 0） | Claude Code 当作"无决定"而放行（实测）。客户端的 stdout 必须总是 `json.dumps` 生成的合法 JSON，且只含 ASCII；不得用 `print` 拼接 |
 | hook 命令超时 | 非阻断（官方默认 600 秒）。客户端必须有自己的总超时预算，小于 settings 里的 `timeout`，并在预算内输出降级决定 |
 | 用户在 settings 里设置了 `disableAllHooks`，或其他让 hook 不运行的情形 | 闸门失效。`doctor` 检测并报警；`protect-guard-config` 规则阻止 agent 自己改 settings。其他情形：托管设置的 `allowManagedHooksOnly`、未接受工作区信任（官方文档，§5.1）、settings 结构有误（如多余的顶层键，#98662）、宿主里 hook 根本不触发（§5.1 线索） |
+| hook 配置层与会话目录不匹配（项目级安装，会话在别的目录里打开） | 那个会话里**没有任何 hook**，Claude Code 也不警告（M1b 手工验收实际遇到，X1 审查 H-3）。`init` 在项目级安装时明确提示"只对在 `<项目路径>` 里打开的会话生效；所有目录请用 `--scope user`"；`doctor` 指出它检查的是哪个目录；SessionStart 心跳（会话启动时向守护进程报到，`doctor` 据此发现"最近没有任何带 hook 的会话"）留给 M2 |
+| settings 被削弱（会运行命令的键、外来 hook、重定向 home 的环境变量等） | `init` 对明确使 hook 失效的（`disableAllHooks`、重定向 home 的 `env`）拒绝，对其余警告；ConfigChange 只阻断有证据的削弱（hook 被删改、`disableAllHooks`、重定向 home 或项目目录的环境变量、与基线不符的会运行命令的键与外来 hook）；`permissions.allow` 与 `bypassPermissions` 只警告，因为实测 hook 的 `ask` 仍然优先。`doctor` 对所有层（用户、项目、本地）做同一组检查 |
 
 ---
 
