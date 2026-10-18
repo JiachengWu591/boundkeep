@@ -14,8 +14,11 @@ globs select, so the normal rule evaluation sees them as read paths of the actio
   matched by the pattern), and nothing below it is visited unless a narrowing filter (a Grep
   ``glob``) is in play; then every selected file below it is reported.
 * **No directory names are skipped** (``node_modules``, ``.git`` ...): a hostile project can create
-  them. Symbolic links and junctions are NOT followed (what ripgrep, ``grep -r``, ``tar`` and
-  ``cp -r`` do by default); ``ScanResult.dir_links`` says one was seen, for tools that may follow.
+  them. The one exception is the caller's ``skip_names=VCS_DIR_NAMES``, for readers that are known
+  not to read the version-control directories (Claude Code's Grep without a ``glob``, ``git grep``
+  and the like); everything else scans them. Symbolic links and junctions are NOT followed (what
+  ripgrep, ``grep -r``, ``tar`` and ``cp -r`` do by default); ``ScanResult.dir_links`` says one
+  was seen, for tools that may follow.
 * **Bounded**: ``ScanBudget`` caps the entries visited and the wall time, per request. Over it, the
   status is ``budget`` and the caller makes the action gray; an unreadable directory is
   ``unreadable``. Never a silent pass.
@@ -43,6 +46,10 @@ SCAN_TIME_BUDGET_S = 0.2  # wall time of all scans of one request
 MAX_SCAN_HITS = 64  # reported entries per scan; the first few already decide the verdict
 _TIME_CHECK_MASK = 63  # the clock is read every 64 entries
 _REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT (symlinks and junctions on Windows)
+
+# The version-control directories Claude Code's Grep tool excludes itself (``--glob '!.git'`` and
+# the like) when the caller gave no ``glob``. ripgrep's own glob is case-sensitive, so is this.
+VCS_DIR_NAMES: frozenset[str] = frozenset({".git", ".svn", ".hg", ".bzr", ".jj", ".sl"})
 
 # Read-protection globs used when no policy was passed to the normalizer (tests, tools). They are
 # the secret-bearing names of the default policy; the daemon passes the loaded policy's own.
@@ -135,6 +142,111 @@ class ProtectedMatcher:
         return any(glob.match(key) for glob in self._globs)
 
 
+class PathScreen:
+    """A cheap, one-sided test: could ANY of these globs select a key? (never a decision)
+
+    Used to leave out of a verdict's work the paths that no deny / ask rule can look at. Every
+    pattern is reduced to ONE anchor, its last whole segment without ``**`` (a literal goes into a
+    set, a wildcard segment into one regex); a key that has no segment equal to or matching an
+    anchor cannot be selected by that pattern, because a pattern's segments are bounded by ``/``
+    and are matched against whole key segments. A pattern without such an anchor (``**``,
+    ``a**b``) makes every key a candidate. So ``candidate`` may say True for a key no glob selects,
+    never False for one a glob selects.
+    """
+
+    __slots__ = ("_always", "_literals", "_regex")
+
+    def __init__(self, patterns: Sequence[str]) -> None:
+        literals: set[str] = set()
+        regexes: list[str] = []
+        always = False
+        for pattern in dict.fromkeys(patterns):
+            try:
+                compile_glob(pattern)
+            except GlobError:
+                continue  # the policy loader refuses these; nothing to match
+            body = pattern
+            while body.endswith("/**"):
+                body = body[:-3]
+            anchor = next(
+                (s for s in reversed(body.casefold().split("/")) if s and "**" not in s), None
+            )
+            if anchor is None:
+                always = True
+            elif not any(c in anchor for c in "*?["):
+                literals.add(anchor)
+            else:
+                try:
+                    regexes.append(fnmatch.translate(anchor.replace("[^", "[!")))
+                except re.error:
+                    always = True
+        self._always = always
+        self._literals = frozenset(literals)
+        self._regex = re.compile("|".join(regexes)) if regexes else None
+
+    def candidate(self, key: str) -> bool:
+        if self._always:
+            return True
+        regex = self._regex
+        for segment in key.casefold().split("/"):
+            if segment in self._literals or (regex is not None and regex.match(segment)):
+                return True
+        return False
+
+
+@dataclass(frozen=True, slots=True)
+class RuleGlob:
+    """One ``path_glob`` of a deny / ask rule, with the other conditions that decide whether a path
+    can reach it: the programs the rule is restricted to (None: any) and its access (None: any)."""
+
+    pattern: str
+    programs: tuple[str, ...] | None = None
+    access: str | None = None
+
+
+class RuleScreens:
+    """``PathScreen`` per (program, access): can a rule's path glob select this path of this action?
+
+    Over-approximates (case-folded program names, every tool): True for a path that no rule would
+    match, never False for one a rule could match. Built once per policy (``rule_screens_for``).
+    """
+
+    __slots__ = ("_by_program", "_cache", "_generic")
+
+    def __init__(self, globs: Sequence[RuleGlob]) -> None:
+        self._generic: list[RuleGlob] = []
+        self._by_program: dict[str, list[RuleGlob]] = {}
+        for glob in dict.fromkeys(globs):
+            if glob.programs is None:
+                self._generic.append(glob)
+            else:
+                for program in glob.programs:
+                    self._by_program.setdefault(program.casefold(), []).append(glob)
+        self._cache: dict[tuple[str | None, str], PathScreen] = {}
+
+    def candidate(self, program: str | None, access: str, key: str) -> bool:
+        """May some rule glob select ``key`` for a command ``program`` that reads / writes it?"""
+        folded = program.casefold() if program else None
+        slot = folded if folded in self._by_program else None
+        screen = self._cache.get((slot, access))
+        if screen is None:
+            pool = self._generic + (self._by_program[slot] if slot is not None else [])
+            screen = PathScreen(
+                [
+                    g.pattern
+                    for g in pool
+                    if g.access is None or access == "unknown" or g.access == access
+                ]
+            )
+            self._cache[(slot, access)] = screen
+        return screen.candidate(key)
+
+
+@functools.lru_cache(maxsize=16)
+def rule_screens_for(globs: tuple[RuleGlob, ...]) -> RuleScreens:
+    return RuleScreens(globs)
+
+
 def _last_segment(pattern: str) -> str | None:
     """The casefolded final path segment of ``pattern`` (without a ``/**`` tail), None when the
     pattern has no usable one (empty, or a ``**`` inside it that may span directories)."""
@@ -197,18 +309,21 @@ def scan(
     matcher: ProtectedMatcher,
     budget: ScanBudget,
     select: Selector | None = None,
+    skip_names: frozenset[str] = frozenset(),
 ) -> ScanResult:
     """The protected entries below the directory ``os_root`` (never raises).
 
     ``prefix_keys``: the canonical keys the root is known by (lexical and resolved forms); an
     entry is tried under each. ``windows``: keys are casefolded. ``select`` narrows WHICH files are
-    read (a Grep ``glob``); None means every file. Status ``absent``: ``os_root`` is not a
-    directory (nothing to read there).
+    read (a Grep ``glob``); None means every file. ``skip_names``: entries (files or directories,
+    at any depth, exact spelling) that the reader does not read at all and that cost nothing;
+    only for readers that are known to skip them (``VCS_DIR_NAMES``). The root itself is never
+    skipped. Status ``absent``: ``os_root`` is not a directory (nothing to read there).
     """
     result = ScanResult()
     started = time.monotonic()
     try:
-        _walk(os_root, prefix_keys, windows, matcher, budget, select, result, started)
+        _walk(os_root, prefix_keys, windows, matcher, budget, select, skip_names, result, started)
     except Exception:  # noqa: BLE001 - a scan that fails is a scan that could not vouch for the tree
         result.status = "unreadable"
     finally:
@@ -223,6 +338,7 @@ def _walk(
     matcher: ProtectedMatcher,
     budget: ScanBudget,
     select: Selector | None,
+    skip_names: frozenset[str],
     result: ScanResult,
     started: float,
 ) -> None:
@@ -248,6 +364,8 @@ def _walk(
         first = False
         with iterator:
             for entry in iterator:
+                if skip_names and entry.name in skip_names:
+                    continue
                 budget.entries += 1
                 if budget.entries > budget.max_entries or (
                     not budget.entries & _TIME_CHECK_MASK

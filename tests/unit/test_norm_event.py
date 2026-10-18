@@ -993,7 +993,7 @@ def test_a_long_cd_chain_is_cut_off_quickly_and_is_gray(world: dict[str, Any]) -
     started = time.perf_counter()
     got = run(world, command)
     assert time.perf_counter() - started < 2.0
-    assert len(got) <= ev.MAX_ACTIONS + ev.MAX_LEXICAL_ACTIONS + 1
+    assert len(got) <= ev.MAX_ACTIONS + ev.MAX_LEXICAL_PATHS + 1  # (no count cap after the budget)
     assert got[-1].gray
     assert "normalize-budget-exceeded" in got[-1].gray_reasons
 
@@ -1016,8 +1016,10 @@ def test_an_expired_time_budget_returns_one_gray_action(world: dict[str, Any]) -
         assert "normalize-budget-exceeded" in got[0].gray_reasons
     # A shell line keeps being classified (lexically) after the budget: one action per command
     # plus the gray marker, which comes last (review M-1).
-    got = run(world, "echo a; echo b", budget_s=0.0)
-    assert [a.program for a in got[:-1]] == ["echo", "echo"]
+    got = run(world, "echo a; cat b", budget_s=0.0)
+    assert [a.program for a in got[:-1]] == ["echo", "cat"]
+    # (two commands that look the same to the rules are kept once in that mode: echo a; echo b)
+    assert [a.program for a in run(world, "echo a; echo b", budget_s=0.0)[:-1]] == ["echo"]
     assert got[-1].gray
     assert "normalize-budget-exceeded" in got[-1].gray_reasons
 

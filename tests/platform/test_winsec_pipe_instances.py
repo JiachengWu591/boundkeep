@@ -151,9 +151,13 @@ def test_the_dacl_lets_the_user_connect_read_and_write_but_not_create_instances(
             )
             assert acl.dacl_present
             assert acl.dacl_protected
+            # the user's entry, plus OWNER RIGHTS limited to READ_CONTROL (round 3, see
+            # test_review3_dacl.py: it takes away the owner's implicit WRITE_DAC)
             assert [(ace.sid, ace.allowed) for ace in acl.aces] == [
-                (winsec.current_user_sid(), True)
+                (winsec.current_user_sid(), True),
+                (winsec.OWNER_RIGHTS_SID, True),
             ]
+            assert acl.aces[1].mask == 0x20000
             mask = acl.aces[0].mask
             assert not mask & winsec.FILE_CREATE_PIPE_INSTANCE, hex(mask)
             assert mask & 0x1  # FILE_READ_DATA

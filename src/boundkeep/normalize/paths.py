@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import dataclasses
 import fnmatch
+import functools
 import os
 import sys
 import time
@@ -279,6 +280,13 @@ def _literal_ctx() -> _Ctx:
     return _Ctx(None, None, None, None, None, "tool", False)
 
 
+@functools.lru_cache(maxsize=512)
+def _literal_norm(text: str) -> NormPath:
+    """The key of a real path value (the working directory, the home): pure, and the same few
+    strings come back for every path of a command line, so the result is remembered."""
+    return _norm(text, _literal_ctx(), literal=True)
+
+
 def _normalize(
     text: str,
     cwd: str | None,
@@ -290,9 +298,8 @@ def _normalize(
 ) -> NormPath:
     if dialect not in ("bash", "powershell", "tool"):
         dialect = "tool"
-    lit = _literal_ctx()
-    cwd_n = _norm(cwd, lit, literal=True) if isinstance(cwd, str) and cwd.strip() else None
-    home_n = _norm(home, lit, literal=True) if isinstance(home, str) and home.strip() else None
+    cwd_n = _literal_norm(cwd) if isinstance(cwd, str) and cwd.strip() else None
+    home_n = _literal_norm(home) if isinstance(home, str) and home.strip() else None
     if cwd_n is not None:
         windows_ctx = cwd_n.flavor == "windows"
     elif home_n is not None:

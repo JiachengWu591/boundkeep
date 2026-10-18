@@ -124,7 +124,10 @@ def cmd_init(args: argparse.Namespace) -> int:
         merged, report = install.merge_hooks(doc.data, groups)
     except (SettingsError, ValueError) as exc:
         return _fail(str(exc))
-    concerns = claude_settings.assess_settings(merged)
+    # Only entries exactly equal to the ones written here are boundkeep's; anything else that
+    # merely looks like ours is foreign (review round 3, C-1).
+    own = [(command.command, list(command.base_args))]
+    concerns = claude_settings.assess_settings(merged, own=own, at_init=True)
     refused = [c for c in concerns if c.refuse]
     if refused:
         console.err(
@@ -166,6 +169,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         console.out(line)
     for line in _settings_warnings(args, settings_path, concerns):
         console.out(line)
+    for reason in claude_settings.lookalike_reasons(merged, own):
+        console.out(f"WARNING      : {settings_path}: {reason}")
     unchanged = (
         report.unchanged and not doc.had_bom
     )  # a BOM is rewritten even if the hooks are fine
@@ -198,7 +203,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         post_matcher=post_matcher,
         installed_at=_utc_now(),
         hook_files=hook_files,
-        watched=tuple(sorted(claude_settings.watched_fingerprints(merged).items())),
+        watched=tuple(sorted(claude_settings.make_baseline(merged, own).items())),
     )
     try:
         return _apply_init(args, home, settings_path, doc, merged, unchanged, record)
@@ -303,17 +308,30 @@ def _apply_init(
             pass  # doctor reports an unusable policy
     fsperm.ensure_private_file(policy_path)
 
-    if not unchanged:
-        backup = settings_io.backup_file(settings_path, paths.backups_dir(home))
-        settings_io.write_atomic(
-            settings_path, settings_io.render_settings(doc, merged), expect_raw=doc.raw
-        )
-        console.out(f"backup       : {backup}" if backup else "backup       : (file did not exist)")
-
+    # The manifest (the new baseline and hook_files) goes in BEFORE the settings file. A running
+    # Claude Code session sends ConfigChange the moment the settings file changes, and the check
+    # compares the new file with the record: written the other way round, init's own change would
+    # meet the OLD record and be blocked (review round 3, 'init' ordering). If the settings write
+    # fails the manifest is put back, so a record never describes a file that was not written.
     manifest_path = paths.manifest_file(home)
-    records = install.upsert_record(install.load_manifest(manifest_path), record)
-    install.save_manifest(manifest_path, records)
+    old_records = install.load_manifest(manifest_path)
+    old_manifest = install.read_manifest_bytes(manifest_path)
+    install.save_manifest(manifest_path, install.upsert_record(old_records, record))
     fsperm.ensure_private_file(manifest_path)
+    if not unchanged:
+        try:
+            backup = settings_io.backup_file(settings_path, paths.backups_dir(home))
+            settings_io.write_atomic(
+                settings_path, settings_io.render_settings(doc, merged), expect_raw=doc.raw
+            )
+        except BaseException:
+            if not install.restore_manifest(manifest_path, old_manifest):
+                console.err(
+                    f"boundkeep: warning: could not put {manifest_path} back as it was; "
+                    "run 'boundkeep init' again"
+                )
+            raise
+        console.out(f"backup       : {backup}" if backup else "backup       : (file did not exist)")
 
     endpoint = read_endpoint(endpoint_path)
     console.out(f"ipc endpoint : {endpoint.address}")

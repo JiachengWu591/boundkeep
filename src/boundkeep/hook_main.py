@@ -303,11 +303,25 @@ def record_problem(settings: Any, record: dict[str, Any]) -> str | None:
             break
         else:
             return f"boundkeep's {event} hook was removed or altered"
+    # Only entries exactly equal to the recorded ones are ours. One that merely has our shape
+    # (same launcher name, a hook_client.py in some 'boundkeep' folder, another --home) is an
+    # imitation or a stale copy: it runs something else next to the real hook (review round 3, C-1).
+    extra = ownhook.lookalike_hooks(settings, [(command, base_args)])
+    if extra:
+        found_event, _matcher, hook = extra[0]
+        shown = str(hook.get("command"))[:60]
+        return (
+            f"an extra hook that looks like boundkeep's was found ({found_event}, command "
+            f"{shown!r}) but it is not the entry 'boundkeep init' installed"
+        )
     return None
 
 
 # Environment variables that, set through the settings ``env`` block, would point the hook client
-# at another boundkeep home (a fake daemon that answers "none") or make Claude Code skip hooks.
+# at another boundkeep home (a fake daemon that answers "none"), name another project root, or make
+# Claude Code skip hooks. Names with no demonstrated effect (PATH, PATHEXT, COMSPEC, NODE_OPTIONS,
+# PYTHON*, ...) are deliberately not here (review round 3, C-3). Kept equal to
+# ``claude_settings.BLOCKING_ENV``; a unit test compares them (this module stays import-light).
 _RISKY_ENV_NAMES = frozenset(
     {
         "USERPROFILE",
@@ -319,6 +333,7 @@ _RISKY_ENV_NAMES = frozenset(
         "CLAUDE_CONFIG_DIR",
         "CLAUDE_CODE_SIMPLE",
         "CLAUDE_CODE_SAFE_MODE",
+        "CLAUDE_PROJECT_DIR",
     }
 )
 
@@ -359,13 +374,19 @@ def config_violation(file_path: str) -> str | None:
     from boundkeep import claude_settings
 
     baseline: dict[str, str] | None = None
+    own: list[tuple[str, list[str]]] = []
     for record in records:
         watched = record.get("watched")
         if isinstance(watched, dict) and all(
             isinstance(k, str) and isinstance(v, str) for k, v in watched.items()
         ):
             baseline = watched
-    reasons = claude_settings.blocking_reasons(settings, baseline)
+        command = record.get("hook_command")
+        base_args = record.get("hook_args")
+        if isinstance(command, str) and isinstance(base_args, list):
+            own.append((command, base_args))
+    # With a record only entries exactly equal to what init wrote are ours; look-alikes are foreign.
+    reasons = claude_settings.blocking_reasons(settings, baseline, own or None)
     if reasons:
         return reasons[0]
     for record in records:

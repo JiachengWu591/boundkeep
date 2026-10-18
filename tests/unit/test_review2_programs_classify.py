@@ -194,8 +194,9 @@ RECURSIVE_TABLE = [
     ("ack", ["x"], True),
     ("diff", ["-r", "a", "b"], True),
     ("diff", ["a", "b"], False),
-    ("ls", ["-R", "~"], True),
-    ("ls", ["--recursive"], True),
+    # round 3 (U-3): ``ls -R`` only lists names, it is not a recursive READ
+    ("ls", ["-R", "~"], False),
+    ("ls", ["--recursive"], False),
     ("ls", ["-la"], False),
     # archivers and copiers
     ("tar", ["cf", "x.tar", "~"], True),
@@ -222,11 +223,11 @@ RECURSIVE_TABLE = [
     ("rsync", ["-r", "d", "/tmp/x"], True),
     ("rsync", ["-avz", "d", "/tmp/x"], True),
     ("rsync", ["a", "/tmp/x"], False),
-    # find walks the tree; it READS it with -exec / -ok / -fprint
+    # find walks the tree; it READS it with -exec / -ok (round 3, U-3: -fprint only writes NAMES)
     ("find", [".", "-type", "f", "-exec", "cat", "{}", "+"], True),
     ("find", [".", "-execdir", "cat", "{}", ";"], True),
     ("find", [".", "-ok", "cat", "{}", ";"], True),
-    ("find", [".", "-fprint", "out"], True),
+    ("find", [".", "-fprint", "out"], False),
     ("find", [".", "-name", "x"], False),
     # git
     ("git", ["grep", "SECRET"], True),
@@ -267,7 +268,6 @@ def test_m9_recursive_defaults_to_false_on_cmdinfo() -> None:
         ("grep", ["-r", "x"], "."),
         ("rg", ["x"], "."),
         ("ag", ["x"], "."),
-        ("ls", ["-R"], "."),
         ("git", ["grep", "x"], "."),
         ("git", ["log", "-p"], "."),
         ("git", ["show"], "."),
@@ -326,9 +326,10 @@ PS_RECURSIVE = [
     ("Compress-Archive", ["-Path", "~", "-DestinationPath", "x.zip"], True),
     ("Compress-Archive", ["~", "x.zip"], True),
     ("Compress-Archive", ["-Path", "a.txt", "-DestinationPath", "x.zip"], True),
-    ("Get-ChildItem", ["-Recurse", "~"], True),
-    ("Get-ChildItem", ["-Recurse"], True),
-    ("Get-ChildItem", ["-Depth", "2", "d"], True),
+    # round 3 (U-3): a listing is not a recursive read
+    ("Get-ChildItem", ["-Recurse", "~"], False),
+    ("Get-ChildItem", ["-Recurse"], False),
+    ("Get-ChildItem", ["-Depth", "2", "d"], False),
     ("Get-ChildItem", ["d"], False),
     ("Get-ChildItem", ["-Force", "d"], False),
     ("Copy-Item", ["-Recurse", "d", "e"], True),

@@ -8,11 +8,16 @@ has no Unix sockets, and there is no way to ask for the first-instance flag. So:
   (``winsec.SecurityDescriptor.private``), ``PIPE_REJECT_REMOTE_CLIENTS``, and the first one with
   ``FILE_FLAG_FIRST_PIPE_INSTANCE`` (creation fails with ``AddressInUse`` when the name is taken);
 * once all instances exist the DACL is tightened to connect/read/write only, WITHOUT the right to
-  create further instances (``FILE_CREATE_PIPE_INSTANCE``): the pool is fixed (a worker recycles
-  its instance with Disconnect/Connect and never creates one), so no later creation is needed,
-  and a same-user process can no longer join the pipe with an instance of its own and answer
-  requests in the daemon's place (review H-2). Clients must therefore open the pipe with specific
-  rights and not ``GENERIC_WRITE`` (which includes ``FILE_APPEND_DATA``): see ``ipc/client.py``;
+  create further instances (``FILE_CREATE_PIPE_INSTANCE``), and with an OWNER RIGHTS entry that
+  leaves the owner only ``READ_CONTROL`` (otherwise the owner's implicit ``WRITE_DAC`` lets the
+  same user undo all of this in three calls: open with WRITE_DAC, re-grant, create an instance).
+  The pool is fixed (a worker recycles its instance with Disconnect/Connect and never creates
+  one) and nothing changes the DACL afterwards, so no later right is needed. This RAISES THE BAR
+  for another process of the same user (review H-2); it is not a boundary: an elevated
+  administrator can still take ownership, and a same-user process that takes the pipe NAME before
+  the daemon starts is not prevented (the daemon then fails with ``AddressInUse``, but clients
+  would meanwhile talk to the squatter). The clients' ``open(addr, "r+b")`` keeps working
+  (see ``ipc/client.py``);
 * a pool of instances is created up front (``instances``, default 8): with a single instance 4
   concurrent clients hit "pipe busy" on 76-85% of first attempts, with 8 on 2-4% (M0a E10);
 * one worker thread per instance, all I/O overlapped with a deadline, so a client that connects
@@ -281,9 +286,11 @@ class NamedPipeServer:
                             f"cannot create pipe instance {index}: {ctypes.WinError(code)}"
                         )
                     handles.append(handle)
-            # The pool is fixed: instances are recycled (Disconnect/Connect), never created again.
-            # So now nobody, the current user included, needs the right to create an instance, and
-            # a same-user process must not be able to add one and answer in our place (review H-2).
+            # The pool is fixed: instances are recycled (Disconnect/Connect), never created again,
+            # and the DACL is never changed again after this. So nobody needs the right to create
+            # an instance or to write the DACL any more, and another process of this user is made
+            # to work for it (review H-2: raises the bar, no boundary against an elevated admin).
+            # Our own handles keep the WRITE_DAC they were opened with; the server never uses it.
             try:
                 for handle in handles:
                     winsec.forbid_new_pipe_instances(handle)

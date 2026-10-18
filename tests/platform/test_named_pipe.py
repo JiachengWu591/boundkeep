@@ -154,7 +154,12 @@ def test_the_pipe_is_private_to_the_current_user() -> None:
             assert acl.aces, "a pipe without ACEs would be unusable"
             for ace in acl.aces:
                 assert ace.allowed
-                assert ace.sid == winsec.current_user_sid()
+                if ace.sid == winsec.OWNER_RIGHTS_SID:
+                    # the OWNER RIGHTS entry only switches off the owner's implicit WRITE_DAC: it
+                    # may grant READ_CONTROL and nothing else
+                    assert ace.mask == 0x20000
+                else:
+                    assert ace.sid == winsec.current_user_sid()
             everyone = {winsec.WORLD_SID, winsec.ANONYMOUS_SID, winsec.AUTHENTICATED_USERS_SID}
             assert not {ace.sid for ace in acl.aces} & everyone
             # the probe borrowed an instance for a moment; the server must be fine afterwards

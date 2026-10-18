@@ -332,14 +332,36 @@ FILE_CREATE_PIPE_INSTANCE = FILE_APPEND_DATA
 PIPE_CLIENT_ACCESS_MASK = 0x0012019B
 
 
+_OWNER_RIGHTS_SDDL_ALIAS = "OW"  # the SDDL alias of OWNER_RIGHTS_SID (S-1-3-4)
+
+
 def pipe_clients_only_sddl() -> str:
     """Protected DACL for a pipe whose server instances all exist already.
 
-    The current user may connect, read and write (and read the DACL), but nobody, the current user
-    included, may create another instance: a same-user process can no longer answer on the daemon's
-    pipe by adding an instance of its own (review H-2). The owner can always change the DACL again.
+    Two entries:
+
+    * the current user may connect, read and write and read the DACL, but may NOT create another
+      instance (no ``FILE_CREATE_PIPE_INSTANCE``), nor write the DACL or the owner;
+    * ``OWNER RIGHTS`` (``OW``, S-1-3-4) gets ``READ_CONTROL`` and nothing else.
+
+    WHY the second entry: the owner of a kernel object implicitly holds ``READ_CONTROL`` and
+    ``WRITE_DAC``, so without it the same user could open the pipe with ``WRITE_DAC``, grant
+    themselves everything again and add an instance (three calls; reproduced in the second review
+    round, review H-2). Windows switches the implicit owner rights off as soon as the DACL contains
+    any OWNER RIGHTS entry, and this one gives back only the right to read the DACL.
+
+    Read this as RAISING THE BAR for another process of the same user, not as a boundary:
+
+    * an elevated administrator can still take ownership (``SeTakeOwnershipPrivilege``) and rewrite
+      the DACL, and SYSTEM/backup privileges bypass the DACL altogether;
+    * it does not help against a same-user process that squats the pipe NAME before the daemon
+      starts (``serve`` then fails loudly with ``AddressInUse``, but clients would talk to the
+      squatter until then).
     """
-    return f"D:P(A;;0x{PIPE_CLIENT_ACCESS_MASK:X};;;{current_user_sid()})"
+    return (
+        f"D:P(A;;0x{PIPE_CLIENT_ACCESS_MASK:X};;;{current_user_sid()})"
+        f"(A;;0x{_READ_CONTROL:X};;;{_OWNER_RIGHTS_SDDL_ALIAS})"
+    )
 
 
 # --- security descriptor -------------------------------------------------------------------
@@ -751,7 +773,16 @@ def forbid_new_pipe_instances(pipe_handle: int) -> None:
 
     ``pipe_handle`` is a server handle that was created with ``WRITE_DAC`` in its open mode. Call
     it only after every instance the server will ever need has been created: afterwards
-    ``CreateNamedPipeW`` for the same name fails with ``ERROR_ACCESS_DENIED`` for everybody.
+    ``CreateNamedPipeW`` for the same name fails with ``ERROR_ACCESS_DENIED`` for everybody, and
+    so does opening the pipe with ``WRITE_DAC`` / ``WRITE_OWNER`` (the DACL has an OWNER RIGHTS
+    entry that takes the owner's implicit ``WRITE_DAC`` away, see ``pipe_clients_only_sddl``).
+    This raises the bar for a same-user process; it is not a boundary against an elevated
+    administrator, and it cannot prevent a process from squatting the pipe name before the daemon.
+
+    The handles the server already holds keep the ``WRITE_DAC`` access they were opened with (a
+    granted access right cannot be withdrawn). That is harmless: it is process-internal, and
+    nothing in the daemon changes the DACL again after this call. The pool is fixed and workers
+    recycle instances with Disconnect/Connect, which need no DACL right at all.
     Raises ``OSError`` on any failure (the old DACL then stays in place).
     """
     api = _api()

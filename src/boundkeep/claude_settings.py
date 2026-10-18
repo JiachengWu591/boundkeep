@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Literal
 
@@ -382,9 +382,11 @@ def find_suspicious_top_level_keys(data: Mapping[str, Any]) -> list[SettingsFind
 # could not run it), so every message says "may weaken", never that the gate is off. The one
 # exception is ``disableAllHooks``, which M0a measured (docs/hook-behavior.md E12).
 
-# ``hook_main._RISKY_ENV_NAMES``: a settings ``env`` block that sets one of these can send the hook
-# client to another boundkeep home (a fake daemon) or make Claude Code skip hooks. A unit test keeps
-# the two in step; ``refuse`` is set for them because the ConfigChange hook blocks them today.
+# ``hook_main._RISKY_ENV_NAMES`` (== ``BLOCKING_ENV``; a unit test keeps them in step): a settings
+# ``env`` block that sets one of these can send the hook client to another boundkeep home (a fake
+# daemon), name another project root, or make Claude Code skip hooks. Only names with that effect
+# block. ``refuse`` is set for the home and hook switches (and BOUNDKEEP_*) because the ConfigChange
+# hook would block every later edit of such a file.
 HOME_REDIRECT_ENV: Final[frozenset[str]] = frozenset(
     {
         "USERPROFILE",
@@ -398,9 +400,14 @@ HOME_REDIRECT_ENV: Final[frozenset[str]] = frozenset(
         "CLAUDE_CODE_SAFE_MODE",
     }
 )
-# Names that change how hooks, or the programs boundkeep reviews, are found and started, or which
-# folder counts as the project (CLAUDE_PROJECT_DIR is the one value the hook client forwards).
-EXTRA_RISKY_ENV: Final[frozenset[str]] = frozenset(
+# CLAUDE_PROJECT_DIR is the one value the hook client forwards: it names the project root.
+BLOCKING_ENV: Final[frozenset[str]] = HOME_REDIRECT_ENV | {"CLAUDE_PROJECT_DIR"}
+BLOCKING_ENV_PREFIXES: Final = ("BOUNDKEEP_",)
+# Names that change how programs are found or started. NOT blocked (review round 3, C-3): the
+# re-review changed each of PATH, PATHEXT, COMSPEC, HOMEDRIVE, ... for the hook client (39
+# mutations: delete, blank, point at nothing) and the client never exited with anything but 0 or 2,
+# so there is no demonstrated attack; blocking them only stops legitimate setups. Noted as warn.
+WARN_ENV: Final[frozenset[str]] = frozenset(
     {
         "PATH",
         "PATHEXT",
@@ -409,13 +416,14 @@ EXTRA_RISKY_ENV: Final[frozenset[str]] = frozenset(
         "NODE_OPTIONS",
         "NODE_PATH",
         "CLAUDE_CODE_GIT_BASH_PATH",
-        "CLAUDE_PROJECT_DIR",
         "LD_PRELOAD",
         "LD_LIBRARY_PATH",
         "DYLD_INSERT_LIBRARIES",
     }
 )
-RISKY_ENV_PREFIXES: Final = ("BOUNDKEEP_", "PYTHON")
+# The hook client runs ``python -I -S`` (PYTHON* is ignored) and PYTHONUTF8 is common on Chinese
+# Windows: info only.
+INFO_ENV_PREFIXES: Final = ("PYTHON",)
 # Not a gate weakening, but they send the conversation or the traffic somewhere else.
 NOTEWORTHY_ENV: Final[frozenset[str]] = frozenset(
     {"ANTHROPIC_BASE_URL", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"}
@@ -436,8 +444,38 @@ EXEC_KEYS: Final = (
     "statusLine",
     "subagentStatusLine",
 )
-# Hook events where ANOTHER hook can change or approve what runs after boundkeep has looked.
+# Settings keys that make Claude Code load code from elsewhere (plugins bring their own hooks,
+# commands and MCP servers; a marketplace is where plugins come from; an MCP server is a program).
+# Watched like EXEC_KEYS: the whole value is fingerprinted.
+PLUGIN_KEYS: Final = (
+    "appendPlugins",
+    "enableAllProjectMcpServers",
+    "enabledMcpjsonServers",
+    "enabledPlugins",
+    "extraKnownMarketplaces",
+    "managedMcpServers",
+    "mcpServers",
+    "pluginConfigs",
+    "prependPlugins",
+)
+WATCHED_KEYS: Final = (*EXEC_KEYS, *PLUGIN_KEYS)
+# Hook events where ANOTHER hook can change or approve what runs after boundkeep has looked: every
+# foreign entry there is watched, whatever its type. In every OTHER event the foreign command (and
+# unknown-typed) hooks are watched: they run programs outside boundkeep's review too (round 3, C-2).
 WATCHED_HOOK_EVENTS: Final = ("PreToolUse", "PermissionRequest")
+_NON_EXEC_HOOK_TYPES: Final = frozenset({"http", "prompt"})
+# ``init`` stores this marker in the baseline it writes. A baseline without it was made by an older
+# boundkeep that only watched EXEC_KEYS and the two events above; labels it never covered are
+# reported but not blocked (run 'boundkeep init' again to record them).
+BASELINE_MARK: Final = "@baseline"
+BASELINE_VERSION: Final = "2"
+_LEGACY_LABELS: Final = frozenset(
+    {*EXEC_KEYS, *(f"hooks.{event}" for event in WATCHED_HOOK_EVENTS)}
+)
+_OBSERVED: Final = (
+    "observed on 2026-10-18 (Claude Code CLI engine, -p mode): the hook's ask still took "
+    "precedence; behaviour in other modes/hosts is untested"
+)
 _BLANKET_TOOLS: Final = frozenset(
     {"bash", "powershell", "write", "edit", "multiedit", "notebookedit"}
 )
@@ -462,6 +500,11 @@ class Concern:
     level: ConcernLevel
     refuse: bool = False
     layer_only: bool = False
+    # "watched" for a command-running key or a foreign hook judged against the init baseline.
+    kind: str = ""
+
+
+OwnIdentities = Sequence[tuple[str, Sequence[str]]]
 
 
 def _fingerprint(value: object) -> str:
@@ -472,10 +515,22 @@ def _fingerprint(value: object) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _foreign_hooks(groups: object) -> list[object]:
-    """The hook entries of one event's group list that are not boundkeep's, with their matcher."""
+def _is_ours(event: str, hook: object, own: OwnIdentities | None) -> bool:
+    """Ours by install record (exact) when ``own`` is given, else by shape (no record)."""
+    if own is None:
+        return ownhook.is_own_hook(hook)
+    return ownhook.is_exact_own(event, hook, own)
+
+
+def _foreign_hooks(event: str, groups: object, own: OwnIdentities | None) -> list[object]:
+    """The hook entries of one event's group list that are not boundkeep's, with their matcher.
+
+    In an event other than ``WATCHED_HOOK_EVENTS`` an entry of a non-command type (``http``,
+    ``prompt``) is not counted: it starts no program.
+    """
     if not isinstance(groups, list):
         return []
+    everything = event in WATCHED_HOOK_EVENTS
     found: list[object] = []
     for group in groups:
         if not isinstance(group, dict):
@@ -485,29 +540,52 @@ def _foreign_hooks(groups: object) -> list[object]:
         if not isinstance(inner, list):
             continue
         matcher = group.get("matcher")
-        found.extend(
-            {"matcher": matcher, "hook": hook} for hook in inner if not ownhook.is_own_hook(hook)
-        )
+        for hook in inner:
+            if _is_ours(event, hook, own):
+                continue
+            if (
+                not everything
+                and isinstance(hook, dict)
+                and hook.get("type") in _NON_EXEC_HOOK_TYPES
+            ):
+                continue
+            found.append({"matcher": matcher, "hook": hook})
     return found
 
 
-def watched_fingerprints(data: Mapping[str, Any]) -> dict[str, str]:
+def watched_fingerprints(
+    data: Mapping[str, Any], own: OwnIdentities | None = None
+) -> dict[str, str]:
     """Label -> sha256 of the command-running keys and foreign hooks present in ``data``.
 
-    ``init`` stores this next to the install record; a later change that adds or alters one of
-    these entries is then recognizable (the ConfigChange event carries no diff).
+    ``own`` are the ``(hook_command, hook_args)`` pairs of the install records for this file: only
+    entries exactly equal to those are boundkeep's, the rest (look-alikes included) are foreign.
+    Without ``own`` the shape decides. Foreign hooks in EVERY event are covered, plus
+    ``EXEC_KEYS`` and ``PLUGIN_KEYS``. ``init`` stores this (see ``make_baseline``) next to the
+    install record; a later change that adds or alters one of these entries is then recognizable
+    (the ConfigChange event carries no diff).
     """
     result: dict[str, str] = {}
-    for key in EXEC_KEYS:
+    for key in WATCHED_KEYS:
         if key in data:
-            result[key] = _fingerprint(data[key])
+            value = data[key]
+            if key in PLUGIN_KEYS and value in ({}, [], None, False):
+                continue  # nothing named: nothing runs
+            result[key] = _fingerprint(value)
     hooks = data.get("hooks")
     if isinstance(hooks, dict):
-        for event in WATCHED_HOOK_EVENTS:
-            foreign = _foreign_hooks(hooks.get(event))
+        for event, groups in hooks.items():
+            if not isinstance(event, str):
+                continue
+            foreign = _foreign_hooks(event, groups, own)
             if foreign:
                 result[f"hooks.{event}"] = _fingerprint(foreign)
     return result
+
+
+def make_baseline(data: Mapping[str, Any], own: OwnIdentities | None = None) -> dict[str, str]:
+    """What ``init`` records: ``watched_fingerprints`` plus the marker of the current coverage."""
+    return {**watched_fingerprints(data, own), BASELINE_MARK: BASELINE_VERSION}
 
 
 def _blanket_rule(rule: object) -> bool:
@@ -537,7 +615,7 @@ def _env_concerns(data: Mapping[str, Any]) -> list[Concern]:
     concerns: list[Concern] = []
     for name in env:
         upper = str(name).upper()
-        if upper.startswith("BOUNDKEEP_") or upper in HOME_REDIRECT_ENV:
+        if upper.startswith(BLOCKING_ENV_PREFIXES) or upper in HOME_REDIRECT_ENV:
             concerns.append(
                 Concern(
                     "env",
@@ -547,13 +625,32 @@ def _env_concerns(data: Mapping[str, Any]) -> list[Concern]:
                     refuse=True,
                 )
             )
-        elif upper in EXTRA_RISKY_ENV or upper.startswith(RISKY_ENV_PREFIXES):
+        elif upper in BLOCKING_ENV:  # CLAUDE_PROJECT_DIR
             concerns.append(
                 Concern(
                     "env",
-                    f"the settings 'env' block sets {name}, which may change how hooks or the "
-                    "programs they review are started or located (may weaken boundkeep)",
+                    f"the settings 'env' block sets {name}, which names the project root the "
+                    "hook client reports to the daemon (may weaken boundkeep)",
                     "block",
+                )
+            )
+        elif upper in WARN_ENV:
+            concerns.append(
+                Concern(
+                    "env",
+                    f"the settings 'env' block sets {name}, which may change which programs get "
+                    "started; no effect on the hook client was found (39 variations measured "
+                    "2026-10-18), so this is noted, not blocked",
+                    "warn",
+                )
+            )
+        elif upper.startswith(INFO_ENV_PREFIXES):
+            concerns.append(
+                Concern(
+                    "env",
+                    f"the settings 'env' block sets {name}; the hook client runs with python -I "
+                    "and ignores it (noted only; it may still change other Python programs)",
+                    "info",
                 )
             )
         elif upper in NOTEWORTHY_ENV:
@@ -577,10 +674,9 @@ def _permission_concerns(data: Mapping[str, Any]) -> list[Concern]:
             concerns.append(
                 Concern(
                     "permissions.defaultMode",
-                    "permissions.defaultMode is bypassPermissions: Claude Code may then run tool "
-                    "calls without asking, and whether a hook's ask still applies in that mode is "
-                    "untested (may weaken boundkeep)",
-                    "block",
+                    "permissions.defaultMode is bypassPermissions, which may let Claude Code run "
+                    f"tool calls without asking; {_OBSERVED} (may weaken boundkeep)",
+                    "warn",
                 )
             )
         elif mode == "auto":
@@ -599,9 +695,9 @@ def _permission_concerns(data: Mapping[str, Any]) -> list[Concern]:
             concerns.append(
                 Concern(
                     "permissions.allow",
-                    f"permissions.allow holds blanket rules ({shown}): every call of those tools "
-                    "that boundkeep leaves undecided runs without asking (may weaken boundkeep)",
-                    "block",
+                    f"permissions.allow holds blanket rules ({shown}), which may let calls of "
+                    f"those tools run without asking; {_OBSERVED} (may weaken boundkeep)",
+                    "warn",
                 )
             )
     skip = data.get("skipDangerousModePermissionPrompt")
@@ -609,38 +705,85 @@ def _permission_concerns(data: Mapping[str, Any]) -> list[Concern]:
         concerns.append(
             Concern(
                 "skipDangerousModePermissionPrompt",
-                "skipDangerousModePermissionPrompt is set: Claude Code may enter bypass mode "
-                "without its warning prompt (may weaken boundkeep)",
-                "block",
+                "skipDangerousModePermissionPrompt is set, which may let Claude Code enter "
+                f"bypass mode without its warning prompt; {_OBSERVED} (may weaken boundkeep)",
+                "warn",
             )
         )
     return concerns
 
 
-def _watched_concerns(data: Mapping[str, Any], baseline: Mapping[str, str] | None) -> list[Concern]:
+_ACCEPT_BASELINE: Final = (
+    "Run 'boundkeep init' to accept the new command-running entries; until then every settings "
+    "change to this file is blocked, because a ConfigChange event carries no diff and a harmless "
+    "edit cannot be told from this one"
+)
+_NO_BASELINE: Final = (
+    "is present; no baseline was recorded for this file ('boundkeep init' never wrote it, or an "
+    "older version did), so a later change cannot be told from what was there and is NOT blocked"
+)
+_OLD_BASELINE: Final = (
+    "is present; the install record's baseline predates this check, so it is not judged against "
+    "it (run 'boundkeep init' again to record it)"
+)
+
+
+def _watched_message(label: str, when: str) -> str:
+    if label.startswith("hooks."):
+        event = label.split(".", 1)[1]
+        if event in WATCHED_HOOK_EVENTS:
+            effect = (
+                "another hook can change or approve what Claude Code runs after boundkeep has "
+                "judged it"
+            )
+        else:
+            effect = "it runs a program on its own, outside boundkeep's review"
+        return f"a {event} hook that is not boundkeep's {when}: {effect} (may weaken boundkeep)"
+    if label in PLUGIN_KEYS:
+        return (
+            f"{label} {when}: it makes Claude Code load plugins, marketplaces or MCP servers, "
+            "which run code outside boundkeep's review (may weaken boundkeep)"
+        )
+    return (
+        f"{label} {when}: it names a command Claude Code runs on its own, which boundkeep "
+        "does not review (may weaken boundkeep)"
+    )
+
+
+_AT_INIT: Final = (
+    "is present and 'boundkeep init' records it as the baseline: a later change to it is blocked "
+    "until 'boundkeep init' is run again"
+)
+
+
+def _watched_concerns(
+    data: Mapping[str, Any],
+    baseline: Mapping[str, str] | None,
+    own: OwnIdentities | None = None,
+    *,
+    at_init: bool = False,
+) -> list[Concern]:
     concerns: list[Concern] = []
-    for label, fingerprint in watched_fingerprints(data).items():
+    current = baseline is not None and baseline.get(BASELINE_MARK) == BASELINE_VERSION
+    for label, fingerprint in watched_fingerprints(data, own).items():
         is_hook = label.startswith("hooks.")
-        if baseline is not None:
+        level: ConcernLevel
+        if at_init:
+            message = _watched_message(label, _AT_INIT)
+            level = "warn" if is_hook else "info"
+        elif baseline is not None and (current or label in _LEGACY_LABELS):
             if baseline.get(label) == fingerprint:
                 continue  # as it was when 'boundkeep init' recorded the file
             when = "was added or changed since 'boundkeep init' recorded this file"
-            level: ConcernLevel = "block"
-        else:
-            when = "is present (no baseline was recorded for this file)"
+            message = _watched_message(label, when) + ". " + _ACCEPT_BASELINE
+            level = "block"
+        elif baseline is not None:
+            message = _watched_message(label, _OLD_BASELINE)
             level = "warn" if is_hook else "info"
-        if is_hook:
-            event = label.split(".", 1)[1]
-            message = (
-                f"a {event} hook that is not boundkeep's {when}: another hook can change or "
-                "approve what Claude Code runs after boundkeep has judged it (may weaken boundkeep)"
-            )
         else:
-            message = (
-                f"{label} {when}: it names a command Claude Code runs on its own, which boundkeep "
-                "does not review (may weaken boundkeep)"
-            )
-        concerns.append(Concern(label, message, level))
+            message = _watched_message(label, _NO_BASELINE)
+            level = "warn" if is_hook else "info"
+        concerns.append(Concern(label, message, level, kind="watched"))
     return concerns
 
 
@@ -683,13 +826,22 @@ def _key_concerns(data: Mapping[str, Any]) -> list[Concern]:
 
 
 def assess_settings(
-    data: Mapping[str, Any], *, baseline: Mapping[str, str] | None = None
+    data: Mapping[str, Any],
+    *,
+    baseline: Mapping[str, str] | None = None,
+    own: OwnIdentities | None = None,
+    at_init: bool = False,
 ) -> list[Concern]:
     """Everything in ``data`` that may weaken the gate, strongest findings first within a group.
 
-    ``baseline`` is the ``watched_fingerprints`` that ``init`` recorded for this file, or None when
-    there is none (an old record, or a file init never touched): command-running keys and foreign
-    hooks then only warn; with a baseline, one that was added or changed is a ``block``.
+    ``at_init``: ``boundkeep init`` is about to record ``data`` as the baseline, so what is present
+    is worded as "recorded now" instead of being compared with a baseline.
+
+    ``baseline`` is what ``init`` recorded for this file (``make_baseline``), or None when there is
+    none (an old record, or a file init never touched: user-level settings during a project-level
+    install, ``settings.local.json``): command-running keys and foreign hooks then only warn, since
+    trust on first use is impossible (the event carries no diff). With a baseline, one that was
+    added or changed is a ``block``. ``own``: see ``watched_fingerprints``.
     """
     concerns: list[Concern] = []
     if ownhook.disables_hooks(data):
@@ -703,22 +855,46 @@ def assess_settings(
         )
     concerns += _env_concerns(data)
     concerns += _permission_concerns(data)
-    concerns += _watched_concerns(data, baseline)
+    concerns += _watched_concerns(data, baseline, own, at_init=at_init)
     concerns += _key_concerns(data)
     return concerns
 
 
+def lookalike_reasons(data: Mapping[str, Any], own: OwnIdentities | None) -> list[str]:
+    """One message per entry that looks like boundkeep's but is not what ``init`` recorded.
+
+    Empty without ``own`` (no install record for the file: the shape is all there is, and a file
+    that has no record is not ours to block).
+    """
+    reasons: list[str] = []
+    for event, _matcher, hook in ownhook.lookalike_hooks(data, own or []):
+        command = str(hook.get("command"))
+        shown = command if len(command) <= 60 else command[:57] + "..."
+        reasons.append(
+            f"an extra hook that looks like boundkeep's ({event}, command {shown!r}) is not the "
+            "entry 'boundkeep init' installed, so it runs something else next to boundkeep; "
+            "remove it, or run 'boundkeep init' to replace our entries"
+        )
+    return reasons
+
+
 def blocking_reasons(
-    data: Mapping[str, Any], baseline: Mapping[str, str] | None = None
+    data: Mapping[str, Any],
+    baseline: Mapping[str, str] | None = None,
+    own: OwnIdentities | None = None,
 ) -> list[str]:
     """What the ConfigChange hook should refuse ``data`` for (messages; empty when it is fine).
 
     Findings that only matter to a file holding boundkeep's hooks (misspelled keys and event names)
     count only when ``data`` has such hooks, so an unrelated user file is not blocked for them.
+    ``own`` (the ``(hook_command, hook_args)`` pairs of the file's install records) makes an entry
+    count as boundkeep's only when it equals one exactly; an extra entry that merely looks like ours
+    is then a block (``lookalike_reasons``).
     """
     has_own = any(True for _ in ownhook.own_hooks_in(data))
-    return [
+    reasons = [
         c.message
-        for c in assess_settings(data, baseline=baseline)
+        for c in assess_settings(data, baseline=baseline, own=own)
         if c.level == "block" and (has_own or not c.layer_only)
     ]
+    return [*lookalike_reasons(data, own), *reasons]  # the sharper message first

@@ -809,7 +809,8 @@ _reg(
             flags="recursive all almost-all",
         ),
         cwd_default=frozenset(),
-        recursive=_fs("-R --recursive"),
+        # ``ls -R`` only LISTS names (no file content): the directory operand is still a path
+        # for the normal rules, but the subtree is not scanned for protected names (U-3).
     ),
 )
 _reg(
@@ -1004,6 +1005,8 @@ _reg(
         opts=_opts(short="S=x b=x o=w", long="suffix=x output=w"),
         access="unknown",
         flip_read=_fs("-c --stdout --to-stdout -l --list -t --test"),
+        # ``gzip -r DIR`` / ``zstd -r DIR`` compress every file below DIR (content is read)
+        recursive=_fs("-r --recursive"),
     ),
 )
 _reg("zcat bzcat xzcat zstdcat lz4cat zless zmore", Spec())
@@ -1555,9 +1558,10 @@ def _h_find(a: _Acc, args: Sequence[Word]) -> None:
             a.flags.append(t)
             if t == "-delete":
                 delete = True
-            if t in _FIND_EXEC or t in _FIND_WRITE_PRIMARIES:
-                a.recursive = True  # runs a program on / lists every file of the whole subtree
             if t in _FIND_EXEC:
+                # runs a program on every file of the whole subtree; a plain ``find`` (also with
+                # -print / -fprint / -ls) only lists NAMES and is not scanned (U-3)
+                a.recursive = True
                 a.exec_hint = True
                 a.gray.append(f"find-{t[1:]}")
                 while i < n and args[i].text not in (";", "+", "\\;"):
@@ -1689,6 +1693,50 @@ def _h_tar(a: _Acc, args: Sequence[Word]) -> None:
                     Word(joined, chdirs[-1].expands or w.expands, chdirs[-1].glob or w.glob),
                     "read",
                 )
+
+
+_PAX_OPTS = _opts(short="b=x f=x o=x p=x s=x x=x T=x E=x")
+
+
+def _h_pax(a: _Acc, args: Sequence[Word]) -> None:
+    """``pax -w [-f ARCHIVE] FILE...`` (create), ``pax -r [-f ARCHIVE]`` (extract), ``pax -rw``.
+
+    The write mode archives every file below its directory operands (content read); with no
+    operand it reads the names from stdin (gray). The read mode extracts members named by
+    patterns: not knowable, like tar. ``-rw SRC... DIR`` copies the sources into DIR.
+    """
+    sc = _scan(args, _PAX_OPTS)
+    a.flags.extend(sc.flags)
+    a.note_dynamic(sc)
+    seen = set(sc.flags)
+    writing = "-w" in seen
+    reading = "-r" in seen
+    archives = [w for opt, _, w in sc.values if opt == "-f"]
+    for opt, role, w in sc.values:
+        if opt != "-f":
+            _apply(a, opt, role, w)
+    pos = list(sc.pos)
+    if writing and reading:
+        a.gray.append("directory-write")
+        for w in pos[:-1]:
+            a.path(w, "read")
+        a.recursive = len(pos) > 1
+        for w in pos[-1:]:
+            a.path(w, "write")
+    elif writing:
+        for w in archives:
+            a.path(w, "write")
+        for w in pos:
+            a.path(w, "read")
+        a.recursive = bool(pos)
+        if not pos:
+            a.gray.append("pax-names-from-stdin")
+    else:
+        for w in archives:
+            a.path(w, "read")
+        if reading:
+            a.path(Word("."), "write")
+            _extract_members(a, [Word(".")], pos, renamed="-s" in seen, absolute=False)
 
 
 _UNZIP_OPTS = _opts(short="d=w x=x P=x O=x I=x Z=x")
@@ -2290,7 +2338,7 @@ def _h_rsync(a: _Acc, args: Sequence[Word]) -> None:
     src_access: Access = (
         "unknown" if seen & _fs("--remove-source-files --remove-sent-files") else "read"
     )
-    if seen & _fs("-a -r --archive --recursive"):
+    if seen & _fs("-a -r --archive --recursive") and "--list-only" not in seen:
         a.recursive = True  # directory sources are copied with everything below them
     pos = sc.pos
     for idx, w in enumerate(pos):
@@ -3265,6 +3313,8 @@ def _h_docker(a: _Acc, args: Sequence[Word]) -> None:
                 a.path(w, "read")
     elif sub == "cp":
         in_container = [_container_path(w.text) for w in pos[:2]]
+        if pos and in_container[0] is None:
+            a.recursive = True  # ``docker cp DIR ctr:/x`` copies everything below DIR into it
         for idx, w in enumerate(pos[:2]):
             if in_container[idx] is not None:
                 continue
@@ -3691,6 +3741,9 @@ def _dispatch(name: str) -> _DispatchFn | None:
         "nawk": _h_awk,
         "find": _h_find,
         "tar": _h_tar,
+        "bsdtar": _h_tar,
+        "gtar": _h_tar,
+        "pax": _h_pax,
         "unzip": _h_unzip,
         "zip": _h_zip,
         "boundkeep": _h_boundkeep,

@@ -548,13 +548,17 @@ def test_disable_all_hooks_is_blocked_even_without_a_manifest(
         ({"env": {"NODE_OPTIONS": "--require x"}}, "NODE_OPTIONS"),
     ],
 )
-def test_settings_that_may_weaken_the_gate_are_blocked(
+def test_settings_without_a_demonstrated_attack_are_warned_about_not_blocked(
     settings_file: Callable[..., Path], extra: dict[str, Any], needle: str
 ) -> None:
-    # M-6 of the X1 review: the ConfigChange hook must apply claude_settings.blocking_reasons
+    # Review round 3 (C-2 / C-3), changed by design from M-6 of round 1: on 2026-10-18 the hook's
+    # ask still won over permissions.allow and defaultMode bypassPermissions (claude -p), and
+    # none of the PATH-like variables made the hook client exit other than 0 or 2. They are a
+    # doctor/init warning, no longer a ConfigChange block.
+    assert needle
     data = _intact_settings()
     data.update(extra)
-    _blocked(_config(settings_file(data)), needle)
+    assert _config(settings_file(data)).exit_code == 0
 
 
 @pytest.mark.parametrize("value", [False, None])

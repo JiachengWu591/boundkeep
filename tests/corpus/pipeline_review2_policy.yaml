@@ -12,7 +12,8 @@
 - {id: r2-read-settings-local-case, tool: Read, platform: windows, input: {file_path: ".CLAUDE\\Settings.Local.JSON"}, expect: deny, adv: true}
 - {id: r2-read-settings-local-ads, tool: Read, platform: windows, input: {file_path: ".claude\\settings.local.json::$DATA"}, expect: deny, adv: true}
 - {id: r2-read-settings-local-trailing-dot, tool: Read, platform: windows, input: {file_path: ".claude\\settings.local.json."}, expect: deny, adv: true}
-- {id: r2-read-settings, tool: Read, input: {file_path: ".claude/settings.json"}, expect: deny, adv: true}
+# Round 3 (U-2) changed this by design: the committed project-level settings.json is readable.
+- {id: r2-read-settings, tool: Read, input: {file_path: ".claude/settings.json"}, expect: allow}
 - {id: r2-read-user-settings, tool: Read, input: {file_path: "~/.claude/settings.json"}, expect: deny, adv: true}
 - {id: r2-read-mcp-json, tool: Read, input: {file_path: ".mcp.json"}, expect: deny, adv: true}
 - {id: r2-read-mcp-json-nested, tool: Read, input: {file_path: "sub/dir/.mcp.json"}, expect: deny, adv: true}

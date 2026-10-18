@@ -1,0 +1,47 @@
+# End-to-end corpus for the policy part of the X1 re-review round 3 (U-2; default policy, both fake
+# machines; same format as pipeline.yaml). U-2: `init` writes the project-level .claude/settings.json
+# (normally committed to the repository), so read-protecting it denied every directory Grep, Glob
+# **/* and recursive read in a protected project. Only the files that hold credentials are
+# read-protected now: ~/.claude/settings.json, ~/.claude/settings.local.json and the project's
+# .claude/settings.local.json (plus .mcp.json). WRITES to every settings file stay denied.
+
+# ---- the committed project-level settings.json: readable ---------------------------------------
+- {id: r3-read-project-settings, tool: Read, input: {file_path: ".claude/settings.json"}, expect: allow}
+- {id: r3-read-project-settings-abs-posix, tool: Read, platform: posix, input: {file_path: "/home/testuser/proj/.claude/settings.json"}, expect: allow}
+- {id: r3-read-project-settings-win, tool: Read, platform: windows, input: {file_path: ".claude\\settings.json"}, expect: allow}
+- {id: r3-read-project-settings-abs-win, tool: Read, platform: windows, input: {file_path: "C:\\Users\\testuser\\proj\\.claude\\settings.json"}, expect: allow}
+- {id: r3-grep-project-settings, tool: Grep, input: {pattern: "hooks", path: ".claude/settings.json"}, expect: allow}
+- {id: r3-read-settings-backup, tool: Read, input: {file_path: ".claude/settings.json.bak"}, expect: allow}
+
+# ---- the files that hold credentials: still denied for reading --------------------------------
+- {id: r3-read-project-settings-local, tool: Read, input: {file_path: ".claude/settings.local.json"}, expect: deny, adv: true}
+- {id: r3-read-project-settings-local-win, tool: Read, platform: windows, input: {file_path: ".claude\\Settings.Local.JSON"}, expect: deny, adv: true}
+- {id: r3-grep-project-settings-local, tool: Grep, input: {pattern: "token", path: ".claude/settings.local.json"}, expect: deny, adv: true}
+- {id: r3-read-user-settings, tool: Read, input: {file_path: "~/.claude/settings.json"}, expect: deny, adv: true}
+- {id: r3-read-user-settings-local, tool: Read, input: {file_path: "~/.claude/settings.local.json"}, expect: deny, adv: true}
+- {id: r3-grep-user-settings, tool: Grep, input: {pattern: "token", path: "~/.claude/settings.json"}, expect: deny, adv: true}
+- {id: r3-read-user-settings-abs-posix, tool: Read, platform: posix, input: {file_path: "/home/testuser/.claude/settings.json"}, expect: deny, adv: true}
+- {id: r3-read-user-settings-abs-win, tool: Read, platform: windows, input: {file_path: "C:\\Users\\testuser\\.claude\\settings.json"}, expect: deny, adv: true}
+- {id: r3-read-user-settings-case-win, tool: Read, platform: windows, input: {file_path: "C:\\Users\\testuser\\.CLAUDE\\Settings.JSON"}, expect: deny, adv: true}
+- {id: r3-bash-cat-user-settings, tool: Bash, input: {command: "cat ~/.claude/settings.json"}, expect: deny, adv: true}
+- {id: r3-bash-cat-user-settings-local, tool: Bash, input: {command: "cat ~/.claude/settings.local.json"}, expect: deny, adv: true}
+- {id: r3-bash-cat-project-settings-local, tool: Bash, input: {command: "cat .claude/settings.local.json"}, expect: deny, adv: true}
+- {id: r3-ps-gc-user-settings, tool: PowerShell, platform: windows, input: {command: "Get-Content $env:USERPROFILE\\.claude\\settings.json"}, expect: deny, adv: true}
+- {id: r3-ps-gc-project-settings-local, tool: PowerShell, platform: windows, input: {command: "Get-Content .claude\\settings.local.json"}, expect: deny, adv: true}
+- {id: r3-wsl-user-settings, tool: Bash, input: {command: "cat /mnt/c/Users/someone/.claude/settings.json"}, expect: deny, adv: true}
+- {id: r3-wsl-user-settings-local, tool: Bash, input: {command: "cat /mnt/c/Users/someone/.claude/settings.local.json"}, expect: deny, adv: true}
+- {id: r3-read-mcp-json, tool: Read, input: {file_path: ".mcp.json"}, expect: deny, adv: true}
+
+# ---- writes to every settings file stay denied -------------------------------------------------
+- {id: r3-write-project-settings, tool: Write, input: {file_path: ".claude/settings.json", content: "{}"}, expect: deny, adv: true}
+- {id: r3-edit-project-settings, tool: Edit, input: {file_path: ".claude/settings.json", old_string: a, new_string: b}, expect: deny, adv: true}
+- {id: r3-write-project-settings-local, tool: Write, input: {file_path: ".claude/settings.local.json", content: "{}"}, expect: deny, adv: true}
+- {id: r3-write-user-settings, tool: Write, input: {file_path: "~/.claude/settings.json", content: "{}"}, expect: deny, adv: true}
+- {id: r3-write-user-settings-local, tool: Write, input: {file_path: "~/.claude/settings.local.json", content: "{}"}, expect: deny, adv: true}
+- {id: r3-write-project-settings-win, tool: Write, platform: windows, input: {file_path: ".claude\\settings.json", content: "{}"}, expect: deny, adv: true}
+- {id: r3-bash-redirect-project-settings, tool: Bash, input: {command: "echo '{}' > .claude/settings.json"}, expect: deny, adv: true}
+- {id: r3-bash-sed-project-settings, tool: Bash, input: {command: "sed -i 's/a/b/' .claude/settings.json"}, expect: deny, adv: true}
+- {id: r3-bash-cp-over-project-settings, tool: Bash, input: {command: "cp /tmp/x .claude/settings.json"}, expect: deny, adv: true}
+- {id: r3-ps-setcontent-project-settings, tool: PowerShell, platform: windows, input: {command: "Set-Content .claude\\settings.json '{}'"}, expect: deny, adv: true}
+- {id: r3-ps-redirect-project-settings, tool: PowerShell, platform: windows, input: {command: "'{}' > .claude\\settings.json"}, expect: deny, adv: true}
+- {id: r3-write-settings-backup-is-not-it, tool: Write, input: {file_path: ".claude/settings.json.bak", content: "x"}, expect: gray}

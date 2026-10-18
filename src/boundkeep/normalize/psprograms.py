@@ -1403,7 +1403,8 @@ def _h_copytool(ctx: _Ctx, base: str, args: Sequence[Word]) -> None:
         elif sw[1]:
             _generic_arg(a, replace(w, text=sw[1]))
     moves = bool(set(a.flags) & {"/move", "/mov"})
-    if base == "robocopy" or set(a.flags) & {"/s", "/e"}:
+    list_only = bool(set(a.flags) & {"/l"})  # /L only lists the names it would copy
+    if (base == "robocopy" or set(a.flags) & {"/s", "/e"}) and not list_only:
         a.recursive = True  # the source directory is copied with (robocopy: all of) its contents
     if not plain:
         return
@@ -1424,11 +1425,14 @@ def _h_copytool(ctx: _Ctx, base: str, args: Sequence[Word]) -> None:
 
 
 # cmdlet (lower case) -> the switch that makes it walk the subtree (None: always)
+# (only cmdlets that READ content: ``Get-ChildItem -Recurse`` merely lists names and is not here;
+# what it pipes into ``Get-Content`` / ``Select-String`` is a different command, and the pipeline
+# stage that takes arguments from the pipeline is gray by itself.)
 _RECURSIVE_CMDLETS: dict[str, frozenset[str] | None] = {
-    "get-childitem": frozenset({"-recurse", "-depth"}),  # -Depth implies -Recurse
     "copy-item": frozenset({"-recurse"}),
     "compress-archive": None,
 }
+_LISTING_RECURSE = frozenset({"-recurse", "-depth"})  # Get-ChildItem; -Depth implies -Recurse
 
 
 def _cmdlet(
@@ -1454,8 +1458,12 @@ def _cmdlet(
         switches is None or switches & {f.lower() for f in bound.flags}
     ):
         ctx.a.recursive = True  # reads the whole subtree of its directory operands
-        if not ctx.a.paths and key == "get-childitem":
-            ctx.a.path(Word("."), "read")  # no path: the current directory
+    if (
+        key == "get-childitem"
+        and not ctx.a.paths
+        and _LISTING_RECURSE & {f.lower() for f in bound.flags}
+    ):
+        ctx.a.path(Word("."), "read")  # no path: the current directory (listing: not scanned)
     reasons = exec_reasons_of(spec.name, args)
     if reasons:
         ctx.a.exec_hint = True

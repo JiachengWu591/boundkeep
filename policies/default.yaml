@@ -356,14 +356,26 @@ rules:
     # server settings and their tokens), session transcripts (everything every earlier session
     # read, ran and printed, secrets included), prompt history, shell snapshots and the IDE lock
     # files (they hold a connection token). An agent has no task that needs them.
-    # The settings files (settings.json, settings.local.json: the "env" block is where API keys
-    # and gateway tokens end up) and .mcp.json (MCP servers' "headers" and "env") are credential
-    # carriers inside the project too, where an allow rule would otherwise let them be read.
+    # The settings files that hold credentials (the "env" block is where API keys and gateway
+    # tokens end up) are read-protected: the user-level ~/.claude/settings.json and
+    # ~/.claude/settings.local.json, and the project's .claude/settings.local.json (git-ignored by
+    # Claude Code, where local tokens go). .mcp.json (MCP servers' "headers" and "env") is a
+    # credential carrier inside the project too, where an allow rule would otherwise let it be read.
+    # The project-level .claude/settings.json is deliberately NOT here: it is committed to the
+    # repository and `boundkeep init` writes its hook entries there, so read-protecting it would
+    # deny every directory Grep, `Glob **/*`, `grep -rn .` and `ls -R` in a protected project.
+    # WRITES to every settings file stay denied (protect-guard-config), so this changes what the
+    # agent may look at, not what it may change. The **/users/*/ forms catch a Windows home seen
+    # from WSL.
     match:
       path_glob:
         - "**/.claude/.credentials.json"
         - "**/.claude.json"
-        - "**/.claude/settings*.json"
+        - "~/.claude/settings.json"
+        - "~/.claude/settings.local.json"
+        - "**/users/*/.claude/settings.json"
+        - "**/users/*/.claude/settings.local.json"
+        - "**/.claude/settings.local.json"
         - "**/.mcp.json"
         - "**/.claude/projects/**"
         - "**/.claude/history.jsonl"
@@ -953,7 +965,18 @@ tests:
   - { tool: PowerShell, platform: [windows], input: { command: "Get-Date" }, expect: gray }
   # Credential carriers inside the project (read): the project-internal allow rule must not win.
   - { tool: Read, input: { file_path: ".claude/settings.local.json" }, expect: deny }
-  - { tool: Read, input: { file_path: ".claude/settings.json" }, expect: deny }
+  # The project-level settings.json is committed to the repository (init writes the hook entries
+  # into it), so reading and grepping it is allowed; the user-level files and settings.local.json
+  # carry the tokens. Writes to every settings file stay denied.
+  - { tool: Read, input: { file_path: ".claude/settings.json" }, expect: allow }
+  - { tool: Grep, input: { pattern: "hooks", path: ".claude/settings.json" }, expect: allow }
+  - { tool: Read, input: { file_path: "~/.claude/settings.json" }, expect: deny }
+  - { tool: Read, input: { file_path: "~/.claude/settings.local.json" }, expect: deny }
+  - { tool: Grep, input: { pattern: "token", path: "~/.claude/settings.json" }, expect: deny }
+  - { tool: Write, input: { file_path: ".claude/settings.json", content: "{}" }, expect: deny }
+  - { tool: Edit, input: { file_path: ".claude/settings.json", old_string: a, new_string: b }, expect: deny }
+  - { tool: Write, input: { file_path: "~/.claude/settings.json", content: "{}" }, expect: deny }
+  - { tool: Read, input: { file_path: ".claude/settings.json.bak" }, expect: allow }
   - { tool: Read, input: { file_path: ".mcp.json" }, expect: deny }
   - { tool: Read, input: { file_path: ".git/credentials" }, expect: deny }
   - { tool: Read, input: { file_path: "prod.env" }, expect: deny }

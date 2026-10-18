@@ -136,20 +136,25 @@ def test_a_grep_type_narrows_only_for_the_types_it_knows(w: World) -> None:
 
 
 def test_glob_tool_on_a_tree(w: World) -> None:
+    # round 3 (U-3): the Glob tool only lists names, it reads no content: no look inside the tree
     w.file("certs/a.pem")
     w.file(".env")
-    assert w.verdict("Glob", {"pattern": "**/*.pem"}) == "deny"
-    assert w.verdict("Glob", {"pattern": "*"}) == "deny"
+    assert w.verdict("Glob", {"pattern": "**/*.pem"}) == "allow"
+    assert w.verdict("Glob", {"pattern": "*"}) == "allow"
     assert w.verdict("Glob", {"pattern": "**/*.py"}) == "allow"
     assert w.verdict("Glob", {"pattern": "*.py", "path": str(w.proj)}) == "allow"
     assert w.verdict("Glob", {"pattern": "src/*.py"}) == "allow"
 
 
 def test_no_directory_name_is_skipped(w: World) -> None:
-    for name in ("node_modules", ".git", "dist", "__pycache__", "vendor"):
+    # (round 3, U-1: the version-control directories are the one exception, and only for a Grep
+    # without a `glob`: Claude Code excludes them itself; see test_review3_core_search.py)
+    for name in ("node_modules", "dist", "__pycache__", "vendor"):
         w.file(f"{name}/pkg/.env")
         assert grep(w, path=str(w.proj)) == "deny", name
         (w.proj / name / "pkg" / ".env").unlink()
+    w.file(".git/pkg/.env")
+    assert grep(w, path=str(w.proj), glob="*") == "deny"  # a user glob re-includes .git
     assert grep(w, path=str(w.proj)) == "allow"
 
 

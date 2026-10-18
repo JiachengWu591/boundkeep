@@ -68,7 +68,20 @@ def test_no_secret_read_lists_the_project_internal_secret_names(name: str) -> No
 @pytest.mark.parametrize("name", NAMES)
 def test_credential_carriers_are_in_the_deny_rules(name: str) -> None:
     assert {"**/.git/credentials", "**/id_rsa*"} <= _globs(name, "no-credential-store-read")
-    assert {"**/.claude/settings*.json", "**/.mcp.json"} <= _globs(name, "no-agent-state-read")
+    # Review round 3 (U-2): only the credential-bearing settings files are read-protected; the
+    # committed project-level .claude/settings.json (where `init` writes the hooks) is not.
+    state = _globs(name, "no-agent-state-read")
+    assert {
+        "**/.claude/settings.local.json",
+        "~/.claude/settings.json",
+        "~/.claude/settings.local.json",
+        "**/.mcp.json",
+    } <= state
+    assert not {"**/.claude/settings*.json", "**/.claude/settings.json"} & state
+    # Writes to every settings file stay protected.
+    assert {"**/.claude/settings*.json", "~/.claude/settings*.json"} <= _globs(
+        name, "protect-guard-config"
+    )
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -216,6 +229,13 @@ def test_deny_wins_over_ask_in_the_reason(name: str) -> None:
         ("Bash", {"command": "pipx uninstall boundkeep"}, "ask", "deny"),
         ("Bash", {"command": "pip list"}, "gray", "gray"),
         ("Read", {"file_path": ".claude/settings.local.json"}, "deny", "deny"),
+        # U-2: the committed project-level settings.json is readable; the user-level files are not.
+        ("Read", {"file_path": ".claude/settings.json"}, "allow", "allow"),
+        ("Grep", {"pattern": "hooks", "path": ".claude/settings.json"}, "allow", "allow"),
+        ("Read", {"file_path": "~/.claude/settings.json"}, "deny", "deny"),
+        ("Read", {"file_path": "~/.claude/settings.local.json"}, "deny", "deny"),
+        ("Write", {"file_path": ".claude/settings.json", "content": "{}"}, "deny", "deny"),
+        ("Write", {"file_path": "~/.claude/settings.json", "content": "{}"}, "deny", "deny"),
         ("Read", {"file_path": ".mcp.json"}, "deny", "deny"),
         ("Read", {"file_path": "prod.env"}, "deny", "deny"),
         ("Read", {"file_path": "docker-compose.yml"}, "allow", "allow"),

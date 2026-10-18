@@ -46,8 +46,10 @@ def test_the_home_redirect_env_names_match_the_config_change_hook() -> None:
     theirs = getattr(hook_main, "_RISKY_ENV_NAMES", None)
     if theirs is None:
         pytest.skip("hook_main no longer keeps its own list")
-    assert theirs <= claude_settings.HOME_REDIRECT_ENV | claude_settings.EXTRA_RISKY_ENV
-    assert theirs | claude_settings.EXTRA_RISKY_ENV >= claude_settings.HOME_REDIRECT_ENV
+    # Round 3 (C-3): the blocking set is exactly the home / project-root / hook-switch names.
+    assert theirs == claude_settings.BLOCKING_ENV
+    assert theirs >= claude_settings.HOME_REDIRECT_ENV
+    assert not (theirs & claude_settings.WARN_ENV)
 
 
 @pytest.mark.parametrize(
@@ -67,9 +69,11 @@ def test_the_home_redirect_env_names_match_the_config_change_hook() -> None:
         "bash(*)",
     ],
 )
-def test_blanket_allow_rules_block(rule: str) -> None:
+def test_blanket_allow_rules_warn(rule: str) -> None:
+    # Round 3: measured 2026-10-18 (claude -p): the hook's ask still won over permissions.allow
+    # ["PowerShell(*)"], so this is a warning, no longer a ConfigChange block.
     assert _levels({"permissions": {"allow": ["Read(src/**)", rule]}}) == {
-        "permissions.allow": "block"
+        "permissions.allow": "warn"
     }
 
 
@@ -94,8 +98,8 @@ def test_a_malformed_permissions_block_is_ignored_not_crashed_on() -> None:
 
 
 @pytest.mark.parametrize("mode", ["bypassPermissions", "BYPASSPERMISSIONS"])
-def test_bypass_permissions_blocks(mode: str) -> None:
-    assert _levels({"permissions": {"defaultMode": mode}}) == {"permissions.defaultMode": "block"}
+def test_bypass_permissions_warns(mode: str) -> None:
+    assert _levels({"permissions": {"defaultMode": mode}}) == {"permissions.defaultMode": "warn"}
 
 
 def test_other_default_modes_do_not_block() -> None:
@@ -105,12 +109,17 @@ def test_other_default_modes_do_not_block() -> None:
 
 
 @pytest.mark.parametrize("value", [True, "true", 1, "false", {"a": 1}])
-def test_skip_dangerous_prompt_blocks_unless_false_or_null(value: object) -> None:
+def test_skip_dangerous_prompt_warns_unless_false_or_null(value: object) -> None:
     assert _levels({"skipDangerousModePermissionPrompt": value}) == {
-        "skipDangerousModePermissionPrompt": "block"
+        "skipDangerousModePermissionPrompt": "warn"
     }
     assert _levels({"skipDangerousModePermissionPrompt": False}) == {}
     assert _levels({"skipDangerousModePermissionPrompt": None}) == {}
+
+
+@pytest.mark.parametrize("name", ["CLAUDE_PROJECT_DIR", "claude_project_dir"])
+def test_the_project_root_env_name_blocks(name: str) -> None:
+    assert _levels({"env": {name: "x"}}) == {"env": "block"}
 
 
 @pytest.mark.parametrize(
@@ -123,14 +132,16 @@ def test_skip_dangerous_prompt_blocks_unless_false_or_null(value: object) -> Non
         "NODE_OPTIONS",
         "CLAUDE_CODE_GIT_BASH_PATH",
         "PSModulePath",
-        "PYTHONPATH",
-        "PYTHONHOME",
-        "pythonstartup",
-        "CLAUDE_PROJECT_DIR",
     ],
 )
-def test_risky_env_names_block(name: str) -> None:
-    assert _levels({"env": {name: "x"}}) == {"env": "block"}
+def test_path_like_env_names_only_warn(name: str) -> None:
+    # Round 3 (C-3): no demonstrated attack (39 mutations never made the hook client exit non-0/2).
+    assert _levels({"env": {name: "x"}}) == {"env": "warn"}
+
+
+@pytest.mark.parametrize("name", ["PYTHONPATH", "PYTHONHOME", "pythonstartup", "PYTHONUTF8"])
+def test_python_env_names_are_info_only(name: str) -> None:
+    assert _levels({"env": {name: "x"}}) == {"env": "info"}
 
 
 @pytest.mark.parametrize("name", ["BOUNDKEEP_HOME", "boundkeep_x", "USERPROFILE", "HOME"])
@@ -141,8 +152,10 @@ def test_home_redirecting_env_names_are_refused_by_init(name: str) -> None:
 
 
 def test_env_that_only_blocks_is_not_refused() -> None:
-    [concern] = assess_settings({"env": {"PATH": "x"}})
-    assert concern.refuse is False
+    [concern] = assess_settings({"env": {"CLAUDE_PROJECT_DIR": "x"}})
+    assert (concern.level, concern.refuse) == ("block", False)
+    [warned] = assess_settings({"env": {"PATH": "x"}})
+    assert (warned.level, warned.refuse) == ("warn", False)
 
 
 def test_harmless_and_noteworthy_env() -> None:
@@ -206,15 +219,18 @@ def test_a_foreign_pre_tool_use_hook_warns_then_is_a_baseline() -> None:
     assert _levels(two, base) == {"hooks.PreToolUse": "block"}
 
 
-def test_our_own_entries_and_other_events_are_not_foreign_hooks() -> None:
+def test_our_own_entries_are_not_foreign_hooks_but_other_events_now_are() -> None:
+    ours = {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [OUR_PRE]}]}}
+    assert _levels(ours) == {}
+    # Round 3 (C-2): foreign command hooks in every event are watched (they were ignored before).
     data = {
         "hooks": {
-            "PreToolUse": [{"matcher": "*", "hooks": [OUR_PRE]}],
+            **ours["hooks"],
             "PostToolUse": [{"hooks": [FOREIGN]}],
             "SessionStart": [{"hooks": [FOREIGN]}],
         }
     }
-    assert _levels(data) == {}
+    assert _levels(data) == {"hooks.PostToolUse": "warn", "hooks.SessionStart": "warn"}
 
 
 def test_a_permission_request_hook_is_watched_like_a_pre_tool_use_hook() -> None:
@@ -251,7 +267,7 @@ def test_an_unknown_top_level_key_warns_and_a_known_one_does_not() -> None:
 def test_blocking_reasons_lists_every_blocker() -> None:
     data = {
         "disableAllHooks": True,
-        "permissions": {"allow": ["Bash(*)"]},
+        "env": {"CLAUDE_PROJECT_DIR": "x"},
         "statusLine": {"command": "x"},
     }
     reasons = blocking_reasons(data, {})
@@ -361,11 +377,13 @@ def test_the_launcher_style_hashes_this_installations_scripts(tmp_path: Path) ->
     launcher = tmp_path / "boundkeep-hook.exe"
     launcher.write_bytes(b"launcher")
     files = install.hook_files_for(install.HookCommand(str(launcher), ()))
-    assert [Path(f.path).name for f in files] == [
+    # Round 3: the first three are as before, the modules hook_main imports follow.
+    assert [Path(f.path).name for f in files][:3] == [
         "boundkeep-hook.exe",
         "hook_client.py",
         "hook_main.py",
     ]
+    assert "protocol.py" in {Path(f.path).name for f in files}
 
 
 def _record(**overrides: Any) -> install.InstallRecord:

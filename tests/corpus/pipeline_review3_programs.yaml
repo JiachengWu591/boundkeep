@@ -1,0 +1,45 @@
+# End-to-end corpus for the second re-review, U-3 (normalize/{programs,psprograms}.py): commands
+# that only LIST names are not recursive reads, commands that read CONTENT are (this corpus runs on
+# the policy's fake home, so the subtree scan itself is covered by the unit tests on a real tmp
+# tree: tests/unit/test_review3_programs_listing.py). Same format as pipeline.yaml.
+
+# ---- pure listers: no rule matches (gray -> ask), never allow -------------------------------------
+- {id: r3-ls-R, tool: Bash, input: {command: "ls -R"}, expect: gray, adv: true}
+- {id: r3-ls-laR, tool: Bash, input: {command: "ls -laR"}, expect: gray, adv: true}
+- {id: r3-ls-R-project-dir, tool: Bash, input: {command: "ls -R src"}, expect: gray, adv: true}
+- {id: r3-tree-a, tool: Bash, input: {command: "tree -a"}, expect: gray, adv: true}
+- {id: r3-du-a, tool: Bash, input: {command: "du -a"}, expect: gray, adv: true}
+- {id: r3-find-plain, tool: Bash, input: {command: "find . -type f"}, expect: gray, adv: true}
+- {id: r3-find-fprint, tool: Bash, input: {command: "find . -fprint out.txt"}, expect: gray, adv: true}
+- {id: r3-ps-gci-recurse, tool: PowerShell, platform: windows, input: {command: "Get-ChildItem -Recurse"}, expect: gray, adv: true}
+- {id: r3-ps-dir-recurse, tool: PowerShell, platform: windows, input: {command: "dir -Recurse"}, expect: gray, adv: true}
+
+# ---- the listed directory itself is still judged by the path rules ---------------------------------
+- {id: r3-ls-R-ssh, tool: Bash, input: {command: "ls -R ~/.ssh"}, expect: deny, adv: true}
+- {id: r3-tree-ssh, tool: Bash, input: {command: "tree -a ~/.ssh"}, expect: deny, adv: true}
+- {id: r3-find-ssh, tool: Bash, input: {command: "find ~/.ssh -type f"}, expect: deny, adv: true}
+- {id: r3-du-aws, tool: Bash, input: {command: "du -a ~/.aws"}, expect: deny, adv: true}
+- {id: r3-ps-gci-recurse-ssh, tool: PowerShell, platform: windows, input: {command: 'Get-ChildItem -Recurse ~\.ssh'}, expect: deny, adv: true}
+
+# ---- a lister piped into a reader is the reader's command: gray, never allow ------------------------
+- {id: r3-ls-R-xargs-cat, tool: Bash, input: {command: "ls -R | xargs cat"}, expect: gray, adv: true}
+- {id: r3-find-xargs-cat, tool: Bash, input: {command: "find . | xargs cat"}, expect: gray, adv: true}
+- {id: r3-ps-gci-get-content, tool: PowerShell, platform: windows, input: {command: "Get-ChildItem -Recurse | Get-Content"}, expect: gray, adv: true}
+- {id: r3-ps-gci-select-string, tool: PowerShell, platform: windows, input: {command: "Get-ChildItem -Recurse | Select-String x"}, expect: gray, adv: true}
+
+# ---- content readers of a credential directory: deny ------------------------------------------------
+- {id: r3-gzip-r-ssh, tool: Bash, input: {command: "gzip -r ~/.ssh"}, expect: deny, adv: true}
+- {id: r3-zstd-r-ssh, tool: Bash, input: {command: "zstd -r ~/.ssh"}, expect: deny, adv: true}
+- {id: r3-bsdtar-ssh, tool: Bash, input: {command: "bsdtar cf x.tar ~/.ssh"}, expect: deny, adv: true}
+- {id: r3-gtar-aws, tool: Bash, input: {command: "gtar czf x.tgz ~/.aws"}, expect: deny, adv: true}
+- {id: r3-pax-w-ssh, tool: Bash, input: {command: "pax -w -f x.tar ~/.ssh"}, expect: deny, adv: true}
+- {id: r3-pax-rw-ssh, tool: Bash, input: {command: "pax -rw ~/.ssh /tmp/x"}, expect: deny, adv: true}
+- {id: r3-docker-cp-ssh, tool: Bash, input: {command: "docker cp ~/.ssh ctr:/x"}, expect: deny, adv: true}
+- {id: r3-ps-bsdtar-ssh, tool: PowerShell, platform: windows, input: {command: 'bsdtar cf x.tar ~\.ssh'}, expect: deny, adv: true}
+- {id: r3-find-exec-ssh, tool: Bash, input: {command: "find ~/.ssh -exec cat {} +"}, expect: deny, adv: true}
+
+# ---- ordinary operands stay undecided ---------------------------------------------------------------
+- {id: r3-gzip-r-src, tool: Bash, input: {command: "gzip -r src"}, expect: gray, adv: true}
+- {id: r3-bsdtar-src, tool: Bash, input: {command: "bsdtar cf x.tar src"}, expect: gray, adv: true}
+- {id: r3-pax-w-src, tool: Bash, input: {command: "pax -w src"}, expect: gray, adv: true}
+- {id: r3-docker-cp-src, tool: Bash, input: {command: "docker cp src ctr:/x"}, expect: gray, adv: true}

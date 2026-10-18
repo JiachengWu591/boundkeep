@@ -23,6 +23,7 @@ from boundkeep import protocol
 from boundkeep.normalize import paths as norm_paths
 from boundkeep.normalize.event import HARMLESS_TOOLS, normalize_event
 from boundkeep.normalize.model import Action, Platform
+from boundkeep.normalize.subtree import RuleGlob
 from boundkeep.policy import Policy, Verdict, evaluate
 from boundkeep.policy.glob import MAX_PATTERN_LENGTH
 from boundkeep.policy.schema import Rule, escape_glob_literal
@@ -335,6 +336,26 @@ def protected_read_globs(policy: Policy) -> tuple[str, ...]:
     return tuple(out)
 
 
+def rule_path_globs(policy: Policy) -> tuple[RuleGlob, ...]:
+    """Every path glob of a deny or ask rule (write rules included), with the programs and the
+    access of its rule.
+
+    The normalizer uses them, once its budget has run out, to leave out of the verdict's work the
+    paths inside the project that no such rule can select (``cat f1 f2 ... f9000``): an allow rule
+    never decides there, the line already carries a gray budget marker. Rules are taken whatever
+    their ``tool`` filter says (a missing path is a bypass, an extra one costs nothing).
+    """
+    out: dict[RuleGlob, None] = {}
+    for rule in policy.rules:
+        match = rule.match
+        if rule.action == "allow" or match.path_glob is None:
+            continue
+        programs = tuple(match.program) if match.program is not None else None
+        for pattern in match.path_glob:
+            out[RuleGlob(pattern, programs, match.access)] = None
+    return tuple(out)
+
+
 def review(
     payload: Mapping[str, Any],
     policy: Policy,
@@ -360,6 +381,7 @@ def review(
             env=env,
             home=home,
             protected_globs=protected_read_globs(policy) if scan_disk else (),
+            rule_globs=rule_path_globs(policy),
         )
     )
     verdict = evaluate(policy, actions, platform=platform)

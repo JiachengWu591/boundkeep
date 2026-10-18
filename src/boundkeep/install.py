@@ -16,6 +16,7 @@ Invariants the callers rely on:
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import copy
 import hashlib
@@ -650,6 +651,28 @@ def _record_to_json(r: InstallRecord) -> dict[str, Any]:
     return item
 
 
+def read_manifest_bytes(path: str) -> bytes | None:
+    """The manifest's bytes, or None when it does not exist (to put it back after a failure)."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read()
+    except FileNotFoundError:
+        return None
+
+
+def restore_manifest(path: str, old: bytes | None) -> bool:
+    """Put the manifest back as ``read_manifest_bytes`` saw it; False when that did not work."""
+    try:
+        if old is None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path)
+        else:
+            write_atomic(path, old)
+    except (OSError, SettingsError):
+        return False
+    return True
+
+
 def _same_settings(a: str, b: str) -> bool:
     if _path_key(a) == _path_key(b):
         return True
@@ -725,14 +748,78 @@ def file_sha256(path: str) -> str:
     return digest.hexdigest()
 
 
-def hook_files_for(command: HookCommand) -> tuple[HookFile, ...]:
-    """The files to hash for ``command``: its executable, ``hook_client.py`` and ``hook_main.py``.
+_PACKAGE: Final = "boundkeep"
 
-    The two scripts are the ones in the command's own arguments when it names ``hook_client.py``
-    (python style), else the ones of this installation (launcher style). Raises ``OSError`` when a
-    file cannot be read: ``init`` must not record a file it never saw.
+
+def _imported_modules(source: str) -> set[str]:
+    """Dotted names of the ``boundkeep`` modules that ``source`` imports, lazy imports included.
+
+    ``from boundkeep import a, b`` yields ``boundkeep.a`` and ``boundkeep.b`` (a name that is not a
+    module, such as ``__version__``, is dropped later when no such file exists). Imports under
+    ``if TYPE_CHECKING`` are harmless to include: they are standard library in the client path.
     """
-    script = next(
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return set()
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(a.name for a in node.names if a.name.split(".")[0] == _PACKAGE)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            if node.module.split(".")[0] != _PACKAGE:
+                continue
+            found.add(node.module)
+            found.update(f"{node.module}.{a.name}" for a in node.names if a.name != "*")
+    return found
+
+
+def _module_file(package_dir: str, dotted: str) -> str | None:
+    """The source file of ``boundkeep.x.y`` inside ``package_dir`` (the ``boundkeep`` folder)."""
+    parts = dotted.split(".")[1:]
+    if not parts:
+        return os.path.join(package_dir, "__init__.py")
+    base = os.path.join(package_dir, *parts)
+    for candidate in (base + ".py", os.path.join(base, "__init__.py")):
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def runtime_module_files(package_dir: str) -> list[str]:
+    """Every file of the ``boundkeep`` package that ``hook_main.py`` in ``package_dir`` can load.
+
+    Computed from the imports themselves (``ast``, so a lazy import inside a function counts, as
+    ``claude_settings`` does for ConfigChange), following ``boundkeep.*`` imports transitively and
+    adding the ``__init__.py`` of every package on the way. Sorted for a stable record; the files
+    named by ``hook_client.py`` and ``hook_main.py`` themselves are included. A module that cannot
+    be read or parsed contributes only itself.
+    """
+    start = os.path.join(package_dir, "hook_main.py")
+    seen: dict[str, str] = {}  # normalized key -> the path as spelled under package_dir
+    queue = [start]
+    while queue:
+        path = queue.pop()
+        key = os.path.normcase(os.path.abspath(path))
+        if key in seen:
+            continue
+        seen[key] = path
+        try:
+            with open(path, encoding="utf-8") as handle:
+                source = handle.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for dotted in sorted(_imported_modules(source)):
+            parts = dotted.split(".")
+            for depth in range(1, len(parts) + 1):  # the package __init__ files come along
+                target = _module_file(package_dir, ".".join(parts[:depth]))
+                if target is not None:
+                    queue.append(target)
+    return sorted(seen.values())
+
+
+def _script_in(command: HookCommand) -> str | None:
+    return next(
         (
             arg
             for arg in command.base_args
@@ -740,16 +827,55 @@ def hook_files_for(command: HookCommand) -> tuple[HookFile, ...]:
         ),
         None,
     )
+
+
+def hook_files_for(command: HookCommand) -> tuple[HookFile, ...]:
+    """The files to hash for ``command``: its executable, ``hook_client.py``, ``hook_main.py`` and
+    every other module of the package the hook client imports while it runs (``paths``,
+    ``protocol``, ``ownhook``, ``claude_settings``, ``ipc.client``, ``ipc.endpoint`` ...; see
+    ``runtime_module_files``).
+
+    The package is the one holding the command's own ``hook_client.py`` argument (python style),
+    else this installation's (launcher style). Raises ``OSError`` when a file cannot be read:
+    ``init`` must not record a file it never saw.
+    """
+    script = _script_in(command)
     package_dir = os.path.dirname(script or os.path.abspath(__file__))
     wanted = [
         command.command,
         script or os.path.join(package_dir, ownhook.HOOK_SCRIPT_NAME),
         os.path.join(package_dir, "hook_main.py"),
+        *runtime_module_files(package_dir),
     ]
     files: list[HookFile] = []
-    for path in dict.fromkeys(wanted):
-        files.append(HookFile(path, file_sha256(path)))
+    seen: set[str] = set()
+    for path in wanted:
+        key = os.path.normcase(os.path.abspath(path))
+        if key not in seen:
+            seen.add(key)
+            files.append(HookFile(path, file_sha256(path)))
     return tuple(files)
+
+
+def unrecorded_runtime_files(record: InstallRecord) -> list[str]:
+    """Modules the hook client loads that this record's ``hook_files`` do not cover.
+
+    A record made before the module list was extended covers only the interpreter, the two scripts:
+    its remaining modules are not verified until ``boundkeep init`` runs again. ``[]`` for a record
+    without any hashes (that case has its own message) or when the package cannot be found.
+    """
+    if not record.hook_files:
+        return []
+    script = _script_in(HookCommand(record.hook_command, tuple(record.hook_args)))
+    package_dir = os.path.dirname(script or os.path.abspath(__file__))
+    if not os.path.isfile(os.path.join(package_dir, "hook_main.py")):
+        return []  # that package is not here to read (another machine, or removed): nothing to say
+    recorded = {os.path.normcase(os.path.abspath(f.path)) for f in record.hook_files}
+    return [
+        path
+        for path in runtime_module_files(package_dir)
+        if os.path.normcase(os.path.abspath(path)) not in recorded
+    ]
 
 
 def hook_file_problems(files: Sequence[HookFile]) -> list[str]:
@@ -777,6 +903,7 @@ def integrity_report(records: Sequence[InstallRecord]) -> list[str]:
     problems: list[str] = []
     seen: set[tuple[str, str]] = set()
     unhashed = 0
+    partial = 0
     for record in records:
         if not record.hook_files:
             unhashed += 1
@@ -784,6 +911,13 @@ def integrity_report(records: Sequence[InstallRecord]) -> list[str]:
         fresh = [f for f in record.hook_files if (f.path, f.sha256) not in seen]
         seen.update((f.path, f.sha256) for f in fresh)
         problems += hook_file_problems(fresh)
+        partial += bool(unrecorded_runtime_files(record))
+    if partial:
+        problems.append(
+            f"{partial} install record(s) hash only the interpreter and the two hook scripts "
+            "(made by an older boundkeep): the other modules the hook client loads cannot be "
+            "verified; run 'boundkeep init' again"
+        )
     if unhashed:
         problems.append(
             f"{unhashed} install record(s) have no file hashes (made by an older boundkeep): "

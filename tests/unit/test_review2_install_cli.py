@@ -328,8 +328,15 @@ def test_m4_init_records_the_interpreter_and_both_hook_scripts(machine: Machine)
     doc = json.loads((machine.home / "installs.json").read_text(encoding="utf-8"))
     files = doc["installs"][0]["hook_files"]
     names = sorted(Path(f["path"]).name.lower() for f in files)
-    assert names == sorted(
-        ["hook_client.py", "hook_main.py", Path(doc["installs"][0]["hook_command"]).name.lower()]
+    # Round 3: not only these three any more; the modules hook_main imports are recorded too.
+    expected = [
+        "hook_client.py",
+        "hook_main.py",
+        Path(doc["installs"][0]["hook_command"]).name.lower(),
+    ]
+    assert all(name in names for name in expected)
+    assert {"protocol.py", "paths.py", "ownhook.py", "claude_settings.py", "client.py"} <= set(
+        names
     )
     assert all(len(f["sha256"]) == 64 for f in files)
 

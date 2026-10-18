@@ -198,14 +198,14 @@ def test_a_time_budget_of_zero_keeps_every_command(win_policy: Policy) -> None:
     assert decide(WIN, win_policy, "Bash", sh(command), budget_s=0.0) == "deny"
 
 
-def test_the_lexical_pass_is_bounded_and_the_marker_stays(
+def test_the_lexical_pass_has_no_count_cap_and_the_marker_stays(
     win_policy: Policy, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # (round 3: the cap of 1024 further actions is gone; every distinct command is classified)
     monkeypatch.setattr(ev, "MAX_ACTIONS", 2)
-    monkeypatch.setattr(ev, "MAX_LEXICAL_ACTIONS", 3)
-    command = "; ".join(f"echo {i}" for i in range(20))
+    command = "; ".join(f"cat f{i}" for i in range(20))
     actions = norm(WIN, "Bash", sh(command))
-    assert len(actions) == 2 + 3 + 1
+    assert len(actions) == 2 + 18 + 1
     assert actions[-1].gray
     assert evaluate(win_policy, actions, platform="windows").decision == "gray"
 

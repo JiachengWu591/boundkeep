@@ -288,9 +288,29 @@ def _check_pipe_acl(endpoint: Endpoint) -> list[Check]:
         me = winsec.current_user_sid()
     except OSError as exc:
         return [Check("pipe-acl", WARN, f"could not read the pipe's ACL ({exc})")]
+    return _judge_pipe_acl(acl, me)
+
+
+# OWNER RIGHTS (S-1-3-4) with exactly READ_CONTROL is the second entry of our own pipe DACL: it
+# stops the owner from implicitly holding WRITE_DAC (review round 2, DACL). Any other mask would
+# grant more than that and is reported like a foreign principal.
+_READ_CONTROL_ONLY = 0x00020000
+
+
+def _judge_pipe_acl(acl: Any, me: str) -> list[Check]:
+    from boundkeep.ipc import winsec
+
     if not acl.dacl_present:
         return [Check("pipe-acl", FAIL, "the pipe has no DACL: every user can connect")]
-    others = sorted({a.sid for a in acl.aces if a.allowed and a.sid != me})
+    others = sorted(
+        {
+            a.sid
+            for a in acl.aces
+            if a.allowed
+            and a.sid != me
+            and not (a.sid == winsec.OWNER_RIGHTS_SID and a.mask == _READ_CONTROL_ONLY)
+        }
+    )
     if others:
         return [
             Check(
@@ -327,11 +347,16 @@ def _concern_fix(concern: claude_settings.Concern) -> str:
         return "remove the disableAllHooks entry"
     if concern.key == "env":
         return "remove that env entry"
-    watched = {f"hooks.{event}" for event in claude_settings.WATCHED_HOOK_EVENTS}
-    if concern.key in claude_settings.EXEC_KEYS or concern.key in watched:
+    if concern.kind == "watched":
+        if concern.level == "block":
+            return (
+                "if you made this change, run 'boundkeep init' to accept the new command-running "
+                "entries as the new baseline (until then the ConfigChange hook blocks every "
+                "settings change to this file); otherwise remove it"
+            )
         return (
-            "if you made this change, run 'boundkeep init' to record it as the new baseline; "
-            "otherwise remove it"
+            "review it; 'boundkeep init' records the file as it is now, after which a later "
+            "change to it is blocked"
         )
     if concern.key.startswith("hooks."):
         return "fix the event name (Claude Code event names are case-sensitive)"
@@ -348,15 +373,20 @@ def _concern_checks(
 ) -> list[Check]:
     """Everything in this layer that may weaken the gate: every layer, not only ours (M-6)."""
     baseline = dict(record.watched) if record is not None and record.watched is not None else None
+    own = [(record.hook_command, record.hook_args)] if record is not None else None
     checks: list[Check] = []
-    for concern in claude_settings.assess_settings(data, baseline=baseline):
+    for concern in claude_settings.assess_settings(data, baseline=baseline, own=own):
         level = concern.level
         if concern.layer_only and not has_own and level == "block":
             level = "warn"  # a file without our hooks: its key typos cannot break our entries
         status = _LEVEL_STATUS[level]
         fix = _concern_fix(concern) if status in (FAIL, WARN) else ""
         checks.append(Check(name, status, f"{layer.path}: {concern.message}", fix))
-    if record is not None and record.watched is None and claude_settings.watched_fingerprints(data):
+    if (
+        record is not None
+        and record.watched is None
+        and claude_settings.watched_fingerprints(data, own)
+    ):
         checks.append(
             Check(
                 name,
@@ -386,6 +416,27 @@ def check_record_integrity(name: str, path: str, record: install.InstallRecord) 
     if problems:
         return [
             Check(name, FAIL, f"{path}: {problem}", install.INTEGRITY_FIX) for problem in problems
+        ]
+    uncovered = install.unrecorded_runtime_files(record)
+    if uncovered:
+
+        def short(p: str) -> str:
+            base = os.path.basename(p)
+            return (
+                f"{os.path.basename(os.path.dirname(p))}/{base}" if base == "__init__.py" else base
+            )
+
+        shown = ", ".join(short(p) for p in uncovered[:10])
+        more = f" and {len(uncovered) - 10} more" if len(uncovered) > 10 else ""
+        return [
+            Check(
+                name,
+                WARN,
+                f"{path}: the record hashes only {len(record.hook_files)} files (made by an "
+                f"older boundkeep); {len(uncovered)} other modules the hook client loads are not "
+                f"verified ({shown}{more})",
+                "run 'boundkeep init' again",
+            )
         ]
     return [
         Check(

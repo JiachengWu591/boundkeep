@@ -1739,11 +1739,22 @@ DEFAULT_POSIX_CASES = [
         id="user-guard-config-write",
     ),
     pytest.param(
-        # Review round 2 (M-11): the settings files carry tokens in their "env" block, so the
-        # project-internal allow rule no longer wins for reads (writes stay denied).
+        # Review round 2 (M-11) denied this read; round 3 (U-2) reverts it by design: the
+        # project-level settings.json is committed and `init` writes the hooks into it, so denying
+        # reads broke every directory Grep. Writes stay denied (above).
         A(("/home/dev/proj/.claude/settings.json", "read", True), tool="Read"),
+        "allow",
+        id="project-settings-read-is-allowed",
+    ),
+    pytest.param(
+        A(("/home/dev/proj/.claude/settings.local.json", "read", True), tool="Read"),
         "deny",
-        id="guard-config-read-is-denied",
+        id="project-local-settings-read-is-denied",
+    ),
+    pytest.param(
+        A(("/home/dev/.claude/settings.json", "read", False), tool="Read"),
+        "deny",
+        id="user-settings-read-is-denied",
     ),
     pytest.param(
         A(("/home/dev/proj/.claude/settings.json.bak", "read", True), tool="Read"),

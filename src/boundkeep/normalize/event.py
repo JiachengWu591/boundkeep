@@ -16,13 +16,16 @@ What this layer adds on top of the pieces:
 * arguments that arrive **at run time** (``xargs``, ``find -exec``): a synthetic uncertain path;
 * lines that **write a file and then execute it**, or reassign ``HOME``/``PWD``/``OLDPWD``: gray;
 * a **work budget** (time, action count, disk lookups): over it, the rest of the line is classified
-  lexically only (no glob expansion, no disk) and one gray Action ``normalize-budget-exceeded`` is
-  added, so a deny that the words alone show never turns into a gray. ``normalize_event`` runs on
-  the daemon's event loop;
+  lexically only (no glob expansion, no disk, no subtree scan: a recursive read such as
+  ``grep -r x .`` stays gray there) and one gray Action ``normalize-budget-exceeded`` is added, so a
+  deny that the words alone show never turns into a gray. EVERY remaining command is classified (no
+  count cap; see ``_LexicalPass`` for what keeps the work bounded). ``normalize_event`` runs on the
+  daemon's event loop;
 * **recursive reads**: a directory that Grep / Glob search, or that a command reads with all of its
   subtree (``CmdInfo.recursive``), is walked within a budget (``normalize.subtree``) and the files
   the policy protects against reads become read paths of the action; a walk that cannot finish
-  makes the action gray;
+  makes the action gray. The Glob tool only lists names and is not walked. Grep without a ``glob``
+  (and ``git`` commands) skip the VCS directories, as Claude Code's own search does;
 * **UNC and WebDAV paths** (``\\\\host\\share``, ``host@80``) are network access: the host goes into
   ``Action.domains`` and the action is gray (``unc-network``).
 
@@ -63,11 +66,16 @@ TIME_BUDGET_S = 0.25  # normalize_event runs on the daemon's event loop
 MAX_ACTIONS = 256  # simple commands handled per command line
 MAX_DISK_KEYS = 64  # distinct paths looked up on disk per request
 MAX_GLOB_DISK_KEYS = 256  # ... for the files a glob matched (a budget of their own)
-# After the budget above ran out, the remaining commands are still classified, lexically only (no
-# glob expansion, no disk lookups, no subtree scans), so a deny rule still sees their paths.
-MAX_LEXICAL_ACTIONS = 1024  # further actions kept in that mode
+# After the budget above ran out, ALL remaining commands are still classified, lexically only (no
+# glob expansion, no disk lookups, no subtree scans), so a deny rule still sees their paths. There
+# is no cap on how many: the pass is bounded by the size of the input (``MAX_PARSE_WORDS``), by the
+# path count below and by the wall-clock limit, and commands that look the same to the rules are
+# kept once. Recursive reads (``grep -r x .``) are not scanned in this mode and stay gray.
 MAX_LEXICAL_REFS = 16384
-LEXICAL_TIME_BUDGET_S = 0.5
+MAX_LEXICAL_PATHS = 1024  # distinct paths that some rule could look at, kept in that mode
+_MAX_SCREEN_KEY = 4096  # a longer key is never screened out
+LEXICAL_TIME_BUDGET_S = 0.8
+MAX_PARSE_WORDS = 20000  # words of a bash line that are parsed (the parser's own default is 4000)
 MAX_KEY_DEPTH = 64  # path components; deeper keys are uncertain and never looked up
 MAX_CWDS = 8  # possible working directories tracked at once (one of them may be "unknown")
 MAX_BRACE_RESULTS = 64
@@ -193,6 +201,7 @@ class _Ctx:
     protected: subtree.ProtectedMatcher = field(
         default_factory=lambda: subtree.matcher_for(subtree.DEFAULT_PROTECTED_GLOBS)
     )  # the read-protection globs a recursive read is checked against
+    rule_screen: subtree.RuleScreens | None = None  # path globs of the deny / ask rules, or None
 
 
 @dataclass(slots=True)
@@ -917,6 +926,7 @@ def _scan_refs(
     *,
     select: subtree.Selector | None = None,
     follow_links: bool = True,
+    skip_names: frozenset[str] = frozenset(),
 ) -> list[PathRef]:
     """Read refs for the protected files below the directories among ``refs``.
 
@@ -927,6 +937,7 @@ def _scan_refs(
     (budget, unreadable directory) adds a gray note: the caller must not treat the tree as clean.
     ``follow_links``: the command may follow a link to a directory (``Get-ChildItem -Recurse``,
     ``grep -R``): one that is met makes the action gray; ripgrep never follows them.
+    ``skip_names``: entry names the reader is known not to read (``subtree.VCS_DIR_NAMES``).
     """
     if ctx.budget.lexical or ctx.protected.empty:
         return []
@@ -948,6 +959,7 @@ def _scan_refs(
             matcher=ctx.protected,
             budget=ctx.budget.scan,
             select=select,
+            skip_names=skip_names,
         )
         ctx.budget.deadline += ctx.budget.scan.elapsed - before  # not charged to the request
         if result.status == "budget":
@@ -1230,7 +1242,16 @@ def _command_action(
             )
             refs += word_refs
             if recursive and access != "write":
-                refs += _scan_refs(ctx, notes, word_refs, access)
+                # ``git grep / log -p / show / archive`` read tracked files and the object
+                # database, never ``.git/config``: they skip the VCS directories. Every other
+                # program (grep -r, rg, find, tar, cp -r ...) does read them.
+                refs += _scan_refs(
+                    ctx,
+                    notes,
+                    word_refs,
+                    access,
+                    skip_names=subtree.VCS_DIR_NAMES if program == "git" else frozenset(),
+                )
     names, unknown_host = _domains_of(info.urls)
     if unknown_host:
         gray_reasons.append("unparseable-url")
@@ -1285,47 +1306,35 @@ def _shell_actions(ctx: _Ctx, tool: str, shell: Shell, command: str) -> list[Act
         result = psparse.parse_powershell(command, budget_s=PS_PARSE_BUDGET_S)
         ctx.budget.deadline += time.monotonic() - started  # the helper has its own time limit
     else:
-        result = bash.parse_bash(command)
+        result = bash.parse_bash(command, max_words=MAX_PARSE_WORDS)
     actions: list[Action] = []
     st = _Line(cwds=(ctx.cwd,), shell=shell)
     marker: Action | None = None
-    seen: set[Action] = set()
-    lexical_actions = 0
+    lexical: _LexicalPass | None = None
     for cmd in result.commands:
+        kept: Action | None
         try:
-            if not ctx.budget.lexical:
-                if len(actions) >= MAX_ACTIONS:
-                    raise _BudgetExceeded("actions")
-                ctx.budget.check()
+            if lexical is None and len(actions) >= MAX_ACTIONS:
+                raise _BudgetExceeded("actions")
+            ctx.budget.check()  # (in lexical mode: the wall-clock limit of that pass)
             action = _command_action(ctx, tool, st, cmd, common)
+            kept = action if lexical is None else lexical.admit(action)
         except _BudgetExceeded as exc:
-            if ctx.budget.lexical:
-                break  # the lexical pass ran out as well (time, refs): nothing more can be said
+            if lexical is not None:
+                break  # the lexical pass ran out as well (time, paths): nothing more can be said
             # The budget ran out. A deny that is visible from the words alone must stay a deny, so
             # this command and the rest are classified again without glob expansion, disk lookups
-            # and subtree scans; the gray marker below still keeps the line from being allowed.
+            # and subtree scans (see ``_LexicalPass``); the gray marker below still keeps the line
+            # from being allowed.
             marker = _budget_action(ctx, tool, exc, **common)
-            seen = set(actions)
+            lexical = _LexicalPass(ctx, actions)
             _enter_lexical_mode(ctx)
             try:
-                action = _command_action(ctx, tool, st, cmd, common)
+                kept = lexical.admit(_command_action(ctx, tool, st, cmd, common))
             except _BudgetExceeded:
                 break
-        else:
-            if ctx.budget.lexical:
-                if lexical_actions >= MAX_LEXICAL_ACTIONS:
-                    break
-                if action in seen:
-                    continue  # the same action again (``true;`` x 300) adds nothing to a verdict
-                seen.add(action)
-                lexical_actions += 1
-            actions.append(action)
-            continue
-        # (the command that used up the budget, retried lexically)
-        if action not in seen:
-            seen.add(action)
-            lexical_actions += 1
-            actions.append(action)
+        if kept is not None:
+            actions.append(kept)
     if marker is None:
         try:
             ctx.budget.check()
@@ -1353,8 +1362,76 @@ def _shell_actions(ctx: _Ctx, tool: str, shell: Shell, command: str) -> list[Act
     return actions
 
 
+def _rule_view(action: Action, paths: tuple[PathRef, ...]) -> tuple[Any, ...]:
+    """Everything of ``action`` that a rule, the verdict or a gray reason can depend on, as a hash
+    key. Not ``args`` (no rule matches on them; what they name that matters is in ``paths`` and
+    ``domains``) and not ``command_text``: two commands with the same view add nothing to a verdict.
+    """
+    return (
+        action.tool,
+        action.program,
+        action.subcommand,
+        action.wrappers,
+        action.flags,
+        paths,
+        bool(action.paths),
+        action.domains,
+        action.network,
+        action.inside_project,
+        action.risk_tags,
+        action.gray_reasons,
+    )
+
+
+class _LexicalPass:
+    """Which of the commands classified after the budget ran out become Actions.
+
+    There is NO cap on the number of commands: each one is classified, so a deny that comes after
+    any number of distinct commands is still found. What keeps the verdict's work bounded instead:
+
+    * a command that looks the same to the rules as one already kept (``echo c1;`` ...
+      ``echo c9999;``: same program, flags, tags and no path) adds nothing and is dropped;
+    * a path that is certainly inside the project and that no deny / ask rule's path glob can
+      select (``cat f1 f2 ...``) cannot be looked at by any rule, so it is not carried (the first
+      path of an action is kept so that "every path is inside" still holds); only paths that some
+      rule could look at (or whose place is uncertain) count against ``MAX_LEXICAL_PATHS``;
+    * the wall-clock limit ``LEXICAL_TIME_BUDGET_S`` and the input size (``MAX_PARSE_WORDS``).
+
+    Over the last two the rest of the line is not classified; the gray ``budget:*`` marker then
+    still keeps it from being allowed (never an allow, at worst an ask).
+    """
+
+    __slots__ = ("_paths", "_screen", "_seen")
+
+    def __init__(self, ctx: _Ctx, earlier: Sequence[Action]) -> None:
+        self._screen = ctx.rule_screen
+        self._seen: set[tuple[Any, ...]] = {_rule_view(a, a.paths) for a in earlier}
+        self._paths = 0
+
+    def _relevant(self, program: str | None, ref: PathRef) -> bool:
+        screen = self._screen
+        if screen is None or ref.uncertain or ref.inside_project is not True:
+            return True
+        return len(ref.key) > _MAX_SCREEN_KEY or screen.candidate(program, ref.access, ref.key)
+
+    def admit(self, action: Action) -> Action | None:
+        """``action`` (irrelevant paths possibly left out), or None when it adds nothing."""
+        refs = action.paths
+        relevant = tuple(ref for ref in refs if self._relevant(action.program, ref))
+        key = _rule_view(action, relevant)
+        if key in self._seen:
+            return None
+        self._paths += len(relevant)
+        if self._paths > MAX_LEXICAL_PATHS:
+            raise _BudgetExceeded("paths")
+        self._seen.add(key)
+        if len(relevant) < len(refs):
+            return action.model_copy(update={"paths": relevant or refs[:1]})
+        return action
+
+
 def _enter_lexical_mode(ctx: _Ctx) -> None:
-    """From now on classify without the disk (see ``MAX_LEXICAL_ACTIONS``)."""
+    """From now on classify without the disk (all remaining commands, see ``_shell_actions``)."""
     ctx.budget.lexical = True
     ctx.budget.deadline = time.monotonic() + LEXICAL_TIME_BUDGET_S
 
@@ -1454,26 +1531,38 @@ def _glob_alternatives(text: str) -> list[str] | None:
         alternatives = expand_braces(part)
         if alternatives is None:
             return None
-        found.extend(a.strip("/") for a in alternatives if a.strip("/"))
+        usable = [a.strip("/") for a in alternatives if a.strip("/")]
+        if not usable:
+            return None  # a positive glob with nothing to match by: not understood
+        found.extend(usable)
         if len(found) > _MAX_SELECTOR_PATTERNS:
             return None
     return found
 
 
-def _search_selector(tool: str, tool_input: Mapping[str, Any]) -> subtree.Selector | None:
-    """Which files a Grep / Glob call reads below its directory: its ``glob`` (Grep), its
-    ``pattern`` (Glob) and its ``type`` (Grep) narrow the search; None means every file.
+def _search_selector(tool_input: Mapping[str, Any]) -> subtree.Selector | None:
+    """Which files a Grep call reads below its directory; None means every file.
 
-    A glob without ``/`` selects by file name at any depth (ripgrep's rule); one with ``/`` is
-    tried both anchored at the directory and at any depth. Case is ignored (the policy's glob
-    compiler folds case), so the selection is never narrower than ripgrep's.
+    ripgrep's rules (measured with 15.0.0): a file that a positive ``-g`` glob matches is read
+    whatever ``--type`` says (the glob wins), and a file no positive glob matches is not read; a
+    glob that only negates (``!*.md``) leaves ``--type`` in force; ``--type`` alone narrows. So:
+
+    * any positive ``glob`` decides ALONE: ``type`` is ignored. A glob that cannot be understood
+      (it does not compile, it has too many alternatives, ``\\n`` escapes ...) does not narrow
+      anything: every file is selected, which is never narrower than what ripgrep reads.
+    * with only negated globs (or none) the ``type`` narrows, for the types listed in ``_RG_TYPES``.
+
+    A glob without ``/`` selects by file name at any depth; one with ``/`` is tried both anchored
+    at the directory and at any depth. Case is ignored (the policy's glob compiler folds case).
     """
-    text = _text(tool_input.get("pattern" if tool == "Glob" else "glob"))
-    name_globs: list[Any] = []
-    path_globs: list[Any] = []
+    text = _text(tool_input.get("glob"))
     if text and text.strip():
         alternatives = _glob_alternatives(text)
+        if alternatives is None:
+            return None  # not understood: do not narrow (and ``type`` must not either)
         if alternatives:
+            name_globs: list[Any] = []
+            path_globs: list[Any] = []
             try:
                 for pattern in alternatives:
                     if "/" in pattern:
@@ -1482,23 +1571,17 @@ def _search_selector(tool: str, tool_input: Mapping[str, Any]) -> subtree.Select
                     else:
                         name_globs.append(compile_glob(pattern))
             except GlobError:
-                name_globs, path_globs = [], []  # not understood: do not narrow
-    type_globs: list[Any] = []
-    kind = _text(tool_input.get("type")) if tool == "Grep" else None
+                return None  # ripgrep may understand what we cannot: read everything
+            return lambda rel, name: (
+                any(g.match(name) for g in name_globs) or any(g.match(rel) for g in path_globs)
+            )
+    elif tool_input.get("glob") not in (None, ""):
+        return None  # a glob that is not a plain string (or is huge): not understood
+    kind = _text(tool_input.get("type"))
     if kind and kind.strip().lower() in _RG_TYPES:
         type_globs = [compile_glob(p) for p in _RG_TYPES[kind.strip().lower()]]
-    if not (name_globs or path_globs or type_globs):
-        return None
-    has_glob = bool(name_globs or path_globs)
-
-    def select(rel: str, name: str) -> bool:
-        if has_glob and not (
-            any(g.match(name) for g in name_globs) or any(g.match(rel) for g in path_globs)
-        ):
-            return False
-        return not type_globs or any(g.match(name) for g in type_globs)
-
-    return select
+        return lambda rel, name: any(g.match(name) for g in type_globs)
+    return None
 
 
 def _search_action(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> Action:
@@ -1508,11 +1591,21 @@ def _search_action(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> Actio
     notes: list[str] = []
     refs = _refs(ctx, notes, directory, "read", cwds=(ctx.cwd,), dialect="tool", glob_literal=True)
     pattern = _text(tool_input.get("pattern" if tool == "Glob" else "glob"))
-    if not (pattern and _pattern_is_path(pattern)):
-        # A directory target reads (or lists) everything below it that the glob / type lets
-        # through: look for protected files there (ripgrep does not follow links).
+    if tool == "Grep" and not (pattern and _pattern_is_path(pattern)):
+        # A directory target reads everything below it that the glob / type lets through: look
+        # for protected files there (ripgrep does not follow links). The Glob tool only LISTS
+        # names, it reads no content: no look inside (its base path was checked above).
+        # Without a ``glob`` Claude Code's Grep excludes the VCS directories itself
+        # (``--glob '!.git'``); a user glob can re-include them, then they are scanned as well.
+        user_glob = tool_input.get("glob") not in (None, "")
         refs += _scan_refs(
-            ctx, notes, refs, "read", select=_search_selector(tool, tool_input), follow_links=False
+            ctx,
+            notes,
+            refs,
+            "read",
+            select=_search_selector(tool_input),
+            follow_links=False,
+            skip_names=frozenset() if user_glob else subtree.VCS_DIR_NAMES,
         )
     if pattern and _pattern_is_path(pattern):
         # A pattern that carries its own (possibly absolute or climbing) location reads there too.
@@ -1582,6 +1675,7 @@ def normalize_event(
     home: str | None = None,
     budget_s: float = TIME_BUDGET_S,
     protected_globs: Sequence[str] | None = None,
+    rule_globs: Sequence[subtree.RuleGlob] | None = None,
 ) -> list[Action]:
     """The Actions for one PreToolUse payload (never raises; never empty).
 
@@ -1595,6 +1689,12 @@ def normalize_event(
     directory is checked against (Grep / Glob on a directory, ``grep -r``, ...): the daemon derives
     them from the loaded policy; None means ``subtree.DEFAULT_PROTECTED_GLOBS``, an empty
     sequence turns the subtree look off.
+
+    ``rule_globs``: every path glob of the policy's deny and ask rules, with the programs and access
+    of its rule (``pipeline.rule_path_globs``). Only used once the budget has run out: from then on
+    a path that is certainly inside the project and that none of them can select for this command
+    is not carried into the Actions (no rule could look at it), which keeps the verdict's work
+    small however many distinct commands follow. None: nothing is left out.
     """
     env = env if env is not None else os.environ
     base: dict[str, Any] = {"platform": platform}
@@ -1620,6 +1720,7 @@ def normalize_event(
                 if protected_globs is None
                 else tuple(protected_globs)
             ),
+            rule_screen=None if rule_globs is None else subtree.rule_screens_for(tuple(rule_globs)),
         )
         tool = payload.get("tool_name")
         if not isinstance(tool, str) or not tool:
