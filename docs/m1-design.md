@@ -57,7 +57,7 @@ def key_of_home(home: str) -> str                   # 给策略加载用：把 h
 ## 模块 B：`normalize/bash.py`（保守的 Bash 解析器）
 
 ```python
-def parse_bash(command: str, *, max_depth: int = 3, max_words: int = 4000,
+def parse_bash(command: str, *, max_depth: int = 8, max_words: int = 4000,
                max_length: int = 1 << 20) -> BashResult
 ```
 **不用 bashlex**（GPLv3+，与 MIT 冲突）。自写词法加递归下降，只做 `BashResult` 要的事：把命令行切成简单命令，保留每个词的"是否含展开 / 通配符 / 引号"信息。

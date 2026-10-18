@@ -110,13 +110,21 @@ tests:
 
 | 规则 | 动作 | 内容 |
 |---|---|---|
-| `protect-guard-config` | deny | 写 `.claude/settings*.json`、`.boundkeep/**` |
-| `ask-agent-exec-config` | ask | 写 `.mcp.json`、`~/.claude.json`、`.claude/{hooks,commands,agents,skills}/**`、`CLAUDE.md`、`CLAUDE.local.md` |
+| `protect-guard-config` | deny | 写 `.claude/settings*.json`、`.boundkeep/**`、`.claude` 目录本身与 `~/.claude`（删除、改名、移动、覆盖都算写）、`managed-settings.json`、`managed-settings.d/**` |
+| `deny-boundkeep-state-commands` | deny | `boundkeep` / `boundkeep-hook` 的 `mode`、`uninstall`、`init`、`serve`（**依赖归一化层报告 boundkeep 的子命令，见下文"程序命令行规则"**） |
+| `deny-boundkeep-state-flags` | deny | `boundkeep` / `boundkeep-hook` 带 `--reset-policy`、`--purge`、`--python`、`--hook-style`、`--rotate-endpoint`、`--home`（按标志即可匹配，现在就生效） |
+| `deny-boundkeep-hook-run` | deny | 手工运行 `boundkeep-hook` |
+| `ask-boundkeep-cli` | ask | `boundkeep` 其余命令（`doctor`、`test`、`explain`、`log --tail`、`llm`）；这些是给用户自己终端用的，ask 让确认框里有带 boundkeep 字样的理由 |
+| `ask-claude-cli`（strict 另有 `deny-claude-cli-flags`） | ask（strict：带 `--settings` / `--permission-mode` / `--dangerously-skip-permissions` 为 deny） | 任何 `claude ...`：`config set` 改权限与 hooks、嵌套会话可能不在本闸门之内 |
+| `ask-kill-processes` | ask | `taskkill`、`pkill`、`killall`、`kill`、`Stop-Process`、`Stop-Service`（目标是参数，规则语言匹配不了，所以一律问） |
+| `ask-package-uninstall`（strict：`deny-package-uninstall`） | ask（strict：deny） | `pip` / `pip3[.x]` / `pipx` / `python[3[.x]] -m pip` 的 `uninstall`、`uninstall-all`（包名是参数，匹配不了，所以任何卸载都问） |
+| `ask-guard-state-read` | ask | 读 `.boundkeep/**`（`endpoint.json`、`policy.yaml`、`logs/audit.jsonl`） |
+| `ask-agent-exec-config` | ask | 写 `.mcp.json`、`~/.claude.json`、`.claude/{hooks,commands,agents,skills,rules,output-styles,plugins}/**`、`.claude/statusline.*`、`CLAUDE.md`、`CLAUDE.local.md` |
 | `ask-repo-exec-config` | ask | 写 `.git/hooks/**`、`.git/config`、`.envrc`、`.husky/**`、`.vscode/{tasks,settings,launch}.json`、`.github/workflows/**`、`.devcontainer/**` |
 | `ask-user-config-write` | ask | 写 `~/.gitconfig`、`~/.npmrc`、`~/.pypirc`、`~/.config/pip/pip.conf`、`~/.netrc`、`~/.docker/config.json` |
-| `no-secret-read` | deny | 读 `.env`、`.env.*`、`**/.ssh/**`、`*.pem`、`*.key`、`*.jks`、`*.keystore`、`*.tfstate*`、`*.tfvars`、`service-account*.json`、`credentials.json`、`/etc/shadow*`、`/etc/sudoers*`、`/etc/ssh/ssh_host_*`、`/proc/*/environ` |
-| `no-credential-store-read` | deny | 读云 CLI 与容器配置（`.aws`、`.azure`、gcloud、gh、op、doctl、rclone、kube、docker）、`.gnupg`、`.git-credentials`、`.gitconfig`、`.git/config`、`.netrc` / `_netrc`、`.npmrc`、`.pypirc`、`.pgpass`、`.my.cnf`、`.s3cfg`、`.boto`、`.vault-token`、`.cargo/credentials*`、`.gem/credentials`、`.m2/settings.xml`、Terraform 凭据、GitHub CLI 与 gcloud 的 `%APPDATA%` 目录、私钥文件 |
-| `no-agent-state-read` | deny | 读 `~/.claude/.credentials.json`、`~/.claude.json`、`.claude/projects/**`（会话记录）、`history.jsonl`、`shell-snapshots`、`ide` |
+| `no-secret-read` | deny | 读 `.env`、`.env.*`、`*.env`、名为 `env` 的文件、`.envs/**`、`**/.ssh/**`、`*.pem`、`*.key`、`*.jks`、`*.keystore`、`*.tfstate*`、`*.tfvars`、`service-account*.json`、`credentials.json` / `credentials.txt`、`secrets.{yml,yaml,json,toml,txt}`、`secret.txt`、`key.txt` / `keys.txt`、`password(s).txt`、`token.txt`、`.htpasswd`、`kubeconfig`、`*.kubeconfig`、`local.settings.json`、`*.kdbx` / `*.kdb`、`/etc/shadow*`、`/etc/sudoers*`、`/etc/ssh/ssh_host_*`、`/proc/*/environ`。名字整体匹配，所以 `env.py`、`kubeconfig.go`、`docker-compose.yml`、`README` 仍可读 |
+| `no-credential-store-read` | deny | 读云 CLI 与容器配置（`.aws`、`.azure`、gcloud、gh、op、doctl、rclone、kube、docker）、`.gnupg`、`.git-credentials`、`.git/credentials`、`.config/git/credentials`、`.gitconfig`、`.git/config`、`.netrc` / `_netrc`、`.npmrc`、`.pypirc`、`.pgpass`、`.my.cnf`、`.s3cfg`、`.boto`、`.vault-token`、`.cargo/credentials*`、`.gem/credentials`、`.m2/settings.xml`、Terraform 凭据、GitHub CLI 与 gcloud 的 `%APPDATA%` 目录、私钥文件（`id_rsa*`、`id_ed25519*` 等，含 `.bak` 备份；代价是公钥 `id_rsa.pub` 也读不了） |
+| `no-agent-state-read` | deny | 读 `~/.claude/.credentials.json`、`~/.claude.json`、`.claude/settings*.json`（项目与用户级；`env` 块里常放令牌）、`.mcp.json`（MCP 服务器的 headers 与 env）、`.claude/projects/**`（会话记录）、`history.jsonl`、`shell-snapshots`、`ide` |
 | `no-history-read` | deny | 读 `.bash_history`、`.zsh_history`、`.python_history`、`.psql_history`、`.mysql_history`、PSReadLine 的 `ConsoleHost_history.txt` 等 |
 | `no-windows-credential-read` / `no-browser-profile-read` | deny | Windows 凭据、DPAPI、保险库、`System32\config`、`windows\repair`；Windows / Linux / macOS 浏览器配置目录与钥匙串。都含 `**/users/*/...` 形式，WSL 看到的 `/mnt/c/Users/x/...` 也被拦 |
 | `no-raw-disk-access` | deny | 读写 `/dev/sd*`、`nvme*`、`mmcblk*`、`/dev/mem`、`\\.\PhysicalDrive*` 等裸设备 |
