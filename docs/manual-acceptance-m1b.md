@@ -253,3 +253,18 @@ Remove-Item -Recurse -Force E:\bk-lab-m1b
 观察（不影响通过）：
 - 会话里 Claude 自己的辅助命令（`Test-Path`、`Get-FileHash`、备份与恢复 `~\.bashrc` 的 `Copy-Item`）都被 ask 拦下；恢复 `.bashrc` 那条命中了 `protect-shell-startup-files`。
 - 日志对 Read、Grep、Glob 不记录路径，所以 gray（`no rule matched`）的 ask 看不出针对哪个路径。这是 M1 起就有的可观测性缺口，建议后续里程碑在日志里加入路径摘要。
+
+## 第二轮复测记录（X1 修复第二轮之后，2026-10-19）
+
+第二轮改了 `init` 的写入顺序、ConfigChange 的阻断面、管道 DACL、目录扫描的规则，所以重做了一部分。环境同上（VS Code 扩展与终端交互式 CLI，`E:\bk-lab-m1b`，独立 home）。
+
+| 步骤 | 结果 |
+|---|---|
+| `init`（重新安装） | 通过：退出码 0，打印项目级安装提示 |
+| `doctor`（守护进程运行时，由我先行检查） | 通过：0 个问题；`pipe-acl` OK（接受 OWNER RIGHTS 条目）；hook 脚本哈希 11 个文件一致；`powershell=ready` |
+| `boundkeep test` | 通过：245 条，0 失败 |
+| VS Code：读 `.env`、删界外目录、对项目目录 Grep（不带 glob）、Grep 的 `glob` 加 `type`（R-1）、读项目级 `.claude/settings.json`（U-2，应允许）、`boundkeep ... mode audit-only`（应被拒绝，模式仍为 enforce） | 通过 |
+| 终端 CLI：读 `.env` | 通过 |
+| 收尾：`serve` 退出后没有残留的 `pshelper.ps1` 进程 | 通过 |
+
+`doctor` 里的两条警告与本轮无关：用户自己 `~/.claude/settings.json` 里的 `skipWorkflowUsageWarning` 不在 boundkeep 的键快照里；PATH 上的 `claude` 是个坏掉的 mise shim。

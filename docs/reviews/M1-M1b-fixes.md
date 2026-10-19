@@ -135,4 +135,4 @@
 - 第二轮的单元与语料测试变多（含带真实磁盘的遍历测试），Windows 全量从约 13 分钟变成约 30 分钟，主要是 `tests/unit/test_pipeline_corpus.py`；后续可以考虑给带磁盘的测试加标记、日常只跑子集。
 - 第一次 Linux 重跑失败是 Docker Desktop 的守护进程没有运行（不是测试失败），启动后重跑全绿。
 
-**手工验收这一轮没有重做**（上一轮你做了复测并通过；第二轮又改了 `init` 的写入顺序、ConfigChange 的阻断面、管道 DACL）。建议你至少重做：`init` + `doctor`（确认没有 FAIL，尤其 `pipe-acl` 与新的完整性哈希检查）、`serve`、读 `.env`、对项目目录 Grep。
+**手工验收第二轮已重做并通过**（2026-10-19，记录在 `docs/manual-acceptance-m1b.md` 末尾）：`init`、`doctor`（`pipe-acl` 与 11 个文件的完整性哈希）、`boundkeep test`、VS Code 里读 `.env`/删界外目录/目录 Grep/`glob`+`type`/读项目级 `settings.json`/`boundkeep mode` 被拒、终端 CLI 读 `.env`、无残留进程。

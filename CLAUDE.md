@@ -74,7 +74,7 @@ uv run python scripts/smoke_claude.py      # 真实 Claude Code 冒烟（claude 
 
 ## 当前状态
 
-- 阶段：**M1、M1b 已提交（标签 `m1-done`、`m1b-done`）；M1+M1b 合并的 X1 安全审查已完成（`docs/reviews/M1-M1b-security-review.md`），第一轮修复已提交，X1 复审（`docs/reviews/M1-M1b-fixes-rereview.md`）的发现已在第二轮修复（记录在 `docs/reviews/M1-M1b-fixes.md` 第 8 节），规格已更新为修订 4；第二轮等你确认后提交，之后再进 M2**。M0 标签 `m0-done`，M0a 标签 `m0a-done`。
+- 阶段：**M1、M1b 已提交（标签 `m1-done`、`m1b-done`）；M1+M1b 合并的 X1 安全审查已完成（`docs/reviews/M1-M1b-security-review.md`），第一轮修复已提交，X1 复审（`docs/reviews/M1-M1b-fixes-rereview.md`）的发现已在第二轮修复（记录在 `docs/reviews/M1-M1b-fixes.md` 第 8 节），规格已更新为修订 4；第二轮已提交，手工验收第二轮已通过（2026-10-19）；下一步进 M2，先决定 M-13（enforce 下可日常使用）怎么达成**。M0 标签 `m0-done`，M0a 标签 `m0a-done`。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
 - M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。
 - 独立审查（四路：解析器、路径与域名、策略语义、性能与集成）共约 60 条发现，已按文件分工修复并有回归测试；真实 Claude Code 冒烟（`scripts/smoke_claude_m1.py`，11 项）全过。Linux 容器里的 M1 测试已跑（真 bash 5.2，差分测试通过）。
