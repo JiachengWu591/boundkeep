@@ -239,6 +239,206 @@ rules:
       access: write
     action: deny
     reason: "this file redirects where packages, credentials or commits go"
+  - id: deny-project-autorun-files
+    # Files that make code run later, outside this session, when someone does something ordinary:
+    # build and task runners (package.json scripts, Makefile, pyproject/setup.py/setup.cfg, tox,
+    # nox, build.rs), test hooks that pytest imports (conftest.py), interpreter start-up hooks
+    # (sitecustomize.py, usercustomize.py, *.pth lines that start with "import"), pre-commit,
+    # git attributes and submodules, CI definitions (GitHub, GitLab, CircleCI, Jenkins, Azure,
+    # Travis, Bitbucket), container builds (Dockerfile, Compose), dev containers, editor tasks and
+    # run configurations, cargo/yarn/pnpm/npm settings and the per-user tool configuration that
+    # names helper programs or registries (cargo, gradle init scripts, conda, terraform, the AWS
+    # CLI's credential_process, pip). Creating, changing, renaming or deleting one is refused: the
+    # code it adds runs without anyone launching it.
+    # No `tool:` filter, like the rule above: Write, Edit, MultiEdit and every shell write carry
+    # the same path with access write. Whole names only: README, *.md, source files, lockfiles,
+    # tsconfig.json, .gitignore and .editorconfig are not here (they do not run anything). The
+    # accepted false positives are the everyday ones: editing package.json, Makefile,
+    # pyproject.toml, conftest.py, a Dockerfile or a CI file is refused; so is a *.pth data file
+    # (PyTorch weights) and any Dockerfile* name.
+    match:
+      path_glob:
+        # project: build, task and test runners
+        - "**/package.json"
+        - "**/Makefile"
+        - "**/makefile"
+        - "**/GNUmakefile"
+        - "**/pyproject.toml"
+        - "**/setup.py"
+        - "**/setup.cfg"
+        - "**/tox.ini"
+        - "**/noxfile.py"
+        - "**/conftest.py"
+        - "**/sitecustomize.py"
+        - "**/usercustomize.py"
+        - "**/*.pth"
+        - "**/build.rs"
+        - "**/rust-toolchain"
+        - "**/rust-toolchain.toml"
+        - "**/.cargo/config.toml"
+        - "**/.cargo/config"
+        - "**/.npmrc"
+        - "**/.yarnrc*"
+        - "**/.pnpmfile.cjs"
+        # project: git hooks and repository settings that run programs
+        - "**/.pre-commit-config.yaml"
+        - "**/.gitattributes"
+        - "**/.gitmodules"
+        - "**/.envrc"
+        - "**/.husky/**"
+        # project: CI
+        - "**/.github/workflows/**"
+        - "**/.github/actions/**"
+        - "**/.gitlab-ci.yml"
+        - "**/.circleci/**"
+        - "**/Jenkinsfile"
+        - "**/azure-pipelines.yml"
+        - "**/.travis.yml"
+        - "**/bitbucket-pipelines.yml"
+        # project: containers and editors
+        - "**/Dockerfile*"
+        - "**/docker-compose*.yml"
+        - "**/docker-compose*.yaml"
+        - "**/compose.yml"
+        - "**/compose.yaml"
+        - "**/compose.*.yml"
+        - "**/compose.*.yaml"
+        - "**/.devcontainer/**"
+        - "**/.vscode/tasks.json"
+        - "**/.vscode/settings.json"
+        - "**/.vscode/launch.json"
+        - "**/.vscode/extensions.json"
+        - "**/.vscode/mcp.json"
+        - "**/.idea/runConfigurations/**"
+        # user level (home-relative; ~/.gitconfig and ~/.npmrc are in deny-user-config-write)
+        - "~/.cargo/config.toml"
+        - "~/.cargo/config"
+        - "~/.gradle/init.d/**"
+        - "~/.gradle/init.gradle*"
+        - "~/.condarc"
+        - "~/.yarnrc*"
+        - "~/.terraformrc"
+        - "~/.aws/config"
+        - "~/.config/pip/pip.conf"
+        - "~/AppData/Roaming/pip/pip.ini"
+        - "**/appdata/roaming/pip/pip.ini"
+      access: write
+    action: deny
+    reason: "this file makes a build, CI run, editor, container or tool run code later"
+  - id: ask-secret-file-write
+    # The write side of no-secret-read, with the same globs word for word (a test keeps the two
+    # lists equal). Their content is a secret, so reading them is refused; creating or changing one
+    # is nearly as sensitive: a new .env, key or credentials file changes which account the project
+    # talks to, and an edit through the Edit tool shows the agent the old content. A write inside the
+    # project is otherwise allowed (allow-project-file-writes in the default policy), so these names
+    # must ask before that allow rule can reach them.
+    match:
+      path_glob:
+        - "**/.env"
+        - "**/.env.*"
+        - "**/*.env"
+        - "**/env"
+        - "**/.envs/**"
+        - "**/.ssh/**"
+        - "**/*.pem"
+        - "**/*.key"
+        - "**/*.jks"
+        - "**/*.keystore"
+        - "**/*.tfstate*"
+        - "**/*.tfvars"
+        - "**/*.tfvars.json"
+        - "**/service-account*.json"
+        - "**/credentials.json"
+        - "**/credentials.txt"
+        - "**/secrets.yml"
+        - "**/secrets.yaml"
+        - "**/secrets.json"
+        - "**/secrets.toml"
+        - "**/secrets.txt"
+        - "**/secret.txt"
+        - "**/key.txt"
+        - "**/keys.txt"
+        - "**/password.txt"
+        - "**/passwords.txt"
+        - "**/token.txt"
+        - "**/.htpasswd"
+        - "**/kubeconfig"
+        - "**/*.kubeconfig"
+        - "**/local.settings.json"
+        - "**/*.kdbx"
+        - "**/*.kdb"
+        - "/etc/shadow*"
+        - "/etc/gshadow*"
+        - "/etc/sudoers"
+        - "/etc/sudoers.d/**"
+        - "/etc/ssh/ssh_host_*"
+        - "/proc/*/environ"
+      access: write
+    action: ask
+    reason: "writing secrets and credential files needs confirmation"
+  - id: ask-credential-file-write
+    # The write side of no-credential-store-read, same globs (a test keeps the lists equal). A
+    # credential file or private key created or replaced inside the project (.git-credentials, .netrc,
+    # .aws/credentials, id_rsa) is picked up by the tools that read it, and what is stored there
+    # decides which identity or server they use. A write inside the project is otherwise allowed in
+    # the default policy, so these names must ask first.
+    match:
+      path_glob:
+        - "**/.aws/**"
+        - "**/.azure/**"
+        - "**/.config/gcloud/**"
+        - "**/.config/gh/**"
+        - "**/.config/op/**"
+        - "**/.config/doctl/**"
+        - "**/.config/rclone/**"
+        - "**/rclone.conf"
+        - "**/.kube/config"
+        - "**/.docker/config.json"
+        - "**/.dockercfg"
+        - "**/.gnupg/**"
+        - "**/.git-credentials"
+        - "**/.git/credentials"
+        - "**/.config/git/credentials"
+        - "**/.gitconfig"
+        - "**/.git/config"
+        - "**/.netrc"
+        - "**/_netrc"
+        - "**/.npmrc"
+        - "**/.pypirc"
+        - "**/.pgpass"
+        - "**/.my.cnf"
+        - "**/.s3cfg"
+        - "**/.boto"
+        - "**/.vault-token"
+        - "**/.cargo/credentials*"
+        - "**/.gem/credentials"
+        - "**/.m2/settings.xml"
+        - "**/.terraform.d/credentials.tfrc.json"
+        - "**/appdata/roaming/github cli/**"
+        - "**/appdata/roaming/gcloud/**"
+        - "**/id_rsa*"
+        - "**/id_dsa*"
+        - "**/id_ecdsa*"
+        - "**/id_ed25519*"
+        - "**/*.p12"
+        - "**/*.pfx"
+        - "**/*.ppk"
+      access: write
+    action: ask
+    reason: "writing credential stores and private keys needs confirmation"
+  - id: ask-git-internals-write
+    # Everything below a .git directory: HEAD, refs, the index, the object store, info/attributes and
+    # the hooks and config of submodules and worktrees (.git/modules/x/hooks/..., .git/modules/x/config),
+    # which the narrower rules for .git/hooks and .git/config do not reach. Rewriting them corrupts
+    # the repository or makes git run a program later; nothing in a coding task writes them by hand
+    # (git itself does, and a shell git command names no .git path). A write inside the project is
+    # otherwise allowed in the default policy, so this directory must ask first.
+    match:
+      path_glob:
+        - "**/.git/**"
+      access: write
+    action: ask
+    reason: "writing inside a .git directory changes the repository itself or what git runs"
   # ---- secrets and credentials (read) --------------------------------------------------------
   - id: no-secret-read
     # Environment files, private keys, certificates, Terraform state and variable files, service
@@ -885,15 +1085,17 @@ rules:
     reason: "writing outside the project directory"
   - id: ask-read-outside-project
     # Reading outside the project is how an agent finds what it was not given (other projects,
-    # notes, configuration). Strict: ask.
+    # notes, configuration). Strict: ask. Any path that is not shown to be inside the project counts
+    # (a path that is only written outside asks under ask-write-outside-project as well). No
+    # path_glob and no `access`, on purpose: a "**" glob of a READ rule is taken as a protected name
+    # by the subtree scan of recursive reads (Grep on a directory, `grep -r`), every entry of the
+    # directory then matches and the scan stops at the first level, so a `certs/a.pem` below it was
+    # never looked at and `Grep` on a project directory holding it was allowed.
     match:
-      path_glob:
-        - "**"
-      access: read
       path_outside_project: true
     action: ask
-    reason: "reading outside the project directory"
-  # ---- the only allow rule -------------------------------------------------------------------
+    reason: "a path outside the project directory"
+  # ---- the only allow rule (strict gives no other: see the allow rules in default.yaml) ----
   - id: read-inside-project
     # Reading files the project already contains is what a coding assistant is for. Allowed only
     # when every path is shown to be inside the project; a deny or ask rule above still wins. An
@@ -1028,3 +1230,47 @@ tests:
   - { tool: Write, input: { file_path: "~/.claude/plugins/p/hooks.json", content: "x" }, expect: deny }
   - { tool: Read, input: { file_path: "~/.boundkeep/policy.yaml" }, expect: ask }
   - { tool: Read, input: { file_path: "~/.boundkeep/logs/audit.jsonl" }, expect: ask }
+  # Files that make code run later (deny-project-autorun-files), whichever tool writes them.
+  - { tool: Write, input: { file_path: "package.json", content: "{}" }, expect: deny }
+  - { tool: Write, input: { file_path: "pyproject.toml", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: "tests/conftest.py", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: "Dockerfile", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: "docker-compose.override.yaml", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: ".gitlab-ci.yml", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: ".pre-commit-config.yaml", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: "~/.cargo/config.toml", content: "x" }, expect: deny }
+  - { tool: Write, platform: [windows], input: { file_path: "~\\AppData\\Roaming\\pip\\pip.ini", content: "x" }, expect: deny }
+  - { tool: Edit, input: { file_path: "Makefile", old_string: "a", new_string: "b" }, expect: deny }
+  - { tool: MultiEdit, input: { file_path: "setup.py", edits: [{ old_string: "a", new_string: "b" }] }, expect: deny }
+  - { tool: Bash, input: { command: "echo x > Makefile" }, expect: deny }
+  - { tool: Bash, input: { command: "sed -i 's/a/b/' package.json" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Content package.json x" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-Item Makefile" }, expect: deny }
+  - { tool: Write, platform: [windows], input: { file_path: "PACKAGE.JSON.", content: "{}" }, expect: deny }   # case and trailing dot
+  - { tool: Write, input: { file_path: "src/app.py", content: "x" }, expect: gray }   # ordinary source: no rule decides
+  - { tool: Write, input: { file_path: "README.md", content: "x" }, expect: gray }
+  - { tool: Write, input: { file_path: "package-lock.json", content: "{}" }, expect: gray }   # lockfiles run nothing
+  - { tool: Write, input: { file_path: "tsconfig.json", content: "{}" }, expect: gray }
+  - { tool: Bash, input: { command: "cat package.json" }, expect: gray }   # reading is not writing
+  # M1c: strict has NO allow rule besides read-inside-project; what default.yaml allows for everyday
+  # use still prompts here (gray), and the write-side secret / credential / .git rules ask.
+  - { tool: Bash, input: { command: "git status" }, expect: gray }
+  - { tool: Bash, input: { command: "ls" }, expect: gray }
+  - { tool: Bash, input: { command: "cat README.md" }, expect: gray }
+  - { tool: Bash, input: { command: "echo hello" }, expect: gray }
+  - { tool: Bash, input: { command: "echo $ANTHROPIC_API_KEY" }, expect: gray }   # an environment value must not reach the agent
+  - { tool: Bash, input: { command: "printenv" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Write-Output $env:SECRET_TOKEN" }, expect: gray }
+  - { tool: Bash, input: { command: "mkdir -p build/out" }, expect: gray }
+  - { tool: Write, input: { file_path: "src/app.py", content: "x" }, expect: gray }
+  - { tool: Edit, input: { file_path: "src/app.py", old_string: a, new_string: b }, expect: gray }
+  - { tool: Write, input: { file_path: ".env", content: "A=1" }, expect: ask }
+  - { tool: Edit, input: { file_path: ".env", old_string: a, new_string: b }, expect: ask }
+  - { tool: Write, input: { file_path: "certs/server.pem", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".aws/credentials", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".git-credentials", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".git/HEAD", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".git/modules/sub/hooks/post-commit", content: "x" }, expect: ask }
+  - { tool: Bash, input: { command: "touch .env" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "git status" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem" }, expect: gray }

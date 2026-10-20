@@ -1297,7 +1297,8 @@ def test_every_match_field_positive_and_negative(
     for decision in ("deny", "ask"):
         rule = make_rule(match, action=decision)
         assert match_rule(rule, action, platform="posix") is expected
-    allow = make_rule(match, action="allow")
+    # An allow rule must name a tool or a program (M1c); every case here is a Bash action.
+    allow = make_rule(match, action="allow", tool=["Bash"])
     assert match_rule(allow, action, platform="posix") is expected  # not gray: same answer
 
 
@@ -1546,7 +1547,7 @@ def test_overlong_keys_match_deny_and_ask_rules_but_never_allow_rules() -> None:
     match = {"path_glob": ["/**"]}
     assert match_rule(make_rule(match, action="deny"), action, platform="posix")
     assert match_rule(make_rule(match, action="ask"), action, platform="posix")
-    assert not match_rule(make_rule(match, action="allow"), action, platform="posix")
+    assert not match_rule(make_rule(match, action="allow", tool=["Bash"]), action, platform="posix")
     lines = explain_rule(make_rule(match), action, platform="posix")
     assert lines is not None
     assert "longer than" in lines[0]
@@ -1933,7 +1934,9 @@ action_strategy = st.builds(
 HYP_ALLOW_RULES = [
     rdict("h-allow-ls", "allow", {"program": ["ls", "cat"]}),
     rdict("h-allow-read", "allow", {"path_inside_project": True}, tool=["Read", "Glob"]),
-    rdict("h-allow-net", "allow", {"domain_in": ["github.com", "pypi.org"]}),
+    rdict(
+        "h-allow-net", "allow", {"domain_in": ["github.com", "pypi.org"]}, tool=["Bash", "WebFetch"]
+    ),
 ]
 
 
@@ -2256,7 +2259,8 @@ def test_ordinary_globs_are_still_fine(pattern: str) -> None:
 
 
 def match_of(match: dict[str, Any], action: str = "ask") -> Rule:
-    return make_rule(match, action=action)
+    # An allow rule must name a tool or a program (M1c); these tests all use Bash actions.
+    return make_rule(match, action=action, tool=["Bash"] if action == "allow" else None)
 
 
 def cp_like(*paths: tuple[str, str, bool | None]) -> Action:

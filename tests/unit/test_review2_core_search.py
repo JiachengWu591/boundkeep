@@ -222,7 +222,7 @@ def test_the_protected_globs_come_from_the_policy(w: World) -> None:
         "version: 1\nrules:\n"
         "  - {id: w, match: {path_glob: ['**/only-write'], access: write},\n"
         "     action: deny, reason: x}\n"
-        "  - {id: a, match: {path_glob: ['**/allowed'], access: read}, action: allow}\n"
+        "  - {id: a, tool: Read, match: {path_glob: ['**/allowed'], access: read}, action: allow}\n"
         "  - {id: k, match: {path_glob: ['**/asks'], access: read}, action: ask, reason: x}\n"
     )
     assert pipeline.protected_read_globs(parse_policy_text(mixed, home=str(w.home))) == (

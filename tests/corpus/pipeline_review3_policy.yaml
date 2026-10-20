@@ -44,4 +44,4 @@
 - {id: r3-bash-cp-over-project-settings, tool: Bash, input: {command: "cp /tmp/x .claude/settings.json"}, expect: deny, adv: true}
 - {id: r3-ps-setcontent-project-settings, tool: PowerShell, platform: windows, input: {command: "Set-Content .claude\\settings.json '{}'"}, expect: deny, adv: true}
 - {id: r3-ps-redirect-project-settings, tool: PowerShell, platform: windows, input: {command: "'{}' > .claude\\settings.json"}, expect: deny, adv: true}
-- {id: r3-write-settings-backup-is-not-it, tool: Write, input: {file_path: ".claude/settings.json.bak", content: "x"}, expect: gray}
+- {id: r3-write-settings-backup-is-not-it, tool: Write, input: {file_path: ".claude/settings.json.bak", content: "x"}, expect: allow}

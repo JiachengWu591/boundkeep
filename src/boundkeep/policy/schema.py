@@ -305,8 +305,8 @@ def _check_flag_names(values: tuple[str, ...]) -> tuple[str, ...]:
     for index, word in enumerate(values):
         if not word.startswith("-"):
             raise _at_error(
-                f"{_shorten(word)} is not a flag: flags_any entries must start with '-' "
-                "(for example '-r', '--force', '-Recurse')",
+                f"{_shorten(word)} is not a flag: flags_any / flags_none entries must start "
+                "with '-' (for example '-r', '--force', '-Recurse')",
                 index,
             )
     return values
@@ -732,8 +732,10 @@ class Match(BaseModel):
     program: _Programs | None = None
     subcommand: _Subcommands | None = None
     flags_any: _Flags | None = None
+    flags_none: _Flags | None = None  # same entries as flags_any; matches when NONE is present
     path_outside_project: _TrueOnly | None = None
     path_inside_project: _TrueOnly | None = None
+    paths_read_only: _TrueOnly | None = None  # every path is read-only (no paths: vacuously true)
     network: _TrueOnly | None = None
     domain_not_in: _Hosts | None = None
     domain_in: _Hosts | None = None
@@ -758,6 +760,17 @@ class Match(BaseModel):
                 "path_outside_project and path_inside_project together can never match "
                 "(one needs a path that is not inside, the other every path inside)"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _flags_any_and_none_are_disjoint(self) -> Match:
+        if self.flags_any is not None and self.flags_none is not None:
+            both = sorted(set(self.flags_any) & set(self.flags_none))
+            if both:
+                raise ValueError(
+                    f"flags_any and flags_none both list {_shorten(both[0])}: no action can have "
+                    "the flag and not have it, so the rule could never match"
+                )
         return self
 
     def is_empty(self) -> bool:
@@ -825,6 +838,12 @@ class Rule(BaseModel):
             raise _at_error(
                 "an allow rule needs at least one match field (an empty match would allow "
                 "every action of the listed tools)",
+                "match",
+            )
+        if self.action == "allow" and self.tool is None and self.match.program is None:
+            raise _at_error(
+                "an allow rule must name a tool or a program: a rule that only narrows by "
+                "flags/paths would allow almost everything",
                 "match",
             )
         return self

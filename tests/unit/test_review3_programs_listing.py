@@ -285,25 +285,29 @@ def w(tmp_path: Path) -> World:
 
 
 @pytest.mark.parametrize(
-    "command",
+    ("command", "expected"),
     [
-        "ls -R",
-        "ls -laR",
-        "ls -R .",
-        "ls --recursive",
-        "tree",
-        "tree -a",
-        "du -a",
-        "find .",
-        "find . -type f",
-        "find . -name '*.py' -print",
-        "find . -fprint out.txt",
-        "dir -R",
+        # M1c: ls, dir, tree and find inside the project are allow rules (names only: the
+        # directory listing is not a read of the files below it); before M1c every one was gray
+        ("ls -R", "allow"),
+        ("ls -laR", "allow"),
+        ("ls -R .", "allow"),
+        ("ls --recursive", "allow"),
+        ("tree", "allow"),
+        ("tree -a", "allow"),
+        ("du -a", "gray"),  # no allow rule: gray (ask), never deny
+        ("find .", "allow"),
+        ("find . -type f", "allow"),
+        ("find . -name '*.py' -print", "allow"),
+        ("find . -fprint out.txt", "gray"),  # writes a file: no allow rule
+        ("dir -R", "allow"),
     ],
 )
-def test_a_listing_is_not_denied_for_the_names_in_the_subtree(w: World, command: str) -> None:
+def test_a_listing_is_not_denied_for_the_names_in_the_subtree(
+    w: World, command: str, expected: str
+) -> None:
     review = w.review(command)
-    assert review.verdict.decision == "gray", command  # no rule matches: ask, never deny
+    assert review.verdict.decision == expected, command  # never deny: names only
     assert "no-secret-read" not in review.verdict.rule_ids
 
 
@@ -395,7 +399,8 @@ def test_a_lister_piped_into_xargs_is_gray_because_the_reader_takes_pipe_argumen
 )
 def test_ps_listing_is_not_denied_for_the_names_in_the_subtree(w: World, command: str) -> None:
     review = w.review(command, "PowerShell")
-    assert review.verdict.decision == "gray", command
+    # M1c: Get-ChildItem is an allow rule (allow-ps-list-here); it was gray before. Names only.
+    assert review.verdict.decision == "allow", command
     assert "no-secret-read" not in review.verdict.rule_ids
 
 

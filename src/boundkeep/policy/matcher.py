@@ -14,6 +14,10 @@ The contract is docs/m1-design.md ("模块 D"); the short version:
   ``path_outside_project`` matches when ANY path is not definitely inside. ``path_inside_project``
   needs at least one path and ALL of them definitely inside (with a glob, one of them must also
   match it).
+* ``flags_none`` takes the same entries and the same case folding as ``flags_any`` and matches
+  only if NONE of the action's flags equals a listed one (no flags: matches).
+  ``paths_read_only`` matches only if EVERY path has access exactly ``read`` (``write`` and
+  ``unknown`` do not count; no paths: matches, since ``pwd`` or ``echo hi`` touch nothing).
 * ``network`` is ``Action.network``; ``domain_not_in`` needs ``network`` and (no known domain or
   ANY domain outside the list); ``domain_in`` needs ``network`` and at least one domain and ALL
   of them in the list. Host comparison is exact or a true subdomain (``evilgithub.com`` and
@@ -201,10 +205,21 @@ def _match_detail(rule: Rule, action: Action, platform: Platform) -> tuple[str, 
         if found is None:
             return None
         details.append(f"flags_any: {found}")
+    if match.flags_none is not None:
+        banned = {_fold_flag(action, f) for f in match.flags_none}
+        present = next((f for f in action.flags if _fold_flag(action, f) in banned), None)
+        if present is not None:
+            return None
+        details.append(f"flags_none: none of {', '.join(match.flags_none)} is present")
     path_lines = _path_details(match, action, rule)
     if path_lines is None:
         return None
     details.extend(path_lines)
+    if match.paths_read_only is not None:
+        # Exactly "read": "write" and "unknown" (may write) both fail. No paths: vacuously true.
+        if any(p.access != "read" for p in action.paths):
+            return None
+        details.append("paths_read_only: every path is only read")
     if match.network is not None:
         if not action.network:
             return None

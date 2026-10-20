@@ -44,7 +44,7 @@
 - {id: r2-git-blame-nested-secret, tool: Bash, input: {command: "git blame certs/server.pem"}, expect: deny, adv: true}
 - {id: r2-git-show-rev-env-in-subdir, tool: Bash, input: {command: "git show HEAD:sub/dir/.env"}, expect: deny, adv: true}
 - {id: r2-ps-git-show-rev-env, tool: PowerShell, platform: windows, input: {command: "git show HEAD:.env"}, expect: deny, adv: true}
-- {id: r2-git-show-rev-ordinary, tool: Bash, input: {command: "git show HEAD:src/a.py"}, expect: gray, adv: true}
+- {id: r2-git-show-rev-ordinary, tool: Bash, input: {command: "git show HEAD:src/a.py"}, expect: allow}  # M1c: a REV:PATH read of an ordinary file is allowed (allow-git-read-only); the REV:PATH forms of protected files stay denied above, so it is no longer an adversarial entry
 - {id: r2-git-cat-file-batch, tool: Bash, input: {command: "git cat-file --batch"}, expect: gray, adv: true}
 
 # ---- M-10: reserved words and nesting that the parser used to get wrong ------------------------
@@ -60,7 +60,7 @@
 - {id: r2-eval-x4-rm, tool: Bash, input: {command: "eval eval eval eval rm -rf ~"}, expect: deny, adv: true}
 - {id: r2-bash-c-x4-rm, tool: Bash, input: {command: "bash -c 'bash -c \"bash -c \\\"bash -c \\\\\\\"rm -rf ~\\\\\\\"\\\"\"'"}, expect: deny, adv: true}
 - {id: r2-nice-x18-rm, tool: Bash, input: {command: "nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice nice rm -rf ~"}, expect: deny, adv: true}
-- {id: r2-time-group-benign, tool: Bash, input: {command: "time { ls; }"}, expect: gray, adv: true}
+- {id: r2-time-group-benign, tool: Bash, input: {command: "time { ls; }"}, expect: allow}  # M1c: the ls inside the group is a plain read-only listing (allow-list-inside-project); the entry was never a hostile form
 - {id: r2-coproc-group-benign, tool: Bash, input: {command: "coproc X { ls; }"}, expect: gray, adv: true}
 
 # ---- policy fixer's request: boundkeep commands, python -m boundkeep, runner wrappers ---------------

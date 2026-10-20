@@ -102,7 +102,7 @@
 - {id: fp-ok-ssh-like-name, tool: Read, input: {file_path: "docs/sshd.md"}, expect: allow}
 - {id: fp-ok-history-doc, tool: Read, input: {file_path: "docs/history.md"}, expect: allow}
 - {id: fp-ok-terraform-main, tool: Read, input: {file_path: "infra/main.tf"}, expect: allow}
-- {id: fp-ok-status, tool: Bash, input: {command: "git status"}, expect: gray}
+- {id: fp-ok-status, tool: Bash, input: {command: "git status"}, expect: allow}
 - {id: fp-ok-checkout-branch, tool: Bash, input: {command: "git checkout main"}, expect: gray}
 - {id: fp-ok-branch-delete-merged, tool: Bash, input: {command: "git branch -d topic"}, expect: gray}
 - {id: fp-ok-clean-dry-run, tool: Bash, input: {command: "git clean -n"}, expect: gray}
@@ -111,8 +111,8 @@
 - {id: fp-ok-chmod-project, tool: Bash, input: {command: "chmod -R 755 build"}, expect: gray}
 - {id: fp-ok-find-in-project, tool: Bash, input: {command: "find . -name '*.pyc' -delete"}, expect: gray}
 - {id: fp-ok-systemctl-status, tool: Bash, input: {command: "systemctl status nginx"}, expect: gray}
-- {id: fp-ok-write-docs, tool: Write, input: {file_path: "docs/notes.md", content: "x"}, expect: gray}
-- {id: fp-ok-write-claude-md-lookalike, tool: Write, input: {file_path: "docs/CLAUDE.md.txt", content: "x"}, expect: gray}
+- {id: fp-ok-write-docs, tool: Write, input: {file_path: "docs/notes.md", content: "x"}, expect: allow}
+- {id: fp-ok-write-claude-md-lookalike, tool: Write, input: {file_path: "docs/CLAUDE.md.txt", content: "x"}, expect: allow}
 
 # ---- writes that make code run later -------------------------------------------------------------
 - {id: fp-write-git-hook, tool: Write, input: {file_path: ".git/hooks/pre-commit", content: "x"}, expect: ask}

@@ -239,6 +239,207 @@ rules:
       access: write
     action: ask
     reason: "this file redirects where packages, credentials or commits go"
+  - id: ask-project-autorun-files
+    # Files that make code run later, outside this session, when someone does something ordinary:
+    # build and task runners (package.json scripts, Makefile, pyproject/setup.py/setup.cfg, tox,
+    # nox, build.rs), test hooks that pytest imports (conftest.py), interpreter start-up hooks
+    # (sitecustomize.py, usercustomize.py, *.pth lines that start with "import"), pre-commit,
+    # git attributes and submodules, CI definitions (GitHub, GitLab, CircleCI, Jenkins, Azure,
+    # Travis, Bitbucket), container builds (Dockerfile, Compose), dev containers, editor tasks and
+    # run configurations, cargo/yarn/pnpm/npm settings and the per-user tool configuration that
+    # names helper programs or registries (cargo, gradle init scripts, conda, terraform, the AWS
+    # CLI's credential_process, pip). Creating, changing, renaming or deleting one is a write
+    # like any other, but an allow rule for ordinary project writes must never cover these: a
+    # person should see the change, because the code it adds runs without anyone launching it.
+    # No `tool:` filter, like the rule above: Write, Edit, MultiEdit and every shell write carry
+    # the same path with access write. Whole names only: README, *.md, source files, lockfiles,
+    # tsconfig.json, .gitignore and .editorconfig are not here (they do not run anything). The
+    # accepted false positives are the everyday ones: editing package.json, Makefile,
+    # pyproject.toml, conftest.py, a Dockerfile or a CI file asks; so does a *.pth data file
+    # (PyTorch weights) and any Dockerfile* name.
+    match:
+      path_glob:
+        # project: build, task and test runners
+        - "**/package.json"
+        - "**/Makefile"
+        - "**/makefile"
+        - "**/GNUmakefile"
+        - "**/pyproject.toml"
+        - "**/setup.py"
+        - "**/setup.cfg"
+        - "**/tox.ini"
+        - "**/noxfile.py"
+        - "**/conftest.py"
+        - "**/sitecustomize.py"
+        - "**/usercustomize.py"
+        - "**/*.pth"
+        - "**/build.rs"
+        - "**/rust-toolchain"
+        - "**/rust-toolchain.toml"
+        - "**/.cargo/config.toml"
+        - "**/.cargo/config"
+        - "**/.npmrc"
+        - "**/.yarnrc*"
+        - "**/.pnpmfile.cjs"
+        # project: git hooks and repository settings that run programs
+        - "**/.pre-commit-config.yaml"
+        - "**/.gitattributes"
+        - "**/.gitmodules"
+        - "**/.envrc"
+        - "**/.husky/**"
+        # project: CI
+        - "**/.github/workflows/**"
+        - "**/.github/actions/**"
+        - "**/.gitlab-ci.yml"
+        - "**/.circleci/**"
+        - "**/Jenkinsfile"
+        - "**/azure-pipelines.yml"
+        - "**/.travis.yml"
+        - "**/bitbucket-pipelines.yml"
+        # project: containers and editors
+        - "**/Dockerfile*"
+        - "**/docker-compose*.yml"
+        - "**/docker-compose*.yaml"
+        - "**/compose.yml"
+        - "**/compose.yaml"
+        - "**/compose.*.yml"
+        - "**/compose.*.yaml"
+        - "**/.devcontainer/**"
+        - "**/.vscode/tasks.json"
+        - "**/.vscode/settings.json"
+        - "**/.vscode/launch.json"
+        - "**/.vscode/extensions.json"
+        - "**/.vscode/mcp.json"
+        - "**/.idea/runConfigurations/**"
+        # user level (home-relative; ~/.gitconfig and ~/.npmrc are in ask-user-config-write)
+        - "~/.cargo/config.toml"
+        - "~/.cargo/config"
+        - "~/.gradle/init.d/**"
+        - "~/.gradle/init.gradle*"
+        - "~/.condarc"
+        - "~/.yarnrc*"
+        - "~/.terraformrc"
+        - "~/.aws/config"
+        - "~/.config/pip/pip.conf"
+        - "~/AppData/Roaming/pip/pip.ini"
+        - "**/appdata/roaming/pip/pip.ini"
+      access: write
+    action: ask
+    reason: "this file makes a build, CI run, editor, container or tool run code later"
+  - id: ask-secret-file-write
+    # The write side of no-secret-read, with the same globs word for word (a test keeps the two
+    # lists equal). Their content is a secret, so reading them is refused; creating or changing one
+    # is nearly as sensitive: a new .env, key or credentials file changes which account the project
+    # talks to, and an edit through the Edit tool shows the agent the old content. A write inside the
+    # project is otherwise allowed (allow-project-file-writes in the default policy), so these names
+    # must ask before that allow rule can reach them.
+    match:
+      path_glob:
+        - "**/.env"
+        - "**/.env.*"
+        - "**/*.env"
+        - "**/env"
+        - "**/.envs/**"
+        - "**/.ssh/**"
+        - "**/*.pem"
+        - "**/*.key"
+        - "**/*.jks"
+        - "**/*.keystore"
+        - "**/*.tfstate*"
+        - "**/*.tfvars"
+        - "**/*.tfvars.json"
+        - "**/service-account*.json"
+        - "**/credentials.json"
+        - "**/credentials.txt"
+        - "**/secrets.yml"
+        - "**/secrets.yaml"
+        - "**/secrets.json"
+        - "**/secrets.toml"
+        - "**/secrets.txt"
+        - "**/secret.txt"
+        - "**/key.txt"
+        - "**/keys.txt"
+        - "**/password.txt"
+        - "**/passwords.txt"
+        - "**/token.txt"
+        - "**/.htpasswd"
+        - "**/kubeconfig"
+        - "**/*.kubeconfig"
+        - "**/local.settings.json"
+        - "**/*.kdbx"
+        - "**/*.kdb"
+        - "/etc/shadow*"
+        - "/etc/gshadow*"
+        - "/etc/sudoers"
+        - "/etc/sudoers.d/**"
+        - "/etc/ssh/ssh_host_*"
+        - "/proc/*/environ"
+      access: write
+    action: ask
+    reason: "writing secrets and credential files needs confirmation"
+  - id: ask-credential-file-write
+    # The write side of no-credential-store-read, same globs (a test keeps the lists equal). A
+    # credential file or private key created or replaced inside the project (.git-credentials, .netrc,
+    # .aws/credentials, id_rsa) is picked up by the tools that read it, and what is stored there
+    # decides which identity or server they use. A write inside the project is otherwise allowed in
+    # the default policy, so these names must ask first.
+    match:
+      path_glob:
+        - "**/.aws/**"
+        - "**/.azure/**"
+        - "**/.config/gcloud/**"
+        - "**/.config/gh/**"
+        - "**/.config/op/**"
+        - "**/.config/doctl/**"
+        - "**/.config/rclone/**"
+        - "**/rclone.conf"
+        - "**/.kube/config"
+        - "**/.docker/config.json"
+        - "**/.dockercfg"
+        - "**/.gnupg/**"
+        - "**/.git-credentials"
+        - "**/.git/credentials"
+        - "**/.config/git/credentials"
+        - "**/.gitconfig"
+        - "**/.git/config"
+        - "**/.netrc"
+        - "**/_netrc"
+        - "**/.npmrc"
+        - "**/.pypirc"
+        - "**/.pgpass"
+        - "**/.my.cnf"
+        - "**/.s3cfg"
+        - "**/.boto"
+        - "**/.vault-token"
+        - "**/.cargo/credentials*"
+        - "**/.gem/credentials"
+        - "**/.m2/settings.xml"
+        - "**/.terraform.d/credentials.tfrc.json"
+        - "**/appdata/roaming/github cli/**"
+        - "**/appdata/roaming/gcloud/**"
+        - "**/id_rsa*"
+        - "**/id_dsa*"
+        - "**/id_ecdsa*"
+        - "**/id_ed25519*"
+        - "**/*.p12"
+        - "**/*.pfx"
+        - "**/*.ppk"
+      access: write
+    action: ask
+    reason: "writing credential stores and private keys needs confirmation"
+  - id: ask-git-internals-write
+    # Everything below a .git directory: HEAD, refs, the index, the object store, info/attributes and
+    # the hooks and config of submodules and worktrees (.git/modules/x/hooks/..., .git/modules/x/config),
+    # which the narrower rules for .git/hooks and .git/config do not reach. Rewriting them corrupts
+    # the repository or makes git run a program later; nothing in a coding task writes them by hand
+    # (git itself does, and a shell git command names no .git path). A write inside the project is
+    # otherwise allowed in the default policy, so this directory must ask first.
+    match:
+      path_glob:
+        - "**/.git/**"
+      access: write
+    action: ask
+    reason: "writing inside a .git directory changes the repository itself or what git runs"
   # ---- secrets and credentials (read) --------------------------------------------------------
   - id: no-secret-read
     # Environment files, private keys, certificates, Terraform state and variable files, service
@@ -860,13 +1061,323 @@ rules:
       domain_not_in: ["pypi.org", "files.pythonhosted.org", "github.com", "registry.npmjs.org"]
     action: ask
     reason: "network access to a host outside the allowlist"
-  # ---- the only allow rule -------------------------------------------------------------------
+  # ---- reading outside the project, for the programs of the allow rules below -------------------
+  - id: ask-shell-read-outside-project
+    # The allow rules for head, tail, wc and grep (also egrep, fgrep) and for Get-ChildItem work
+    # without a path too (the filters read their stdin, `git log | head -n 5`; Get-ChildItem lists
+    # the current directory), so they cannot demand `path_inside_project`: a command without a path
+    # has no path to test. This rule closes the gap from the other side: the same programs with a
+    # path that is not shown to be inside the project (outside, or unsure) ask, and the strictest
+    # rule beats the allow rule. Keep the program list equal to the programs of every allow rule
+    # below that has no path_inside_project and is not one of the no-path rules (a test checks it).
+    # Program names are matched exactly in Bash and without case in PowerShell. No path_glob and
+    # no `access` on purpose: a "**" glob of a read rule would also become a protected name for the
+    # subtree scan of recursive reads (every file below a directory would count as protected).
+    tool: [Bash, PowerShell]
+    match:
+      program:
+        - head
+        - tail
+        - wc
+        - grep
+        - egrep
+        - fgrep
+        - Get-ChildItem
+      path_outside_project: true
+    action: ask
+    reason: "a path that is not inside the project directory"
+  - id: ask-git-read-outside-project
+    # The same gap for git: `git status` and `git diff` carry no path at all, so the allow rule for
+    # them cannot require one inside the project. A pathspec, a REV:PATH operand or a blame --contents
+    # file that is not shown to be inside the project asks (`git diff` of two files outside a
+    # repository compares any two files on the disk). Keep the subcommands equal to those of the
+    # git allow rules (a test checks it).
+    tool: [Bash, PowerShell]
+    match:
+      program: [git]
+      subcommand: [status, diff, log, show, blame, rev-parse, branch]
+      path_outside_project: true
+    action: ask
+    reason: "a path that is not inside the project directory"
+  # ---- allow rules for everyday use ----------------------------------------------------------
+  # With defaults.emit_allow false an `allow` verdict is "no decision": Claude Code's own permission
+  # flow still decides, so these rules only stop boundkeep from asking about actions that are well
+  # understood and cannot reach anything the rules above protect (the strictest rule always wins).
+  # An allow rule never matches a gray action or one behind sudo/env/nohup ... (wrappers).
+  # Tier 1, read-only inspection: every path must be only READ (`paths_read_only`) and, for programs
+  # that take paths, inside the project; `flags_none` lists every option of the program that writes,
+  # runs something or reads files it was not given. Tier 2, writes inside the project, comes last.
+  # The allow rules are the only difference between this policy and strict.yaml, which keeps
+  # read-inside-project as its one allow rule.
   - id: read-inside-project
     # Reading files the project already contains is what a coding assistant is for. Allowed only
     # when every path is shown to be inside the project; a deny or ask rule above still wins. An
     # allow rule never matches an action with wrappers (sudo, env, nohup ...) or a gray one.
     tool: [Read, Glob, Grep]
     match:
+      path_inside_project: true
+    action: allow
+  - id: allow-list-inside-project
+    # ls and dir only print names. Allowed when every path is shown to be inside the project and is
+    # only read (a redirect to a file makes the path a write); `ls` alone lists ".", also inside.
+    # --time-style=+FORMAT prints the literal characters of FORMAT (`ls -l --time-style=+$TOKEN`
+    # would print an environment value), so it is left out.
+    tool: [Bash]
+    match:
+      program: [ls, dir]
+      flags_none: ["--time-style"]
+      paths_read_only: true
+      path_inside_project: true
+    action: allow
+  - id: allow-tree-inside-project
+    # tree prints names. -o writes its output to a file; -R makes tree run itself in every
+    # directory and write a 00Tree.html file into each of them. Both are left out, and so are -H
+    # (base href), -T (title) and --timefmt, which print a string given on the command line (an
+    # environment value among them).
+    tool: [Bash]
+    match:
+      program: [tree]
+      flags_none: ["-o", "--output", "-R", "-H", "-T", "--timefmt"]
+      paths_read_only: true
+      path_inside_project: true
+    action: allow
+  - id: allow-find-inside-project
+    # find prints names. Left out: -delete, -exec, -execdir, -ok and -okdir (delete, or run a
+    # program on every match), -fprint, -fprint0, -fprintf and -fls (write the listing to a file),
+    # -files0-from (starting points read from a file the rule cannot see), -printf (prints the
+    # format string it is given, an environment value among them). The starting points
+    # (default ".") must be inside the project.
+    tool: [Bash]
+    match:
+      program: [find]
+      flags_none:
+        - "-delete"
+        - "-exec"
+        - "-execdir"
+        - "-ok"
+        - "-okdir"
+        - "-fprint"
+        - "-fprint0"
+        - "-fprintf"
+        - "-fls"
+        - "-files0-from"
+        - "-printf"
+      paths_read_only: true
+      path_inside_project: true
+    action: allow
+  - id: allow-rg-inside-project
+    # ripgrep searches files. --pre runs a command on every file before searching it and
+    # --hostname-bin runs one to learn the host name; both are left out. So are -r / --replace and
+    # the separator options (--context-separator, --field-context-separator,
+    # --field-match-separator, --path-separator): they print a string given on the command line
+    # (an environment value among them). Everything it reads must be inside the project
+    # (`rg PATTERN` alone searches ".").
+    tool: [Bash]
+    match:
+      program: [rg]
+      flags_none:
+        - "--pre"
+        - "--hostname-bin"
+        - "-r"
+        - "--replace"
+        - "--context-separator"
+        - "--field-context-separator"
+        - "--field-match-separator"
+        - "--path-separator"
+      paths_read_only: true
+      path_inside_project: true
+    action: allow
+  - id: allow-cat-inside-project
+    # cat prints the files it is given: allowed when every path is shown to be inside the project.
+    # `cat` without a path reads stdin and has no path to test, so it stays outside this rule (the
+    # filters that do work on stdin are in allow-read-filters). Protected names (.env, keys) are
+    # refused by the deny rules above, which win.
+    tool: [Bash]
+    match:
+      program: [cat]
+      paths_read_only: true
+      path_inside_project: true
+    action: allow
+  - id: allow-read-filters
+    # head, tail, wc and grep (also egrep, fgrep) print or count the files they are given or their
+    # stdin (`git log | head -n 5`, `grep -rn TODO src | wc -l`). Without a path they have nothing
+    # to test, so this rule does not require path_inside_project: ask-shell-read-outside-project asks
+    # when a named path is not inside the project. wc --files0-from reads the names of the files to
+    # count from a file the rule cannot see, so it is left out; so is grep --label, which prints the
+    # string it is given as the file name. grep -r is a bounded subtree read: a protected name below
+    # the directory (.env) is found by the normalizer and denied.
+    tool: [Bash]
+    match:
+      program: [head, tail, wc, grep, egrep, fgrep]
+      flags_none: ["--files0-from", "--label"]
+      paths_read_only: true
+    action: allow
+  - id: allow-no-path-commands
+    # pwd prints the working directory and touches no file; a redirect gives it a written path,
+    # which paths_read_only refuses. echo is NOT here (and PowerShell's Write-Output is not in
+    # allow-ps-no-path-commands): they print whatever the shell expanded into their arguments, an
+    # environment variable included (`echo $ANTHROPIC_API_KEY`), and the rule language cannot tell
+    # `echo hello` from `echo $NAME`. Printing a secret into the agent's context is the harm.
+    tool: [Bash]
+    match:
+      program: [pwd]
+      paths_read_only: true
+    action: allow
+  - id: allow-git-read-only
+    # git status, diff, log, show, blame and rev-parse only read the repository. Left out: -c and
+    # --config-env (a config entry can name a pager, fsmonitor, textconv or external diff program),
+    # -C, --git-dir and --work-tree (another directory: the paths are not known), --exec-path
+    # (git subcommands run from there), --paginate (starts the configured pager), --ext-diff and
+    # --textconv (run the programs configured for diff drivers; each also with its unique
+    # abbreviations, which git accepts), --output (writes the diff to a file), --no-index (compares any two
+    # files on the disk), --open-files-in-pager, --ignore-revs-file (a file git reads for revision names
+    # and quotes in its error), --help (starts the man page viewer), and the options that print a
+    # string given on the command line (an environment value among them): --format, --pretty,
+    # --src-prefix, --dst-prefix, --line-prefix, --date (date=format:...), --sq-quote, --default.
+    # Not covered: in an UNTRUSTED repository these commands can still run
+    # programs named in that repository's .git/config (core.fsmonitor, a textconv or diff driver, a
+    # pager); that is why defaults.emit_allow stays off. `git -p log` (global paginate) cannot be told
+    # from `git log -p` and is allowed. A pathspec or REV:PATH operand outside the project asks
+    # (ask-git-read-outside-project); a repository elsewhere is reached only through the options left out.
+    tool: [Bash, PowerShell]
+    match:
+      program: [git]
+      subcommand: [status, diff, log, show, blame, rev-parse]
+      flags_none:
+        - "-c"
+        - "-C"
+        - "--config-env"
+        - "--git-dir"
+        - "--work-tree"
+        - "--exec-path"
+        - "--paginate"
+        - "--ext-diff"
+        - "--ext"
+        - "--ext-"
+        - "--ext-d"
+        - "--ext-di"
+        - "--ext-dif"
+        - "--textconv"
+        - "--textc"
+        - "--textco"
+        - "--textcon"
+        - "--output"
+        - "--no-index"
+        - "--open-files-in-pager"
+        - "--ignore-revs-file"
+        - "--help"
+        - "--format"
+        - "--form"
+        - "--forma"
+        - "--pretty"
+        - "--pret"
+        - "--prett"
+        - "--src-prefix"
+        - "--dst-prefix"
+        - "--line-prefix"
+        - "--date"
+        - "--sq-quote"
+        - "--default"
+      paths_read_only: true
+    action: allow
+  - id: allow-git-branch-list
+    # A bare `git branch` cannot be told from `git branch NAME` (the rule language cannot see
+    # positional words), so only the forms that list are allowed: -a, -r, --list, -l, --all,
+    # --remotes, --show-current. -v and -vv are NOT among them: `git branch -v NAME` creates the
+    # branch. Every option that deletes, renames, copies, forces or edits a branch is left out, and
+    # so are the global options that allow-git-read-only leaves out (-c, -C, --git-dir ...).
+    tool: [Bash, PowerShell]
+    match:
+      program: [git]
+      subcommand: [branch]
+      flags_any: ["-a", "-r", "--list", "-l", "--all", "--remotes", "--show-current"]
+      flags_none:
+        - "-d"
+        - "-D"
+        - "--delete"
+        - "-m"
+        - "-M"
+        - "--move"
+        - "-c"
+        - "-C"
+        - "--copy"
+        - "-f"
+        - "--force"
+        - "-u"
+        - "--set-upstream-to"
+        - "--unset-upstream"
+        - "--edit-description"
+        - "--track"
+        - "--no-track"
+        - "--config-env"
+        - "--git-dir"
+        - "--work-tree"
+        - "--exec-path"
+        - "--paginate"
+        - "--help"
+        - "--format"
+        - "--form"
+        - "--forma"
+      paths_read_only: true
+    action: allow
+  - id: allow-ps-inspect-inside-project
+    # The read cmdlets that take a path. Every path must be inside the project and only read; a
+    # call without a path (fed from the pipeline: `Get-ChildItem | Get-Content` reads every file
+    # of the listing) has no path to test and stays outside this rule. Provider paths (HKLM:, Env:),
+    # wildcards and unknown parameters (-Credential) come back gray from the normalizer and never match.
+    tool: [PowerShell]
+    match:
+      program: [Get-Content, Select-String, Test-Path, Get-Item, Resolve-Path]
+      paths_read_only: true
+      path_inside_project: true
+    action: allow
+  - id: allow-ps-list-here
+    # Get-ChildItem (ls, dir, gci) lists names, and without a path it lists the current directory,
+    # so this rule cannot demand path_inside_project. A path it is given that is not inside the
+    # project asks (ask-shell-read-outside-project). Provider paths (Env:, HKLM:), wildcards and
+    # unknown parameters (-Credential) come back gray from the normalizer and never match.
+    tool: [PowerShell]
+    match:
+      program: [Get-ChildItem]
+      paths_read_only: true
+    action: allow
+  - id: allow-ps-no-path-commands
+    # Cmdlets that print or filter and take no path at all (the normalizer's no-path list):
+    # Get-Location, Get-Date and the pipeline counter Measure-Object (it prints counts, never the
+    # value it is given). A redirect gives the line a written path, which paths_read_only refuses.
+    # Not here: Write-Output prints whatever PowerShell expanded into its arguments
+    # (`$env:SECRET_TOKEN`), and so does Select-Object (`$env:SECRET_TOKEN | Select-Object`: the
+    # normalizer drops a variable that starts a pipeline, so nothing marks that line). Get-Date
+    # -Format / -UFormat print the literal characters of the format string it is given, and -Date
+    # echoes a value that does not parse in its error: all three are left out.
+    tool: [PowerShell]
+    match:
+      program: [Get-Location, Get-Date, Measure-Object]
+      flags_none: ["-Format", "-UFormat", "-Date"]
+      paths_read_only: true
+    action: allow
+  - id: allow-mkdir-touch-inside-project
+    # mkdir and touch create directories and empty files; a name that matters (Makefile, .env,
+    # .git/...) is caught by the ask rules above, which win. touch -r and --reference copy the
+    # time stamps of a file the rule would not know to be inside the project. cp, mv, rm,
+    # redirects, tee, sed -i and PowerShell's New-Item stay as they are (New-Item can make a
+    # symbolic link or junction to anywhere, and PowerShell's mkdir is New-Item underneath).
+    tool: [Bash]
+    match:
+      program: [mkdir, touch]
+      flags_none: ["-r", "--reference"]
+      path_inside_project: true
+    action: allow
+  - id: allow-project-file-writes
+    # Write, Edit, MultiEdit and NotebookEdit of a file inside the project: what a coding assistant
+    # is for. "**" selects every path so that `access: write` can qualify it; the path must be
+    # definitely inside the project (a `..` that leaves it, another drive and an unresolved path are
+    # not). Every rule above that protects a name wins over this one: the guard's own files (deny),
+    # files that make code run later, secrets, credential stores, .git and agent configuration (ask).
+    tool: [Write, Edit, MultiEdit, NotebookEdit]
+    match:
+      path_glob: ["**"]
+      access: write
       path_inside_project: true
     action: allow
 
@@ -895,7 +1406,7 @@ tests:
   - { tool: Read,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/.env" },        expect: deny }
   - { tool: Read,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/certs/a.pem" }, expect: deny }
   - { tool: Read,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/.envrc" },      expect: allow }   # not an env file
-  - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "cat .envrc" },                    expect: gray }
+  - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "cat .envrc" },                    expect: allow }   # reading it is fine: not an env file
   - { tool: Read,  platform: [posix], input: { file_path: "/etc/shadow" },                  expect: deny }
   - { tool: Read,  platform: [windows], input: { file_path: "~\\AppData\\Roaming\\Microsoft\\Credentials\\ABCDEF" }, expect: deny }
   - { tool: Read,  platform: [windows], input: { file_path: "~\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data" }, expect: deny }
@@ -905,7 +1416,7 @@ tests:
   # The guard's own files.
   - { tool: Write, platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/.claude/settings.json", content: "{}" }, expect: deny }
   - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "echo {} > .claude/settings.local.json" }, expect: deny }
-  - { tool: Write, platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/.claude/settings.json.bak", content: "x" }, expect: gray }   # not a settings*.json file
+  - { tool: Write, platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/.claude/settings.json.bak", content: "x" }, expect: allow }   # not a settings*.json file: an ordinary project write
   # Persistence and configuration that makes code run later.
   - { tool: Bash,  input: { command: "echo 'x' >> ~/.bashrc" },       expect: ask }
   - { tool: Write, platform: [windows], input: { file_path: "~\\Documents\\WindowsPowerShell\\profile.ps1", content: "x" }, expect: ask }
@@ -921,7 +1432,7 @@ tests:
   - { tool: Bash,  input: { command: "git reset --hard HEAD~1" },     expect: ask }
   - { tool: Bash,  input: { command: "git clean -fd" },               expect: ask }
   - { tool: Bash,  input: { command: "git branch -D topic" },         expect: ask }
-  - { tool: Bash,  input: { command: "git status" },                  expect: gray }
+  - { tool: Bash,  input: { command: "git status" },                  expect: allow }
   - { tool: Bash,  platform: [posix], input: { command: "dd if=/dev/zero of=/dev/sda" }, expect: deny }
   - { tool: Bash,  input: { command: "docker system prune -af" },     expect: ask }
   # A network command whose destination is a remote name (origin), not a URL, goes where the
@@ -962,7 +1473,7 @@ tests:
   - { tool: PowerShell, platform: [windows], input: { command: "net localgroup administrators bob /add" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "net1 user bob hunter2xx" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "git restore src\\a.py" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Get-Date" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Date" }, expect: allow }
   # Credential carriers inside the project (read): the project-internal allow rule must not win.
   - { tool: Read, input: { file_path: ".claude/settings.local.json" }, expect: deny }
   # The project-level settings.json is committed to the repository (init writes the hook entries
@@ -1002,7 +1513,7 @@ tests:
   - { tool: Read, input: { file_path: "README.md" }, expect: allow }
   - { tool: Read, input: { file_path: "src/env.py" }, expect: allow }   # whole names only
   - { tool: Read, input: { file_path: ".claude/commands/review.md" }, expect: allow }
-  - { tool: Bash, input: { command: "cat docker-compose.yml" }, expect: gray }
+  - { tool: Bash, input: { command: "cat docker-compose.yml" }, expect: allow }
   # boundkeep's own command line, claude, process killing, package removal.
   - { tool: Bash, input: { command: "boundkeep init --reset-policy" }, expect: deny }
   - { tool: Bash, input: { command: "boundkeep log --purge" }, expect: deny }
@@ -1037,3 +1548,219 @@ tests:
   - { tool: Read, input: { file_path: "~/.boundkeep/endpoint.json" }, expect: ask }
   - { tool: Read, input: { file_path: "~/.boundkeep/logs/audit.jsonl" }, expect: ask }
   - { tool: Bash, input: { command: "cat ~/.boundkeep/logs/audit.jsonl" }, expect: ask }
+  # Files that make code run later (ask-project-autorun-files), whichever tool writes them.
+  - { tool: Write, input: { file_path: "package.json", content: "{}" }, expect: ask }
+  - { tool: Write, input: { file_path: "pyproject.toml", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "tests/conftest.py", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "Dockerfile", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "docker-compose.override.yaml", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".gitlab-ci.yml", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".pre-commit-config.yaml", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "~/.cargo/config.toml", content: "x" }, expect: ask }
+  - { tool: Write, platform: [windows], input: { file_path: "~\\AppData\\Roaming\\pip\\pip.ini", content: "x" }, expect: ask }
+  - { tool: Edit, input: { file_path: "Makefile", old_string: "a", new_string: "b" }, expect: ask }
+  - { tool: MultiEdit, input: { file_path: "setup.py", edits: [{ old_string: "a", new_string: "b" }] }, expect: ask }
+  - { tool: Bash, input: { command: "echo x > Makefile" }, expect: ask }
+  - { tool: Bash, input: { command: "sed -i 's/a/b/' package.json" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Content package.json x" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-Item Makefile" }, expect: ask }
+  - { tool: Write, platform: [windows], input: { file_path: "PACKAGE.JSON.", content: "{}" }, expect: ask }   # case and trailing dot
+  - { tool: Write, input: { file_path: "src/app.py", content: "x" }, expect: allow }   # ordinary source: allow-project-file-writes
+  - { tool: Write, input: { file_path: "README.md", content: "x" }, expect: allow }
+  - { tool: Write, input: { file_path: "package-lock.json", content: "{}" }, expect: allow }   # lockfiles run nothing
+  - { tool: Write, input: { file_path: "tsconfig.json", content: "{}" }, expect: allow }
+  - { tool: Bash, input: { command: "cat package.json" }, expect: allow }   # reading is not writing
+
+  # ---- M1c: allow rules for everyday use (default policy only: strict.yaml keeps read-inside-project as its one allow rule).
+  # Read-only inspection: ls, dir, tree, find, rg, cat, head, tail, wc, grep, pwd (echo is not allowed).
+  - { tool: Bash, input: { command: "ls" },                           expect: allow }
+  - { tool: Bash, input: { command: "ls -la src" },                   expect: allow }
+  - { tool: Bash, input: { command: "ls -R" },                        expect: allow }
+  - { tool: Bash, input: { command: "ls .." },                        expect: gray }   # outside the project
+  - { tool: Bash, input: { command: "ls /etc" },                      expect: gray }
+  - { tool: Bash, input: { command: "ls ~/.ssh" },                    expect: deny }   # a secret path: the deny rule wins
+  - { tool: Bash, input: { command: "ls > out.txt" },                 expect: gray }   # the redirect writes
+  - { tool: Bash, input: { command: "ls *.py" },                      expect: gray }   # an unexpanded glob is never allowed
+  - { tool: Bash, input: { command: "sudo ls" },                      expect: gray }   # a wrapper: a different action
+  - { tool: Bash, input: { command: "tree" },                         expect: allow }
+  - { tool: Bash, input: { command: "tree -L 2 src" },                expect: allow }
+  - { tool: Bash, input: { command: "tree src tests" },               expect: allow }
+  - { tool: Bash, input: { command: "tree .." },                      expect: gray }
+  - { tool: Bash, input: { command: "tree -o out.txt" },              expect: gray }
+  - { tool: Bash, input: { command: "tree -R" },                      expect: gray }   # writes 00Tree.html into every directory
+  - { tool: Bash, input: { command: "find . -name '*.py'" },          expect: allow }
+  - { tool: Bash, input: { command: "find src -type f" },             expect: allow }
+  - { tool: Bash, input: { command: "find . -maxdepth 2 -name '*.md' -print" }, expect: allow }
+  - { tool: Bash, input: { command: "find . -newer README.md" },      expect: allow }
+  - { tool: Bash, input: { command: "find / -name x" },               expect: gray }
+  - { tool: Bash, input: { command: "find . -name x -delete" },       expect: gray }
+  - { tool: Bash, input: { command: "find . -fprint out.txt" },       expect: gray }
+  - { tool: Bash, input: { command: "find . -files0-from list.txt" }, expect: gray }
+  - { tool: Bash, input: { command: "rg TODO src" },                  expect: allow }
+  - { tool: Bash, input: { command: "rg -n 'def main' src" },         expect: allow }
+  - { tool: Bash, input: { command: "rg TODO" },                      expect: allow }
+  - { tool: Bash, input: { command: "rg -g '*.py' TODO src" },        expect: allow }
+  - { tool: Bash, input: { command: "rg --pre=cat TODO src" },        expect: gray }
+  - { tool: Bash, input: { command: "rg --hostname-bin x TODO" },     expect: gray }
+  - { tool: Bash, input: { command: "rg --pre cat TODO src" },        expect: gray }   # --pre runs a command per file
+  - { tool: Bash, input: { command: "rg TODO ../other" },             expect: gray }   # outside the project
+  - { tool: Bash, input: { command: "cat README.md" },                expect: allow }
+  - { tool: Bash, input: { command: "cat docker-compose.yml src/app.py" }, expect: allow }
+  - { tool: Bash, input: { command: "cat ../outside.txt" },           expect: gray }   # outside the project
+  - { tool: Bash, input: { command: "cat" },                          expect: gray }   # reads stdin: no path to test
+  - { tool: Bash, input: { command: "cat src/*.py" },                 expect: gray }   # an unexpanded glob is never allowed
+  - { tool: Bash, input: { command: "cat a.txt > b.txt" },            expect: gray }
+  - { tool: Bash, input: { command: "sudo cat README.md" },           expect: gray }
+  - { tool: Bash, input: { command: "cat .env" },                     expect: deny }
+  - { tool: Bash, input: { command: "head -n 20 src/app.py" },        expect: allow }
+  - { tool: Bash, input: { command: "tail -n 50 build.log" },         expect: allow }
+  - { tool: Bash, input: { command: "wc -l src/app.py" },             expect: allow }
+  - { tool: Bash, input: { command: "wc --files0-from=list.txt" },    expect: gray }
+  - { tool: Bash, input: { command: "grep -rn TODO src" },            expect: allow }
+  - { tool: Bash, input: { command: "grep -n def src/app.py" },       expect: allow }
+  - { tool: Bash, input: { command: "grep -rn TODO /etc" },           expect: ask }
+  - { tool: Bash, input: { command: "grep SECRET .env" },             expect: deny }
+  - { tool: Bash, input: { command: "ls src | wc -l" },               expect: allow }
+  - { tool: Bash, input: { command: "git log --oneline | head -n 5" }, expect: allow }
+  - { tool: Bash, input: { command: "ls src | xargs wc -l" },         expect: ask }   # the arguments arrive at run time
+  - { tool: Bash, input: { command: "pwd" },                          expect: allow }
+  - { tool: Bash, input: { command: "pwd; ls" },                      expect: allow }
+  - { tool: Bash, input: { command: "pwd && git status" },            expect: allow }
+  - { tool: Bash, input: { command: "pwd > p.txt" },                  expect: gray }
+  - { tool: Bash, input: { command: "pwd > Makefile" },               expect: ask }
+  - { tool: Bash, input: { command: "sudo pwd" },                     expect: gray }
+  # echo prints what the shell expands into it: never allow (an environment value must not reach the agent)
+  - { tool: Bash, input: { command: "echo hello" },                   expect: gray }
+  - { tool: Bash, input: { command: "echo $ANTHROPIC_API_KEY" },      expect: gray }
+  - { tool: Bash, input: { command: "echo \"$X_TOKEN\"" },            expect: gray }
+  - { tool: Bash, input: { command: "echo ${PASSWORD}" },             expect: gray }
+  - { tool: Bash, input: { command: "printenv" },                     expect: gray }
+  - { tool: Bash, input: { command: "echo $(cat .env)" },             expect: deny }
+  - { tool: Bash, input: { command: "find . -printf $X_TOKEN" },      expect: gray }   # prints its format string
+  - { tool: Bash, input: { command: "rg -r $X_TOKEN x src" },         expect: gray }   # prints the replacement
+  - { tool: Bash, input: { command: "git log --format=$X_TOKEN" },    expect: gray }
+  - { tool: Bash, input: { command: "git log --pretty=format:%h" },   expect: gray }
+  - { tool: Bash, input: { command: "ls -l --time-style=+$X_TOKEN" }, expect: gray }
+  - { tool: Bash, input: { command: "echo x > out.txt" },             expect: gray }
+  - { tool: Bash, input: { command: "echo x > Makefile" },            expect: ask }
+  # git: status, diff, log, show, blame, rev-parse, and `git branch` only in its listing forms.
+  - { tool: Bash, input: { command: "git diff --stat" },              expect: allow }
+  - { tool: Bash, input: { command: "git diff HEAD~1" },              expect: allow }
+  - { tool: Bash, input: { command: "git log --oneline -n 20" },      expect: allow }
+  - { tool: Bash, input: { command: "git log --oneline -n 10 -- src/app.py" }, expect: allow }
+  - { tool: Bash, input: { command: "git show HEAD --stat" },         expect: allow }
+  - { tool: Bash, input: { command: "git blame src/app.py" },         expect: allow }
+  - { tool: Bash, input: { command: "git rev-parse HEAD" },           expect: allow }
+  - { tool: Bash, input: { command: "git status && git diff --stat" }, expect: allow }
+  - { tool: Bash, input: { command: "git branch -a" },                expect: allow }
+  - { tool: Bash, input: { command: "git branch --list" },            expect: allow }
+  - { tool: Bash, input: { command: "git branch -r" },                expect: allow }
+  - { tool: Bash, input: { command: "git branch --show-current" },    expect: allow }
+  - { tool: Bash, input: { command: "git branch" },                   expect: gray }   # cannot be told from `git branch NAME`
+  - { tool: Bash, input: { command: "git branch topic" },             expect: gray }
+  - { tool: Bash, input: { command: "git branch -v topic" },          expect: gray }   # -v with a name creates the branch
+  - { tool: Bash, input: { command: "git branch -d topic" },          expect: gray }
+  - { tool: Bash, input: { command: "git branch -a -d topic" },       expect: gray }
+  - { tool: Bash, input: { command: "git stash list" },               expect: gray }
+  - { tool: Bash, input: { command: "git --version" },                expect: gray }
+  - { tool: Bash, input: { command: "git -c core.pager=x log" },      expect: gray }   # inline config can name a program
+  - { tool: Bash, input: { command: "git log --ext-diff" },           expect: gray }
+  - { tool: Bash, input: { command: "git log -p --textconv" },        expect: gray }
+  - { tool: Bash, input: { command: "git diff --output=patch.txt" },  expect: gray }
+  - { tool: Bash, input: { command: "git diff --no-index a.txt b.txt" }, expect: gray }
+  - { tool: Bash, input: { command: "git --paginate log" },           expect: gray }
+  - { tool: Bash, input: { command: "git log --help" },               expect: gray }   # starts the man page viewer
+  - { tool: Bash, input: { command: "git -C ../other status" },       expect: ask }
+  - { tool: Bash, input: { command: "git --git-dir=../x/.git log" },  expect: ask }
+  - { tool: Bash, input: { command: "git show HEAD:.env" },           expect: deny }   # REV:PATH is a read of the path
+  - { tool: Bash, input: { command: "git diff -- ../outside.txt" },   expect: ask }
+  - { tool: Bash, input: { command: "sudo git status" },              expect: gray }
+  - { tool: Bash, input: { command: "git add ." },                    expect: gray }   # not a read
+  # Project-internal writes: mkdir and touch, and Write / Edit / MultiEdit / NotebookEdit.
+  - { tool: Bash, input: { command: "mkdir -p build/out" },           expect: allow }
+  - { tool: Bash, input: { command: "touch notes.md" },               expect: allow }
+  - { tool: Bash, input: { command: "mkdir -p src/pkg tests/unit" },  expect: allow }
+  - { tool: Bash, input: { command: "touch src/__init__.py" },        expect: allow }
+  - { tool: Bash, input: { command: "touch -r ../x notes.md" },       expect: gray }
+  - { tool: Bash, input: { command: "mkdir ../outside" },             expect: gray }
+  - { tool: Bash, input: { command: "touch Makefile" },               expect: ask }
+  - { tool: Bash, input: { command: "touch .env" },                   expect: ask }
+  - { tool: Bash, input: { command: "mkdir .git/x" },                 expect: ask }
+  - { tool: Write, input: { file_path: "src/pkg/new_module.py", content: "x" }, expect: allow }
+  - { tool: Edit, input: { file_path: "src/app.py", old_string: a, new_string: b }, expect: allow }
+  - { tool: MultiEdit, input: { file_path: "tests/test_x.py", edits: [{ old_string: a, new_string: b }] }, expect: allow }
+  - { tool: NotebookEdit, input: { notebook_path: "notebooks/a.ipynb", new_source: "x = 1" }, expect: allow }
+  - { tool: Write, input: { file_path: "../outside.txt", content: "x" }, expect: gray }
+  - { tool: Write, input: { file_path: "src/../../outside.txt", content: "x" }, expect: gray }   # the `..` leaves the project
+  - { tool: Write, input: { file_path: "src/../package.json", content: "{}" }, expect: ask }   # the `..` stays inside: still package.json
+  - { tool: Write, input: { file_path: "~/notes.txt", content: "x" }, expect: gray }
+  - { tool: NotebookEdit, input: { notebook_path: "../outside.ipynb", new_source: "x" }, expect: gray }
+  # The names that must still ask or be denied with the write allow rule in place.
+  - { tool: Write, input: { file_path: ".env", content: "A=1" }, expect: ask }
+  - { tool: Edit, input: { file_path: ".env", old_string: a, new_string: b }, expect: ask }
+  - { tool: Write, input: { file_path: "config/prod.env", content: "A=1" }, expect: ask }
+  - { tool: Write, input: { file_path: "certs/server.pem", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "secrets.yml", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".aws/credentials", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".git-credentials", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "Makefile", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".github/workflows/x.yml", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".claude/settings.local.json", content: "{}" }, expect: deny }
+  - { tool: Write, input: { file_path: ".mcp.json", content: "{}" }, expect: ask }
+  - { tool: Write, input: { file_path: ".git/config", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".git/HEAD", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".git/modules/sub/hooks/post-commit", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "~/.bashrc", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "~/.ssh/authorized_keys", content: "x" }, expect: ask }
+  - { tool: Write, platform: [windows], input: { file_path: "src\\..\\..\\outside.txt", content: "x" }, expect: gray }
+  - { tool: Write, platform: [windows], input: { file_path: "C:\\Users\\testuser\\proj\\src\\app.py", content: "x" }, expect: allow }
+  - { tool: Write, platform: [windows], input: { file_path: "C:\\Users\\testuser\\other\\x.txt", content: "x" }, expect: gray }
+  - { tool: Write, platform: [windows], input: { file_path: "C:\\Users\\testuser\\proj\\.ENV", content: "x" }, expect: ask }
+  - { tool: Write, platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/src/app.py", content: "x" }, expect: allow }
+  - { tool: Write, platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/../other/x.py", content: "x" }, expect: gray }
+  - { tool: Write, platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj-evil/x.py", content: "x" }, expect: gray }   # a sibling that shares the prefix
+  # PowerShell: the read cmdlets, Get-ChildItem / Get-Date / Get-Location without a path, and git
+  # (Write-Output and Select-Object are not allowed: they print what PowerShell expands into them).
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "ls src" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content src\\app.py" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content README.md -TotalCount 20" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Select-String TODO src\\app.py" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Test-Path src" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Item README.md" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Resolve-Path src" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Write-Output hi" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Write-Output $env:SECRET_TOKEN" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "echo $env:SECRET_TOKEN" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "$env:SECRET_TOKEN | Select-Object" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content src\\app.py | Select-Object -First 20" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Date -Format $env:SECRET_TOKEN" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Date -UFormat %Y" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem src | Measure-Object" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "git status" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "git log --oneline -n 20" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "git -c core.pager=x log" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "git diff --output=x.txt" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem C:\\Windows" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content ..\\outside.txt" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content .env" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Get-Content" }, expect: gray }   # the paths come from the pipeline
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content HKLM:\\Software" }, expect: gray }   # a provider path, not a file
+  - { tool: PowerShell, platform: [windows], input: { command: "Select-String -Path src\\*.py -Pattern TODO" }, expect: gray }   # a wildcard is never allowed
+  - { tool: PowerShell, platform: [windows], input: { command: "Write-Output hi > out.txt" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Write-Output hi > Makefile" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Write-Output $(Get-Content .env)" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Select-Object -Property @{n='a';e={1}}" }, expect: gray }   # a script block
+  - { tool: PowerShell, platform: [windows], input: { command: "Select-Object -First 3" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Measure-Object" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Measure-Object -InputObject x > Makefile" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem .." }, expect: ask }   # outside: ask-shell-read-outside-project
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem Env:" }, expect: gray }   # a provider path, not a file
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Where-Object { $_.Name -like 'a*' }" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem -Recurse -Filter *.py" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Date" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Location" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Test-Path C:\\Windows" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "mkdir build" }, expect: gray }   # New-Item underneath: stays as it was
+  - { tool: PowerShell, platform: [windows], input: { command: "New-Item -ItemType Directory build" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "python --version" }, expect: gray }

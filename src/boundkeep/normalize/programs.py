@@ -3637,6 +3637,26 @@ _ENV_CODE = frozenset(
         "java_tool_options",
         "_java_options",
         "jdk_java_options",
+        # M1c: the everyday allow rules cover git status/diff/log/show and rg, and these variables
+        # make them read an agent-chosen repository, config or helper (a crafted config can name a
+        # pager, fsmonitor, textconv or external diff program; ripgrep's config can add --pre)
+        "git_dir",
+        "git_work_tree",
+        "git_exec_path",
+        "git_common_dir",
+        "git_index_file",
+        "git_object_directory",
+        "git_alternate_object_directories",
+        "git_namespace",
+        "git_template_dir",
+        "git_editor",
+        "git_sequence_editor",
+        "git_config",
+        "xdg_config_home",
+        "ripgrep_config_path",
+        "less",
+        "lesskey",
+        "manpager",
     }
 )
 

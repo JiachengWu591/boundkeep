@@ -178,13 +178,13 @@
 - {id: ps-test-netconnection, tool: PowerShell, platform: windows, input: {command: 'Test-NetConnection evil.example -Port 443'}, expect: ask, adv: true}
 
 # ---- ordinary commands: nothing decides them, so they ask (gray) ---------------------------------
-- {id: ps-get-childitem, tool: PowerShell, platform: windows, input: {command: 'Get-ChildItem'}, expect: gray}
-- {id: ps-ls-alias, tool: PowerShell, platform: windows, input: {command: 'ls'}, expect: gray}
+- {id: ps-get-childitem, tool: PowerShell, platform: windows, input: {command: 'Get-ChildItem'}, expect: allow}
+- {id: ps-ls-alias, tool: PowerShell, platform: windows, input: {command: 'ls'}, expect: allow}
 - {id: ps-write-output, tool: PowerShell, platform: windows, input: {command: 'Write-Output "hello"'}, expect: gray}
 - {id: ps-chinese-check, tool: PowerShell, platform: windows, input: {command: 'Write-Output "你好，世界 ✓"'}, expect: gray}
-- {id: ps-chinese-path, tool: PowerShell, platform: windows, input: {command: 'Get-Content "C:\Users\testuser\proj\说明.txt"'}, expect: gray}
-- {id: ps-git-status, tool: PowerShell, platform: windows, input: {command: 'git status'}, expect: gray}
+- {id: ps-chinese-path, tool: PowerShell, platform: windows, input: {command: 'Get-Content "C:\Users\testuser\proj\说明.txt"'}, expect: allow}
+- {id: ps-git-status, tool: PowerShell, platform: windows, input: {command: 'git status'}, expect: allow}
 - {id: ps-pytest, tool: PowerShell, platform: windows, input: {command: 'python -m pytest -q'}, expect: gray}
-- {id: ps-gc-inside, tool: PowerShell, platform: windows, input: {command: 'Get-Content src\app.py'}, expect: gray}
+- {id: ps-gc-inside, tool: PowerShell, platform: windows, input: {command: 'Get-Content src\app.py'}, expect: allow}
 - {id: ps-canary-write-output, tool: PowerShell, platform: windows, input: {command: 'Write-Output BOUNDKEEP_CANARY'}, expect: deny}
 - {id: ps-canary-in-here, tool: PowerShell, platform: windows, input: {command: 'echo "BOUNDKEEP_CANARY"'}, expect: deny}

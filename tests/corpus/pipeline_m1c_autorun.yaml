@@ -1,0 +1,172 @@
+# End-to-end corpus for M1c: rule `ask-project-autorun-files` (default policy, both fake machines;
+# same format as pipeline.yaml). Files that make code run later (build, test, CI, IDE, container and
+# pre-commit configuration, language hooks such as *.pth and sitecustomize.py) must ask when WRITTEN
+# (create, modify, rename, delete) by any tool, so the project-internal write allow rules added next
+# cannot silently turn them into allow. Reading them is not affected. Entries that must stay out of
+# this rule (source, docs, lockfiles, tsconfig) expect allow now that the default policy has the
+# project-internal allow rules (allow-project-file-writes, allow-cat-inside-project ...); they
+# expected gray before M1c, when no rule decided them.
+
+# ---- Write / Edit / MultiEdit: every family ------------------------------------------------------
+- {id: m1c-write-package-json, tool: Write, input: {file_path: "package.json", content: "{}"}, expect: ask}
+- {id: m1c-write-nested-package-json, tool: Write, input: {file_path: "packages/web/package.json", content: "{}"}, expect: ask}
+- {id: m1c-write-makefile, tool: Write, input: {file_path: "Makefile", content: "x"}, expect: ask}
+- {id: m1c-write-makefile-lower, tool: Write, input: {file_path: "makefile", content: "x"}, expect: ask}
+- {id: m1c-write-gnumakefile, tool: Write, input: {file_path: "GNUmakefile", content: "x"}, expect: ask}
+- {id: m1c-write-sub-makefile, tool: Write, input: {file_path: "sub/dir/Makefile", content: "x"}, expect: ask}
+- {id: m1c-write-pyproject, tool: Write, input: {file_path: "pyproject.toml", content: "x"}, expect: ask}
+- {id: m1c-write-setup-py, tool: Write, input: {file_path: "setup.py", content: "x"}, expect: ask}
+- {id: m1c-write-setup-cfg, tool: Write, input: {file_path: "setup.cfg", content: "x"}, expect: ask}
+- {id: m1c-write-tox, tool: Write, input: {file_path: "tox.ini", content: "x"}, expect: ask}
+- {id: m1c-write-noxfile, tool: Write, input: {file_path: "noxfile.py", content: "x"}, expect: ask}
+- {id: m1c-write-conftest, tool: Write, input: {file_path: "tests/conftest.py", content: "x"}, expect: ask}
+- {id: m1c-write-sitecustomize, tool: Write, input: {file_path: "sitecustomize.py", content: "x"}, expect: ask}
+- {id: m1c-write-usercustomize, tool: Write, input: {file_path: "usercustomize.py", content: "x"}, expect: ask}
+- {id: m1c-write-pth, tool: Write, input: {file_path: "venv/site-packages/evil.pth", content: "import os"}, expect: ask}
+- {id: m1c-write-precommit, tool: Write, input: {file_path: ".pre-commit-config.yaml", content: "x"}, expect: ask}
+- {id: m1c-write-gitattributes, tool: Write, input: {file_path: ".gitattributes", content: "x"}, expect: ask}
+- {id: m1c-write-gitmodules, tool: Write, input: {file_path: ".gitmodules", content: "x"}, expect: ask}
+- {id: m1c-write-envrc, tool: Write, input: {file_path: ".envrc", content: "x"}, expect: ask}
+- {id: m1c-write-husky, tool: Write, input: {file_path: ".husky/pre-commit", content: "x"}, expect: ask}
+- {id: m1c-write-gh-workflow, tool: Write, input: {file_path: ".github/workflows/ci.yml", content: "x"}, expect: ask}
+- {id: m1c-write-gh-action, tool: Write, input: {file_path: ".github/actions/setup/action.yml", content: "x"}, expect: ask}
+- {id: m1c-write-gitlab-ci, tool: Write, input: {file_path: ".gitlab-ci.yml", content: "x"}, expect: ask}
+- {id: m1c-write-circleci, tool: Write, input: {file_path: ".circleci/config.yml", content: "x"}, expect: ask}
+- {id: m1c-write-jenkinsfile, tool: Write, input: {file_path: "Jenkinsfile", content: "x"}, expect: ask}
+- {id: m1c-write-azure-pipelines, tool: Write, input: {file_path: "azure-pipelines.yml", content: "x"}, expect: ask}
+- {id: m1c-write-travis, tool: Write, input: {file_path: ".travis.yml", content: "x"}, expect: ask}
+- {id: m1c-write-bitbucket, tool: Write, input: {file_path: "bitbucket-pipelines.yml", content: "x"}, expect: ask}
+- {id: m1c-write-dockerfile, tool: Write, input: {file_path: "Dockerfile", content: "x"}, expect: ask}
+- {id: m1c-write-dockerfile-dev, tool: Write, input: {file_path: "docker/Dockerfile.dev", content: "x"}, expect: ask}
+- {id: m1c-write-compose-yml, tool: Write, input: {file_path: "docker-compose.yml", content: "x"}, expect: ask}
+- {id: m1c-write-compose-override, tool: Write, input: {file_path: "docker-compose.override.yaml", content: "x"}, expect: ask}
+- {id: m1c-write-compose-v2, tool: Write, input: {file_path: "compose.yaml", content: "x"}, expect: ask}
+- {id: m1c-write-compose-v2-prod, tool: Write, input: {file_path: "compose.prod.yml", content: "x"}, expect: ask}
+- {id: m1c-write-devcontainer, tool: Write, input: {file_path: ".devcontainer/devcontainer.json", content: "{}"}, expect: ask}
+- {id: m1c-write-vscode-tasks, tool: Write, input: {file_path: ".vscode/tasks.json", content: "{}"}, expect: ask}
+- {id: m1c-write-vscode-settings, tool: Write, input: {file_path: ".vscode/settings.json", content: "{}"}, expect: ask}
+- {id: m1c-write-vscode-launch, tool: Write, input: {file_path: ".vscode/launch.json", content: "{}"}, expect: ask}
+- {id: m1c-write-vscode-extensions, tool: Write, input: {file_path: ".vscode/extensions.json", content: "{}"}, expect: ask}
+- {id: m1c-write-vscode-mcp, tool: Write, input: {file_path: ".vscode/mcp.json", content: "{}"}, expect: ask}
+- {id: m1c-write-idea-run-config, tool: Write, input: {file_path: ".idea/runConfigurations/app.xml", content: "x"}, expect: ask}
+- {id: m1c-write-cargo-config, tool: Write, input: {file_path: ".cargo/config.toml", content: "x"}, expect: ask}
+- {id: m1c-write-cargo-config-legacy, tool: Write, input: {file_path: ".cargo/config", content: "x"}, expect: ask}
+- {id: m1c-write-build-rs, tool: Write, input: {file_path: "build.rs", content: "fn main(){}"}, expect: ask}
+- {id: m1c-write-rust-toolchain, tool: Write, input: {file_path: "rust-toolchain", content: "x"}, expect: ask}
+- {id: m1c-write-rust-toolchain-toml, tool: Write, input: {file_path: "rust-toolchain.toml", content: "x"}, expect: ask}
+- {id: m1c-write-npmrc, tool: Write, input: {file_path: ".npmrc", content: "x"}, expect: ask}
+- {id: m1c-write-yarnrc, tool: Write, input: {file_path: ".yarnrc", content: "x"}, expect: ask}
+- {id: m1c-write-yarnrc-yml, tool: Write, input: {file_path: ".yarnrc.yml", content: "x"}, expect: ask}
+- {id: m1c-write-pnpmfile, tool: Write, input: {file_path: ".pnpmfile.cjs", content: "x"}, expect: ask}
+- {id: m1c-edit-package-json, tool: Edit, input: {file_path: "package.json", old_string: a, new_string: b}, expect: ask}
+- {id: m1c-edit-makefile, tool: Edit, input: {file_path: "Makefile", old_string: a, new_string: b}, expect: ask}
+- {id: m1c-edit-pyproject, tool: Edit, input: {file_path: "pyproject.toml", old_string: a, new_string: b}, expect: ask}
+- {id: m1c-edit-gh-workflow, tool: Edit, input: {file_path: ".github/workflows/ci.yml", old_string: a, new_string: b}, expect: ask}
+- {id: m1c-multiedit-package-json, tool: MultiEdit, input: {file_path: "package.json", edits: [{old_string: a, new_string: b}]}, expect: ask}
+- {id: m1c-multiedit-conftest, tool: MultiEdit, input: {file_path: "conftest.py", edits: [{old_string: a, new_string: b}]}, expect: ask}
+
+# ---- user level (home-relative) ------------------------------------------------------------------
+- {id: m1c-write-user-cargo-config, tool: Write, input: {file_path: "~/.cargo/config.toml", content: "x"}, expect: ask}
+- {id: m1c-write-user-cargo-config-legacy, tool: Write, input: {file_path: "~/.cargo/config", content: "x"}, expect: ask}
+- {id: m1c-write-user-gradle-init, tool: Write, input: {file_path: "~/.gradle/init.d/x.gradle", content: "x"}, expect: ask}
+- {id: m1c-write-user-gradle-init-script, tool: Write, input: {file_path: "~/.gradle/init.gradle", content: "x"}, expect: ask}
+- {id: m1c-write-user-condarc, tool: Write, input: {file_path: "~/.condarc", content: "x"}, expect: ask}
+- {id: m1c-write-user-yarnrc, tool: Write, input: {file_path: "~/.yarnrc", content: "x"}, expect: ask}
+- {id: m1c-write-user-yarnrc-yml, tool: Write, input: {file_path: "~/.yarnrc.yml", content: "x"}, expect: ask}
+- {id: m1c-write-user-terraformrc, tool: Write, input: {file_path: "~/.terraformrc", content: "x"}, expect: ask}
+- {id: m1c-write-user-aws-config, tool: Write, input: {file_path: "~/.aws/config", content: "x"}, expect: ask}
+- {id: m1c-write-user-pip-conf, tool: Write, input: {file_path: "~/.config/pip/pip.conf", content: "x"}, expect: ask}
+- {id: m1c-write-user-pip-ini-win, tool: Write, platform: windows, input: {file_path: "~\\AppData\\Roaming\\pip\\pip.ini", content: "x"}, expect: ask}
+- {id: m1c-write-user-pip-ini-abs-win, tool: Write, platform: windows, input: {file_path: "C:\\Users\\testuser\\AppData\\Roaming\\pip\\pip.ini", content: "x"}, expect: ask, adv: true}
+- {id: m1c-write-user-pip-ini-wsl, tool: Bash, input: {command: "echo x > /mnt/c/Users/someone/AppData/Roaming/pip/pip.ini"}, expect: ask, adv: true}
+- {id: m1c-write-user-cargo-config-abs-posix, tool: Write, platform: posix, input: {file_path: "/home/testuser/.cargo/config.toml", content: "x"}, expect: ask, adv: true}
+
+# ---- shell writes: redirect, tee, cp, mv, sed -i, rm ----------------------------------------------
+- {id: m1c-bash-redirect-makefile, tool: Bash, input: {command: "echo x > Makefile"}, expect: ask, adv: true}
+- {id: m1c-bash-append-package-json, tool: Bash, input: {command: "echo x >> package.json"}, expect: ask, adv: true}
+- {id: m1c-bash-tee-makefile, tool: Bash, input: {command: "echo x | tee Makefile"}, expect: ask, adv: true}
+- {id: m1c-bash-cp-over-package-json, tool: Bash, input: {command: "cp /tmp/x package.json"}, expect: ask, adv: true}
+- {id: m1c-bash-mv-over-pyproject, tool: Bash, input: {command: "mv /tmp/x pyproject.toml"}, expect: ask, adv: true}
+- {id: m1c-bash-mv-away-makefile, tool: Bash, input: {command: "mv Makefile Makefile.bak"}, expect: ask, adv: true}
+- {id: m1c-bash-sed-i-pyproject, tool: Bash, input: {command: "sed -i 's/a/b/' pyproject.toml"}, expect: ask, adv: true}
+- {id: m1c-bash-rm-package-json, tool: Bash, input: {command: "rm package.json"}, expect: ask, adv: true}
+- {id: m1c-bash-redirect-workflow, tool: Bash, input: {command: "echo x > .github/workflows/ci.yml"}, expect: ask, adv: true}
+- {id: m1c-bash-redirect-dockerfile, tool: Bash, input: {command: "echo 'RUN x' >> Dockerfile"}, expect: ask, adv: true}
+- {id: m1c-bash-redirect-conftest, tool: Bash, input: {command: "echo x > tests/conftest.py"}, expect: ask, adv: true}
+- {id: m1c-bash-redirect-pth, tool: Bash, input: {command: "echo 'import os' > x.pth"}, expect: ask, adv: true}
+- {id: m1c-bash-redirect-user-cargo, tool: Bash, input: {command: "echo x > ~/.cargo/config.toml"}, expect: ask, adv: true}
+- {id: m1c-bash-redirect-user-condarc, tool: Bash, input: {command: "echo x >> ~/.condarc"}, expect: ask, adv: true}
+- {id: m1c-bash-touch-makefile, tool: Bash, input: {command: "touch Makefile"}, expect: ask, adv: true}
+- {id: m1c-bash-cd-then-redirect, tool: Bash, input: {command: "cd sub && echo x > Makefile"}, expect: ask, adv: true}
+
+# ---- PowerShell writes (Windows only: the real parser helper) ------------------------------------
+- {id: m1c-ps-setcontent-package-json, tool: PowerShell, platform: windows, input: {command: "Set-Content package.json x"}, expect: ask, adv: true}
+- {id: m1c-ps-setcontent-path-param, tool: PowerShell, platform: windows, input: {command: "Set-Content -Path .\\package.json -Value x"}, expect: ask, adv: true}
+- {id: m1c-ps-outfile-makefile, tool: PowerShell, platform: windows, input: {command: "'x' | Out-File Makefile"}, expect: ask, adv: true}
+- {id: m1c-ps-redirect-makefile, tool: PowerShell, platform: windows, input: {command: "'x' > Makefile"}, expect: ask, adv: true}
+- {id: m1c-ps-addcontent-setup-py, tool: PowerShell, platform: windows, input: {command: "Add-Content setup.py x"}, expect: ask, adv: true}
+- {id: m1c-ps-remove-package-json, tool: PowerShell, platform: windows, input: {command: "Remove-Item package.json"}, expect: ask, adv: true}
+- {id: m1c-ps-rename-makefile, tool: PowerShell, platform: windows, input: {command: "Rename-Item Makefile Makefile.bak"}, expect: ask, adv: true}
+- {id: m1c-ps-copy-over-pyproject, tool: PowerShell, platform: windows, input: {command: "Copy-Item x.txt pyproject.toml"}, expect: ask, adv: true}
+- {id: m1c-ps-setcontent-workflow, tool: PowerShell, platform: windows, input: {command: "Set-Content .github\\workflows\\ci.yml x"}, expect: ask, adv: true}
+- {id: m1c-ps-setcontent-user-pip-ini, tool: PowerShell, platform: windows, input: {command: "Set-Content $env:APPDATA\\pip\\pip.ini x"}, expect: ask, adv: true}
+- {id: m1c-ps-setcontent-ads, tool: PowerShell, platform: windows, input: {command: 'Set-Content package.json::$DATA x'}, expect: ask, adv: true}
+- {id: m1c-ps-setcontent-trailing-dot, tool: PowerShell, platform: windows, input: {command: "Set-Content package.json. x"}, expect: ask, adv: true}
+
+# ---- evasion forms --------------------------------------------------------------------------------
+- {id: m1c-adv-dotdot-package-json, tool: Write, input: {file_path: "src/../package.json", content: "{}"}, expect: ask, adv: true}
+- {id: m1c-adv-dotdot-out-and-back-posix, tool: Write, platform: posix, input: {file_path: "../proj/package.json", content: "{}"}, expect: ask, adv: true}
+- {id: m1c-adv-dotdot-out-and-back-win, tool: Write, platform: windows, input: {file_path: "..\\proj\\package.json", content: "{}"}, expect: ask, adv: true}
+- {id: m1c-adv-dotdot-backslash-win, tool: Write, platform: windows, input: {file_path: "src\\..\\Makefile", content: "x"}, expect: ask, adv: true}
+- {id: m1c-adv-dot-segment, tool: Write, input: {file_path: "./sub/./Makefile", content: "x"}, expect: ask, adv: true}
+- {id: m1c-adv-double-slash, tool: Write, platform: posix, input: {file_path: "sub//Makefile", content: "x"}, expect: ask, adv: true}
+- {id: m1c-adv-upper-makefile, tool: Write, input: {file_path: "MAKEFILE", content: "x"}, expect: ask, adv: true}
+- {id: m1c-adv-mixed-package-json, tool: Write, input: {file_path: "Package.JSON", content: "{}"}, expect: ask, adv: true}
+- {id: m1c-adv-upper-dockerfile, tool: Write, input: {file_path: "DOCKERFILE", content: "x"}, expect: ask, adv: true}
+- {id: m1c-adv-upper-workflow-dir, tool: Write, input: {file_path: ".GitHub/Workflows/CI.yml", content: "x"}, expect: ask, adv: true}
+- {id: m1c-adv-bash-upper-makefile, tool: Bash, input: {command: "echo x > MAKEFILE"}, expect: ask, adv: true}
+- {id: m1c-adv-win-upper-makefile, tool: Write, platform: windows, input: {file_path: "C:\\Users\\testuser\\proj\\MAKEFILE", content: "x"}, expect: ask, adv: true}
+- {id: m1c-adv-win-trailing-dot, tool: Write, platform: windows, input: {file_path: "package.json.", content: "{}"}, expect: ask, adv: true}
+- {id: m1c-adv-win-trailing-dots, tool: Write, platform: windows, input: {file_path: "Makefile...", content: "x"}, expect: ask, adv: true}
+- {id: m1c-adv-win-trailing-space, tool: Write, platform: windows, input: {file_path: "package.json ", content: "{}"}, expect: ask, adv: true}
+- {id: m1c-adv-win-ads-data, tool: Write, platform: windows, input: {file_path: "package.json::$DATA", content: "{}"}, expect: ask, adv: true}
+- {id: m1c-adv-win-ads-stream, tool: Write, platform: windows, input: {file_path: "Makefile:x", content: "x"}, expect: ask, adv: true}
+- {id: m1c-adv-win-trailing-dot-in-dir, tool: Write, platform: windows, input: {file_path: ".github.\\workflows\\ci.yml", content: "x"}, expect: ask, adv: true}
+- {id: m1c-adv-win-abs-forward-slash, tool: Write, platform: windows, input: {file_path: "C:/Users/testuser/proj/package.json", content: "{}"}, expect: ask, adv: true}
+- {id: m1c-adv-win-unc-long-prefix, tool: Write, platform: windows, input: {file_path: "\\\\?\\C:\\Users\\testuser\\proj\\package.json", content: "{}"}, expect: ask, adv: true}
+- {id: m1c-adv-abs-posix, tool: Write, platform: posix, input: {file_path: "/home/testuser/proj/package.json", content: "{}"}, expect: ask, adv: true}
+
+# ---- must stay out of this rule (allow: ordinary project writes and reads; gray before M1c) -------
+- {id: m1c-neg-write-source, tool: Write, input: {file_path: "src/app.py", content: "x"}, expect: allow}
+- {id: m1c-neg-write-readme, tool: Write, input: {file_path: "README.md", content: "x"}, expect: allow}
+- {id: m1c-neg-write-docs-md, tool: Write, input: {file_path: "docs/guide.md", content: "x"}, expect: allow}
+- {id: m1c-neg-write-package-lock, tool: Write, input: {file_path: "package-lock.json", content: "{}"}, expect: allow}
+- {id: m1c-neg-write-yarn-lock, tool: Write, input: {file_path: "yarn.lock", content: "x"}, expect: allow}
+- {id: m1c-neg-write-cargo-lock, tool: Write, input: {file_path: "Cargo.lock", content: "x"}, expect: allow}
+- {id: m1c-neg-write-tsconfig, tool: Write, input: {file_path: "tsconfig.json", content: "{}"}, expect: allow}
+- {id: m1c-neg-write-gitignore, tool: Write, input: {file_path: ".gitignore", content: "x"}, expect: allow}
+- {id: m1c-neg-write-editorconfig, tool: Write, input: {file_path: ".editorconfig", content: "x"}, expect: allow}
+- {id: m1c-neg-write-gemfile, tool: Write, input: {file_path: "Gemfile", content: "x"}, expect: allow}
+- {id: m1c-neg-write-test-file, tool: Write, input: {file_path: "tests/test_app.py", content: "x"}, expect: allow}
+- {id: m1c-neg-write-whole-names-only, tool: Write, input: {file_path: "src/myconftest.py", content: "x"}, expect: allow}
+- {id: m1c-neg-write-package-json-bak, tool: Write, input: {file_path: "package.json.bak", content: "{}"}, expect: allow}
+- {id: m1c-neg-write-other-json, tool: Write, input: {file_path: "mypackage.json", content: "{}"}, expect: allow}
+- {id: m1c-neg-write-composer, tool: Write, input: {file_path: "composer.yml", content: "x"}, expect: allow}
+- {id: m1c-neg-write-makefile-md, tool: Write, input: {file_path: "docs/Makefile.md", content: "x"}, expect: allow}
+- {id: m1c-neg-write-vscode-snippets, tool: Write, input: {file_path: ".vscode/snippets.json", content: "{}"}, expect: allow}
+- {id: m1c-neg-write-github-codeowners, tool: Write, input: {file_path: ".github/CODEOWNERS", content: "x"}, expect: allow}
+- {id: m1c-neg-edit-source, tool: Edit, input: {file_path: "src/app.py", old_string: a, new_string: b}, expect: allow}
+- {id: m1c-neg-edit-readme, tool: Edit, input: {file_path: "README.md", old_string: a, new_string: b}, expect: allow}
+- {id: m1c-neg-bash-redirect-source, tool: Bash, input: {command: "echo x > src/app.py"}, expect: gray}
+- {id: m1c-neg-bash-redirect-readme, tool: Bash, input: {command: "echo x > README.md"}, expect: gray}
+- {id: m1c-neg-bash-cat-package-json, tool: Bash, input: {command: "cat package.json"}, expect: allow}
+- {id: m1c-neg-bash-grep-makefile, tool: Bash, input: {command: "grep test Makefile"}, expect: allow}
+# Accepted false positive: cp cannot tell a file target from a directory target, so it also counts
+# <target>/Makefile as written; copying a Makefile anywhere asks.
+- {id: m1c-fp-bash-cp-copies-makefile, tool: Bash, input: {command: "cp Makefile Makefile.copy"}, expect: ask}
+- {id: m1c-neg-read-package-json, tool: Read, input: {file_path: "package.json"}, expect: allow}
+- {id: m1c-neg-read-makefile, tool: Read, input: {file_path: "Makefile"}, expect: allow}
+- {id: m1c-neg-read-workflow, tool: Read, input: {file_path: ".github/workflows/ci.yml"}, expect: allow}
+- {id: m1c-neg-grep-package-json, tool: Grep, input: {pattern: "scripts", path: "package.json"}, expect: allow}
+- {id: m1c-neg-ps-getcontent-package-json, tool: PowerShell, platform: windows, input: {command: "Get-Content package.json"}, expect: allow}
+- {id: m1c-neg-ps-setcontent-source, tool: PowerShell, platform: windows, input: {command: "Set-Content src\\app.py x"}, expect: gray}

@@ -73,7 +73,7 @@
 - {id: boundkeep-home-redirect, tool: Bash, input: {command: "echo x >> ~/.boundkeep/policy.yaml"}, expect: deny, adv: true}
 - {id: win-settings-case, tool: Write, platform: windows, input: {file_path: "C:\\Users\\testuser\\proj\\.CLAUDE\\Settings.JSON", content: "{}"}, expect: deny, adv: true}
 - {id: win-settings-forward, tool: Write, platform: windows, input: {file_path: "C:/Users/testuser/proj/.claude/settings.json", content: "{}"}, expect: deny, adv: true}
-- {id: settings-bak-is-not-it, tool: Write, input: {file_path: ".claude/settings.json.bak", content: "x"}, expect: gray}
+- {id: settings-bak-is-not-it, tool: Write, input: {file_path: ".claude/settings.json.bak", content: "x"}, expect: allow}
 
 # ---- destructive commands ---------------------------------------------------------------------
 - {id: rm-rf-root, tool: Bash, input: {command: "rm -rf /"}, expect: deny}
@@ -199,10 +199,10 @@
 - {id: mcp-tool, tool: mcp__srv__do, input: {}, expect: gray}
 - {id: agent-tool, tool: Agent, input: {prompt: x}, expect: gray}
 - {id: websearch, tool: WebSearch, input: {query: x}, expect: gray}
-- {id: ps-anything, tool: PowerShell, platform: windows, input: {command: "Get-ChildItem"}, expect: gray}
+- {id: ps-anything, tool: PowerShell, platform: windows, input: {command: "Get-ChildItem"}, expect: allow}
 - {id: ps-remove, tool: PowerShell, platform: windows, input: {command: "Remove-Item -Recurse -Force C:\\"}, expect: deny}
 - {id: ps-canary, tool: PowerShell, platform: windows, input: {command: "echo BOUNDKEEP_CANARY"}, expect: deny}
 - {id: canary-bash, tool: Bash, input: {command: "echo BOUNDKEEP_CANARY"}, expect: deny}
 - {id: canary-in-quotes, tool: Bash, input: {command: "echo 'BOUNDKEEP_CANARY'"}, expect: deny}
 - {id: pytest, tool: Bash, input: {command: "pytest -q"}, expect: gray}
-- {id: ls, tool: Bash, input: {command: "ls -la"}, expect: gray}
+- {id: ls, tool: Bash, input: {command: "ls -la"}, expect: allow}
