@@ -36,7 +36,7 @@ rules:
     reason: "禁止读取密钥与凭证文件"      # deny / ask 必填，显示给用户和 Claude
 ```
 
-标量可以代替只有一个元素的列表（`program: git`）。`allow` 规则至少要有一个 match 字段（空的 match 会放行所列工具的一切）。
+标量可以代替只有一个元素的列表（`program: git`）。`allow` 规则至少要有一个 match 字段（空的 match 会放行所列工具的一切），而且必须写规则级 `tool` 或 `match.program` 之一（两者都写也行）；只靠标志、路径、域名收窄的 allow 规则几乎会放行一切，加载时报 "an allow rule must name a tool or a program"。deny / ask 规则不受此限。
 
 **路径规则不要写 `tool:`。** Read、Grep、Glob、Bash、PowerShell 等都会带路径，只列其中几个的读规则等于给其余的留了绕行的路（`Grep` 读 `.env` 曾因此被放行）。内置的所有读类 deny / ask 规则都没有 `tool:`，也没有 `platform:`：Windows 凭据、浏览器、持久化类的 glob 在纯 Linux 上本来就匹配不到任何东西，而 WSL 里看到的 `/mnt/c/Users/x/.ssh/config`（键 `c:/users/x/...`）要靠不依赖主目录的 `**/users/*/...` 写法拦住。
 
@@ -51,8 +51,10 @@ rules:
 | `program` | 程序名列表。Bash 里区分大小写；PowerShell 不区分。程序名取基本名（`/bin/rm` → `rm`，`curl.exe` → `curl`），所以条目里不能有空格或路径分隔符（`rm`，不是 `/bin/rm` 或 `rm -rf`），否则加载报错 |
 | `subcommand` | `git push` 的 `push`、`docker image push` 的 `push` 等；单个词，不能有空白 |
 | `flags_any` | 标志列表，出现任一即匹配。合并短标志两种写法都有（`-rf` 同时给出 `-rf`、`-r`、`-f`），长标志去掉 `=值`。每个条目必须以 `-` 开头（PowerShell 参数 `-Recurse` 同样），否则加载报错（`force` 永远匹配不到） |
+| `flags_none` | 标志列表（条目规则、校验、大小写折叠与 `flags_any` 完全相同，同样不能为空、每项以 `-` 开头），动作的标志里**一个都没有**才匹配；没有任何标志的动作匹配。与其他字段 AND。给日常只读命令的 allow 规则排除危险开关用（例如 `program: find` 配 `flags_none: ["-delete", "-exec"]`）。不能和 `flags_any` 列同一个条目（永远不会命中，加载报错） |
 | `path_outside_project: true` | 任一路径**不能确定**在项目内（`inside_project` 为 false 或 null）即匹配；没有路径时不匹配。与 `path_glob` / `access` 同用时见下面的"同一条路径" |
 | `path_inside_project: true` | 至少一个路径，且**每个**路径都**确定**在项目内。这是 allow 侧用的，不确定不算。不能和 `path_outside_project` 同写（永远不会命中，加载报错） |
+| `paths_read_only: true` | **每个**路径的访问方式都恰好是 `read`。`write` 与 `unknown`（可能写）都不算只读；没有任何路径的动作匹配（`pwd`、`echo hi`，空真）。与其他字段 AND，不要求路径在项目内（要的话再写 `path_inside_project`）。这是 allow 侧用的；写在 deny / ask 规则里时，访问方式为 `unknown` 的路径不会让它命中 |
 | `network: true` | 该动作联网 |
 | `domain_not_in` | 联网，且（目标域名未知，或**任一**域名不在列表里）。域名精确相等或是真正的子域才算"在" |
 | `domain_in` | 联网，且域名非空且**每个**都在列表里 |
@@ -122,6 +124,9 @@ tests:
 | `ask-agent-exec-config` | ask | 写 `.mcp.json`、`~/.claude.json`、`.claude/{hooks,commands,agents,skills,rules,output-styles,plugins}/**`、`.claude/statusline.*`、`CLAUDE.md`、`CLAUDE.local.md` |
 | `ask-repo-exec-config` | ask | 写 `.git/hooks/**`、`.git/config`、`.envrc`、`.husky/**`、`.vscode/{tasks,settings,launch}.json`、`.github/workflows/**`、`.devcontainer/**` |
 | `ask-user-config-write` | ask | 写 `~/.gitconfig`、`~/.npmrc`、`~/.pypirc`、`~/.config/pip/pip.conf`、`~/.netrc`、`~/.docker/config.json` |
+| `ask-project-autorun-files`（strict：`deny-project-autorun-files`） | ask（strict：deny） | 写（新建、修改、改名、删除；Write / Edit / MultiEdit 与所有 shell 写入，规则没有 `tool:` 限制，`access: write`）会让代码日后自己跑起来的文件。项目内：`package.json`、`Makefile` / `makefile` / `GNUmakefile`、`pyproject.toml`、`setup.py`、`setup.cfg`、`tox.ini`、`noxfile.py`、`conftest.py`、`sitecustomize.py`、`usercustomize.py`、`*.pth`、`build.rs`、`rust-toolchain[.toml]`、`.cargo/config[.toml]`、`.npmrc`、`.yarnrc*`、`.pnpmfile.cjs`、`.pre-commit-config.yaml`、`.gitattributes`、`.gitmodules`、`.envrc`、`.husky/**`、`.github/workflows/**`、`.github/actions/**`、`.gitlab-ci.yml`、`.circleci/**`、`Jenkinsfile`、`azure-pipelines.yml`、`.travis.yml`、`bitbucket-pipelines.yml`、`Dockerfile*`、`docker-compose*.{yml,yaml}`、`compose.{yml,yaml}`、`compose.*.{yml,yaml}`、`.devcontainer/**`、`.vscode/{tasks,settings,launch,extensions,mcp}.json`、`.idea/runConfigurations/**`。用户级：`~/.cargo/config[.toml]`、`~/.gradle/init.d/**`、`~/.gradle/init.gradle*`、`~/.condarc`、`~/.yarnrc*`、`~/.terraformrc`、`~/.aws/config`（`credential_process`）、`~/.config/pip/pip.conf`、`%APPDATA%\pip\pip.ini`（含 WSL 看到的 `/mnt/c/Users/x/AppData/Roaming/pip/pip.ini`）。**先于项目内写入的 allow 规则存在**：default 里的 `allow-project-file-writes`（见下）已经加上，这些文件靠"最严者胜"仍然是 ask，不会被悄悄放行。名字整体匹配；不含 README、`*.md`、源码、锁文件、`tsconfig.json`、`.gitignore`、`.editorconfig`（这些写入在 default 里是 allow，strict 里仍是灰色）。**已接受的误报**：改 `package.json`、`Makefile`、`pyproject.toml`、`conftest.py`、Dockerfile、CI 文件都会问（有意为之）；`*.pth` 也匹配 PyTorch 权重文件，`Dockerfile*` 也匹配 `Dockerfile.md`；`cp Makefile 任意位置` 也会问（`cp` 分不清目标是文件还是目录，把 `<目标>/Makefile` 也算作写入）；读这些文件不受影响。与 `ask-repo-exec-config` 有重叠（`.envrc`、`.husky`、`.vscode`、workflows、devcontainer），重复是有意的：两条都命中也只是同一个 ask |
+| `ask-secret-file-write`、`ask-credential-file-write`（strict 同名，同为 ask） | ask | 写（Write / Edit / MultiEdit / NotebookEdit 与所有 shell 写入，`access: write`，没有 `tool:` 限制）`no-secret-read` 与 `no-credential-store-read` 列的那批文件，glob **逐字相同**（有测试保持两份一致）。读它们被拒绝是因为内容就是秘密；写一个新的 `.env`、密钥或凭据文件会改变项目连到哪个账号，用 Edit 改还会让 agent 看到旧内容。项目内的普通写入在 default 里有 allow 规则（`allow-project-file-writes`），所以这些名字必须先 ask |
+| `ask-git-internals-write`（strict 同名，同为 ask） | ask | 写 `**/.git/**`：HEAD、refs、index、对象库、`info/attributes`，以及子模块与 worktree 里的 hooks 和 config（`.git/modules/x/hooks/...`、`.git/modules/x/config`），较窄的 `ask-repo-exec-config`（`.git/hooks`、`.git/config`）够不着这些。git 自己会写这些文件，shell 里的 git 命令不会点名 `.git` 路径 |
 | `no-secret-read` | deny | 读 `.env`、`.env.*`、`*.env`、名为 `env` 的文件、`.envs/**`、`**/.ssh/**`、`*.pem`、`*.key`、`*.jks`、`*.keystore`、`*.tfstate*`、`*.tfvars`、`service-account*.json`、`credentials.json` / `credentials.txt`、`secrets.{yml,yaml,json,toml,txt}`、`secret.txt`、`key.txt` / `keys.txt`、`password(s).txt`、`token.txt`、`.htpasswd`、`kubeconfig`、`*.kubeconfig`、`local.settings.json`、`*.kdbx` / `*.kdb`、`/etc/shadow*`、`/etc/sudoers*`、`/etc/ssh/ssh_host_*`、`/proc/*/environ`。名字整体匹配，所以 `env.py`、`kubeconfig.go`、`docker-compose.yml`、`README` 仍可读 |
 | `no-credential-store-read` | deny | 读云 CLI 与容器配置（`.aws`、`.azure`、gcloud、gh、op、doctl、rclone、kube、docker）、`.gnupg`、`.git-credentials`、`.git/credentials`、`.config/git/credentials`、`.gitconfig`、`.git/config`、`.netrc` / `_netrc`、`.npmrc`、`.pypirc`、`.pgpass`、`.my.cnf`、`.s3cfg`、`.boto`、`.vault-token`、`.cargo/credentials*`、`.gem/credentials`、`.m2/settings.xml`、Terraform 凭据、GitHub CLI 与 gcloud 的 `%APPDATA%` 目录、私钥文件（`id_rsa*`、`id_ed25519*` 等，含 `.bak` 备份；代价是公钥 `id_rsa.pub` 也读不了） |
 | `no-agent-state-read` | deny | 读 `~/.claude/.credentials.json`、`~/.claude.json`、用户级 `~/.claude/settings.json` 与 `~/.claude/settings.local.json`、项目的 `.claude/settings.local.json`（这几个的 `env` 块里常放令牌）、`.mcp.json`（MCP 服务器的 headers 与 env）、`.claude/projects/**`（会话记录）、`history.jsonl`、`shell-snapshots`、`ide` |
@@ -142,7 +147,55 @@ tests:
 | `ask-disk-tools` | ask | `mkfs*`、`wipefs`、`fdisk`、`parted`、`diskpart` 等（strict：deny） |
 | `ask-recursive-permission-change` | ask | `chmod -R` / `chown -R` / `chgrp -R` 项目之外（strict 一律） |
 | `net-allowlist` | ask | 访问 pypi.org、files.pythonhosted.org、github.com、registry.npmjs.org 之外的主机（目标未知也算） |
-| `read-inside-project` | allow | `Read` / `Glob` / `Grep` 且路径确定在项目内（唯一的 allow 规则） |
+| `ask-shell-read-outside-project`、`ask-git-read-outside-project`（仅 default；strict 的 `ask-read-outside-project` 已经覆盖） | ask | 下面几条 allow 规则（读 stdin 的 `head` / `tail` / `wc` / `grep` / `egrep` / `fgrep`、不带路径的 `Get-ChildItem`、不带路径的 `git status` / `git diff`）没有路径可以要求"在项目内"，所以从另一侧补上：这些程序带一个不能证明在项目内的路径（项目外，或不确定；读、写都算）时 ask，最严者胜。这两条没有 `path_glob` / `access`，有意如此：读类规则里的 `**` 会进入递归读取的子树扫描的"受保护名字"，让目录下的每个文件都被当成受保护文件。程序清单必须与那几条 allow 规则一致（有测试检查）；git 那条的子命令清单与 git 的 allow 规则一致。`cat` 不在其中：它的 allow 规则要求路径在项目内，项目外的 `cat` 仍是灰色 |
+| `read-inside-project` | allow | `Read` / `Glob` / `Grep` 且路径确定在项目内（strict 里唯一的 allow 规则） |
+| `allow-list-inside-project` | allow | **仅 default。** Bash `ls` / `dir`：路径都只读且确定在项目内（不带路径时是 `.`）；排除 `--time-style`（`+FORMAT` 会原样打印其中的字符，环境变量的值也在内） |
+| `allow-tree-inside-project` | allow | Bash `tree`，路径都只读且在项目内；排除 `-o` / `--output`（写文件）、`-R`（在每个目录里写 `00Tree.html`）、`-H` / `-T` / `--timefmt`（打印命令行上给的字符串） |
+| `allow-find-inside-project` | allow | Bash `find`，起点（默认 `.`）都在项目内；排除 `-delete`、`-exec`、`-execdir`、`-ok`、`-okdir`、`-fprint`、`-fprint0`、`-fprintf`、`-fls`、`-files0-from`、`-printf`（打印它拿到的格式串） |
+| `allow-rg-inside-project` | allow | Bash `rg`，路径都在项目内；排除 `--pre`（对每个文件先运行一个命令）、`--hostname-bin`，以及打印命令行上给的字符串的 `-r` / `--replace`、`--context-separator`、`--field-context-separator`、`--field-match-separator`、`--path-separator` |
+| `allow-cat-inside-project` | allow | Bash `cat`，路径都只读且在项目内。不带路径的 `cat`（读 stdin）没有路径可检查，不匹配（灰色） |
+| `allow-read-filters` | allow | Bash `head` / `tail` / `wc` / `grep` / `egrep` / `fgrep`，路径都只读；没有路径时读 stdin（`git log \| head -n 5`）。不要求 `path_inside_project`，项目外的路径由 `ask-shell-read-outside-project` 问；排除 `--files0-from`（要数的文件名放在规则看不见的文件里）与 `--label`（grep 会把它当文件名打印） |
+| `allow-no-path-commands` | allow | Bash `pwd`（重定向会让它有一条写路径，`paths_read_only` 就不匹配）。**`echo` 不在其中**（也没有 `printf`、`printenv`、`env`）：它打印 shell 展开后的参数，`echo $ANTHROPIC_API_KEY` 会把环境变量的值送进 agent 的上下文（X1 复审 L-7），规则语言分不清 `echo hello` 与 `echo $NAME` |
+| `allow-git-read-only` | allow | `git status` / `diff` / `log` / `show` / `blame` / `rev-parse`（Bash 与 PowerShell），路径都只读。排除的选项见下节 |
+| `allow-git-branch-list` | allow | 只有列出分支的写法：`git branch` 带 `-a`、`-r`、`--list`、`-l`、`--all`、`--remotes` 或 `--show-current`，且不带删除、改名、复制、强制、改上游、编辑说明等选项。**光秃秃的 `git branch` 不允许**（规则语言看不见位置参数，分不清 `git branch` 与 `git branch NAME`），`-v` / `-vv` 也不在其中：`git branch -v NAME` 会创建分支 |
+| `allow-ps-inspect-inside-project` | allow | PowerShell `Get-Content` / `Select-String` / `Test-Path` / `Get-Item` / `Resolve-Path`，路径都只读且在项目内。**没有路径的调用不匹配**（`Get-ChildItem \| Get-Content` 的文件名来自管道，会读整个列表里的每个文件，包括 `.env`） |
+| `allow-ps-list-here` | allow | PowerShell `Get-ChildItem`（`ls` / `dir` / `gci`）：不带路径时列当前目录，所以不要求 `path_inside_project`，路径不在项目内时由 `ask-shell-read-outside-project` 问；提供程序路径（`Env:`、`HKLM:`）、通配符、未知参数（`-Credential`）归一化层返回灰色，不匹配 |
+| `allow-ps-no-path-commands` | allow | PowerShell `Get-Location`、`Get-Date`、`Measure-Object`（都在归一化层的"无路径"清单里；只打印计数或日期）。排除 `Get-Date -Format` / `-UFormat`（原样打印格式串）与 `-Date`（解析失败的值会出现在错误信息里）。**`Write-Output` 与 `Select-Object` 不在其中**：前者打印展开后的参数（`$env:SECRET_TOKEN`），后者打印管道里的值，而归一化层会丢掉以变量开头的管道元素（`$env:SECRET_TOKEN \| Select-Object` 不带任何标记） |
+| `allow-mkdir-touch-inside-project` | allow | Bash `mkdir` / `touch`，路径都在项目内；排除 `touch -r` / `--reference`（参考文件的时间戳）。名字敏感的（`Makefile`、`.env`、`.git/...`）由上面的 ask 规则拦住。PowerShell 的 `mkdir`、`New-Item`（可建符号链接与联接点）、`cp`、`mv`、`rm`、重定向、`tee`、`sed -i` 都不在其中 |
+| `allow-project-file-writes` | allow | Write / Edit / MultiEdit / NotebookEdit 写项目内的文件（`path_inside_project`；`..` 走出项目、别的盘、解析不了的路径都不算）。上面所有保护名字的规则都比它严：守护进程自己的文件（deny），会让代码日后运行的文件、秘密、凭据、`.git`、agent 配置（ask） |
+
+### 日常 allow 规则（M1c，仅 default）
+
+default 加了上面这批 allow 规则，strict 没有（它的唯一 allow 规则仍是 `read-inside-project`；默认的 `emit_allow: false` 不变）。**`emit_allow` 关闭时 allow 的输出是"无决定"，Claude Code 自己的权限流程照常决定**：这些规则让 boundkeep 对"理解得很清楚的安全动作"不再多问一次，与 Claude Code 对齐，它们不替用户批准任何东西。保护名字的 deny / ask 规则仍然最严者胜；灰色动作与带 `sudo` / `env` / `nohup` 的动作永远不匹配 allow。
+
+每条 Tier 1 规则都有 `paths_read_only: true`（每条路径的访问方式恰好是 `read`；`ls > f` 的重定向、`touch`、`git diff --output=f` 都带写路径，所以不匹配），读路径的程序再加 `path_inside_project`，并用 `flags_none` 排除程序里所有会写文件、运行东西、或读不在命令行上的文件的选项。git 排除的选项和理由：
+
+| 排除的选项 | 理由 |
+|---|---|
+| `-c`、`--config-env` | 行内配置可以设 `core.pager`、`core.fsmonitor`、textconv、外部 diff：代码执行 |
+| `-C`、`--git-dir`、`--work-tree` | 换了目录或仓库，路径不再已知 |
+| `--exec-path` | git 子命令从那个目录运行 |
+| `--paginate` | 启动配置里的分页器 |
+| `--ext-diff`、`--textconv`（连同 git 接受的唯一前缀 `--ext`、`--ext-d`……、`--textc`、`--textco`、`--textcon`） | 运行 diff 驱动配置的程序 |
+| `--output` | 把 diff 写进文件（它也会产生一条写路径） |
+| `--no-index` | 比较磁盘上任意两个文件 |
+| `--open-files-in-pager` | 启动程序（`git grep` 才有，这里不允许 grep，仍然列出） |
+| `--ignore-revs-file` | git 读一个文件当作修订名，错误信息会引用其中的内容 |
+| `--help` | 启动 man 手册查看器 |
+| `--format`、`--pretty`、`--src-prefix`、`--dst-prefix`、`--line-prefix`、`--date`、`--sq-quote`、`--default`（`--form`、`--forma`、`--pret`、`--prett` 等缩写同） | 打印命令行上给的字符串，环境变量的值也在内（`git log --format=$TOKEN`）。代价：`git log --pretty=format:%h` 也要问，`--oneline`、`--stat`、`--name-only` 不受影响 |
+
+`git branch` 另外排除 `-d` `-D` `--delete` `-m` `-M` `--move` `-c` `-C` `--copy` `-f` `--force` `-u` `--set-upstream-to` `--unset-upstream` `--edit-description` `--track` `--no-track`。
+
+**没有放行的命令**：`python` / `node` / `npm` / `cargo` / `go` / `git` 的版本探测（`--version`；这些程序是 exec 程序，规则语言看不出后面没有别的参数）；`git stash`（含 `stash list`：看不见 `list` 位置参数，而 `git stash` 会存起你的改动）；光秃秃的 `git branch`；`git remote -v`（远程 URL 可能带令牌）；`git ls-files` / `grep` / `cat-file` / `describe` 等其余只读子命令（没有语料需要，可以以后加）；`du`、`date`、`printenv`；PowerShell 的 `New-Item`、`mkdir`、`touch`；`cp` / `mv` / `rm` / `sed -i` / `tee` / 重定向；带通配符的 `Select-String -Path src\*.py`（归一化层对通配符路径返回灰色，灰色永远不匹配 allow）。
+
+**已知缺口，不会被这些规则消除**：
+- 在**不可信的仓库**里，`git status` / `diff` / `log` / `show` 仍可能运行该仓库 `.git/config` 里配置的程序（`core.fsmonitor`、textconv、外部 diff 驱动、分页器）。这正是 `emit_allow` 必须保持关闭、并排除 `-c` / `--ext-diff` / `--textconv` / `--paginate` 的原因；仓库配置本身的风险没有消除。
+- 环境变量前缀只有归一化层的"代码型"清单（`LD_PRELOAD`、`PAGER`、`GIT_PAGER`、`GIT_EXTERNAL_DIFF`、`GIT_CONFIG_*` ……）会变灰；`GIT_DIR=x git status`、`RIPGREP_CONFIG_PATH=x rg ...` 不在清单里（后者的配置文件可以写 `--pre=...`）。
+- `git -p log`（全局的 paginate）与 `git log -p` 在匹配器眼里是同一个标志 `-p`，所以 `-p` 没有被排除。
+- **参数里的环境变量。** 归一化层只在整个位置参数就是一个展开时才标灰色（`cat $FILE`），`--format=$TOKEN` 这样嵌在选项值里的展开看不见，而几乎每个程序都会在错误信息里回显非法的参数（`head -n $TOKEN f` 报 `invalid number of lines`）。能直接打印参数的选项已逐个排除（`find -printf`、`rg -r`、`git --format` / `--pretty` / `--date`、`ls --time-style`、`Get-Date -Format` ……），错误信息里的回显无法消除。另见：归一化层丢掉以变量开头的 PowerShell 管道元素（`$env:X \| Get-ChildItem` 把值当路径，错误信息回显它）。
+- 不带路径的 `Get-ChildItem`、`Select-Object` 等也可能从管道接收字符串路径（`Get-Content list.txt \| Get-ChildItem` 会列出 list.txt 里写的目录，只泄露名字）。
+- 写规则里的 `**`（`ask-write-outside-project`、`ask-find-delete`、`ask-git-discard-paths`）是 `access: write`，不进入递归读取的子树扫描；**读规则里不能有 `**`**：`pipeline.protected_read_globs`（子树扫描用的"受保护名字"）会把它当作名字，目录下的每一项都命中，扫描在第一层就停下，`certs/a.pem` 这样嵌套的受保护文件永远看不到。strict 的 `ask-read-outside-project` 原先正是 `path_glob: ["**"]` + `access: read`，因此在 strict 里对含 `certs/a.pem` 的项目目录做 `Grep` 会被放行（M1c 之前就有）；现在它只写 `path_outside_project: true`（任何不能证明在项目内的路径都问），有测试（`test_no_read_rule_has_a_catch_all_glob`、`test_a_recursive_read_still_finds_a_nested_secret`）。
+- `allow-project-file-writes` 允许写项目内的任何普通文件，包括源码与测试：它们日后被运行时才会执行，这与 Claude Code 自己的行为一致。`.venv` 与 `node_modules` 里的文件也在其中。
 
 **settings 文件的读与写保护不对称（有意如此，X1 复审 U-2）**：写保护覆盖所有 settings 文件（`**/.claude/settings*.json`、`~/.claude/settings*.json`，`protect-guard-config`）；读保护只覆盖真正放凭据的文件：`~/.claude/settings.json`、`~/.claude/settings.local.json`（含 WSL 看到的 `/mnt/c/Users/x/.claude/...`）和项目的 `.claude/settings.local.json`，外加 `.mcp.json`。**项目级 `.claude/settings.json` 可以读**：它通常提交进仓库，`init` 默认就把 hook 条目写在这里；如果把它读保护，每个受保护项目里没有 glob 的 `Grep`、`Glob **/*`、`grep -rn TODO .`、`ls -R` 都会被 deny（目录遍历命中受保护文件名）。代价：项目级 settings.json 里若有人写了令牌（`env` 块），agent 能读到；令牌应放 `settings.local.json` 或用户级文件。
 `PowerShell` 工具的命令由辅助进程（Windows PowerShell 5.1 或 pwsh，只调用解析器、不执行任何用户文本）解析，结果和 Bash 一样是 Action 列表，命令类规则与路径规则同样适用。仍然灰色的构造见下一节。

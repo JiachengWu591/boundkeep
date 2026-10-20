@@ -16,7 +16,7 @@
 4. **每个步骤走同一个协议：** 读 → 出计划 → 你确认 → 实现 → 自检 → 验收报告 → 你确认 → 提交并打标签（例如 `git tag m1-done`）。
 5. **用 Plan 模式出计划**（或明确要求"只输出计划，不写代码"）。计划里没有"测试清单"和"风险"的，打回重写。
 6. **带 ⛔ 的是人工闸门**：必须由你本人决定或操作，agent 不得代劳。
-7. **安全类步骤（M1、M1b、M3a、M5、M6，以及完成后的 M3b）完成后，另开一个会话，用 §3 的 X1 红队审查提示词做独立审查。** 审查会话只读代码，不改代码。高危发现清零后才进入下一步。
+7. **安全类步骤（M1、M1b、M3a、M5、M6，以及完成后的 M3b；M1c 做对 allow 规则的定向审查）完成后，另开一个会话，用 §3 的 X1 红队审查提示词做独立审查。** 审查会话只读代码，不改代码。高危发现清零后才进入下一步。
 8. 提示词里写的数字（条数、预算）是**目标值**，不是已经得到的结果。报告里的所有数字都必须来自实测。
 9. **密钥只留在你自己的 shell 里。**开发 agent 不持有任何 LLM 密钥，不读取 `.env`。需要真实调用的步骤（M3b，以及 M4 的真实调用部分），由你在本地运行 agent 给出的命令，再把脱敏后的输出交给它分析。
 10. **外部产品的事实每次都要核对官方文档并记录日期**：Claude Code 的 hook 行为、DeepSeek 等后端的模型名、参数与价格、订阅与 API 的政策，都变动很快，不要让 agent 凭记忆回答。平台与宿主（Windows 原生、WSL2、VS Code 扩展、CLI）的行为同理，以带版本号的实测记录为准。
@@ -30,7 +30,8 @@
 | M0 | 仓库骨架、hook 打通、降级、审计日志 | M0a | 真实会话中的手工验收 |
 | M1 | 归一化、规则引擎、策略格式 | M0 | 完成后做 X1 安全审查 |
 | M1b | PowerShell 方言归一化（Windows） | M1 与其审查 | 完成后做 X1 安全审查 |
-| M2 | 评测集、评测框架、rules-only 基线 | M1、M1b 与其审查 | 样本标签确认；真实会话导入确认 |
+| M1c | enforce 下可日常使用的 allow 规则（X1 审查 M-13） | M1b 与其审查 | allow 规则的定向 X1 审查；手工验收 |
+| M2 | 评测集、评测框架、rules-only 基线 | M1、M1b、M1c 与其审查（基线在 M1c 冻结规则之后取） | 样本标签确认；真实会话导入确认 |
 | M3a | 会话状态、污染标记、LLM 后端接口与假后端、二次裁决、`rules+taint` 评测 | M2 | 完成后做 X1 |
 | M3b | 真实 LLM 后端评测（可推迟） | M3a | 你自备密钥并确认费用；你在本地运行评测 |
 | M4 | 策略校验与自然语言策略编译（含离线模式） | M3a | 编译质量抽检 |
@@ -380,6 +381,21 @@ M1 已验收，且通过安全审查。M0a 的 E15、E17、E20 结论可用（Po
 先提交验收报告，再由独立会话用 X1 做安全审查（重点：绕过 AST 归一化与别名还原、辅助进程被攻击），审查通过后才进入 M2。
 ````
 
+### M1c：enforce 下可日常使用的 allow 规则（X1 审查 M-13）
+
+这一小节是已做工作的记录，不是待贴的提示词；报告在 `docs/reports/M1c.md`，手工验收在 `docs/manual-acceptance-m1c.md`，规则与字段说明在 `docs/policy-reference.md`。
+
+**为什么做。** X1 审查的 M-13：`enforce` 下默认策略只有 `Read` / `Glob` / `Grep` 一条 allow 规则，几乎每条 shell 命令与每次 `Write` / `Edit` 都 ask，比没有 boundkeep 更糟（盖过 Claude Code 自己的自动批准），也把用户推向不防护的 `audit-only`。M-13 要求在 M2 评测之前达成"enforce 下可日常使用"。你选了方案 A（规则层的 allow 规则），没有选方案 B（LLM）。
+
+**做了什么。**
+- 策略语言：新增匹配字段 `flags_none`（动作的标志里一个都没有才匹配）与 `paths_read_only`（每条路径的访问方式恰好是 `read`）；加载期检查"allow 规则必须点名工具或程序"。
+- 顺序：先写 ask 规则，再写 allow 规则。**L-11 的 `ask-project-autorun-files`（strict：`deny-project-autorun-files`）以及 `ask-secret-file-write`、`ask-credential-file-write`、`ask-git-internals-write` 必须先于任何项目内写入的 allow 规则存在**，`allow-project-file-writes` 才能加。读路径的 allow 规则带 `paths_read_only` 与 `flags_none`，并有 `ask-shell-read-outside-project`、`ask-git-read-outside-project` 从另一侧补守门。
+- 范围：Tier 1 只读检查（`ls`、`tree`、`find`、`rg`、`cat`、`head` / `tail` / `wc` / `grep`、`pwd`、`git status` / `diff` / `log` / `show` / `blame` / `rev-parse`、列分支、几条 PowerShell 只读 cmdlet）与 Tier 2 项目内写入（Bash 的 `mkdir` / `touch`、`Write` / `Edit` / `MultiEdit` / `NotebookEdit`）。**Tier 3（构建与测试命令：`pytest`、`npm test`、`cargo test` 等）不放行**：它们运行仓库里的代码。`echo` 与 `Write-Output` 也不放行（会打印环境变量的值，X1 审查 L-7）。strict 不新增任何 allow 规则（它的 allow 规则必须是 default 的子集，有测试）。
+- `defaults.emit_allow` 保持 `false`：`allow` 的输出仍是"无决定"，由 Claude Code 自己的权限流程决定。M1c 让 boundkeep 与 Claude Code 对齐，不替用户批准任何东西。
+- 度量与工具：`tests/corpus/workflow_benign.yaml`（合成语料）与 `scripts/measure_ask_rate.py`（每 100 个动作的问询数）；`scripts/session_command_stats.py` 在用户自己的会话记录上测真实覆盖率（只输出聚合）；`scripts/smoke_claude_m1c.py` 做真实 Claude Code 冒烟。
+
+**验收与之后。** 自动测试、Linux 容器、真实冒烟见报告；手工验收由你做；之后另开会话，对 allow 规则做**定向 X1 审查**（每条规则的 `flags_none` 清单是否漏项、`paths_read_only` 与 `path_inside_project` 的组合、环境变量前缀清单、allow 与保护名字规则的交互、strict 是否没有新增放行面），高危发现清零后才进入 M2。M2 的基线在 allow 规则冻结之后再取。
+
 ### M2：评测集、评测框架与 rules-only 基线
 
 ````text
@@ -389,7 +405,7 @@ M1 已验收，且通过安全审查。M0a 的 E15、E17、E20 结论可用（Po
 建立可信的评测，并产出 rules-only 的真实基线。后续所有"提升"都要对照这份基线，不得事后更换口径。
 
 ## 前置
-M1 与 M1b 已验收，且通过安全审查。
+M1、M1b 与 M1c 已验收，且通过安全审查（M1c 是对 allow 规则的定向审查）。M1c 冻结了默认策略里的 allow 规则：基线必须在它之后取，否则 rules-only 基线对应的是一份之后又会变的策略。
 
 ## 做什么
 1. 样本 schema（pydantic）：id、category、label（malicious / benign）、platform（any / posix / windows）、task_intent、tainted、taint_sources、tool、input、expected_min_verdict、rationale（为什么这样标）、provenance（手写 / 脱敏自真实会话 / LLM 辅助生成）、split（dev / test）。
