@@ -39,7 +39,7 @@ Claude Code 的 PowerShell 工具调用
 | 大小 | 请求文本 ≤ 1 MiB（超了 → `ps-input-too-large`）；应答 ≤ 4 MiB（超了 → 失败）；文本不是合法 Unicode → `ps-input-invalid` |
 | 失败即灰色 | 以上所有失败都是灰色（没有 LLM 后端时即 ask），绝不放行，绝不抛异常 |
 
-没有规则能定案的普通 PowerShell 命令（比如 `Get-Date`）也是 ask：默认策略里没有任何 allow 规则（唯一的 allow 是项目内的 Read / Glob / Grep）。所以 enforce 模式下 PowerShell 命令仍然会频繁弹确认；**日常使用建议 `boundkeep mode audit-only`**，等策略与 LLM 里程碑之后再切 enforce。
+没有规则能定案的普通 PowerShell 命令也是 ask。默认策略（M1c 起）为日常的只读与项目内写入命令加了 allow 规则（`Get-ChildItem`、`Get-Content`、`Select-String`、`git status` 等，见 `docs/policy-reference.md` 的"日常 allow 规则"）；M1c-2 又加了数据整理 cmdlet（`allow-ps-data-shaping`）和受信任项目里的开发工具（`allow-devtools-trusted-project`，默认没有受信任的项目）。其余仍然是 ask；**strict 没有这些 allow 规则**。
 
 ## 3. 支持的构造
 
@@ -54,6 +54,8 @@ Claude Code 的 PowerShell 工具调用
 | `$PROFILE` | 展开成两个候选：`~\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1` 与 `~\Documents\PowerShell\...`（不知道是 5.1 还是 7），被 `protect-windows-persistence` 覆盖 | `Add-Content $PROFILE 'x'` → ask |
 | 重定向 | `>`、`>>`、`2>`、`*>` 的目标是写路径；`2>&1` 之类的合并没有路径；`$null` 不算 | `echo x > ~\.bashrc` |
 | 管道 | 每段单独归一化，段间 `in_pipeline`；任一段灰色则整行灰色。没有路径参数的写类 cmdlet（`Remove-Item`、`Set-Content`、`Copy-Item` 无源……）按"写入管道带来的路径"处理 → 灰色 `arguments-from-pipeline` | `Get-ChildItem \| Remove-Item` → 灰色 |
+| 管道的开头（M1c-2） | **以表达式开头的管道**（`'x' \| Get-Content`、`$env:A \| Select-Object`、`(Get-Content f) \| ...`）的开头不是 `CommandAst`，辅助进程的摘要在**后面每一段**的 `stage` 对象里带一个 `head` 字段（`stage.head`，普通元素；超过 4096 字符的字符串被截断成"其他"元素，按动态处理）。归一化层处理：开头是**纯常量**（字符串、数字）且这一段是读文件的 cmdlet（`Get-Content`、`Select-String`、`Get-Item`、`Resolve-Path`、`Test-Path` 等）→ 开头就是该 cmdlet 的**读路径**（`'~\.ssh\id_rsa' \| Get-Content` 现在是 deny）；开头不是纯常量（变量、子表达式、括号表达式、方法调用……）→ 整行灰色 `ps-pipeline-head-dynamic` | `$env:SECRET_TOKEN \| Select-Object` → 灰色；`'..\x' \| Get-Content` → 读项目外的路径 |
+| 开发工具（M1c-2） | `pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`（`psprograms.DEV_TOOLS`）：裸名、`.exe`、路径限定的 `.exe`（`& '.\.venv\Scripts\ruff.exe' check .`，`&` 后接字面量路径），或 `python` / `python3` / `python3.N` / `py`（带或不带 `.exe`）以 `python [-I -u -B -E -s -S -q -O -OO \| -X 项 \| -W 项] -m <工具>` 的形式调用。结果：程序名就是工具、已知、`exec` 标签、**没有灰色原因、没有包装器标记**；操作数是 `unknown` 访问的路径；路径限定的程序把可执行文件的路径作为读路径列出（伪环境变量 `boundkeep-exe-path`，任何命令行都拼不出来）；加载或运行点名文件 / 代码的选项（`-p`、`-c`、`--config`、`--rcfile`、`--init-hook` ……）保留为标志；同一行里先写后运行的可执行文件灰色 `exec-of-written-file`。`python script.py`、`python -c`、`python -m pip` 等仍按解释器处理。哪些放行见 `docs/policy-reference.md` 的"Dev-tools preset" | `pytest -q` → 工具 `pytest`；`python -m mypy src` → 工具 `mypy`，操作数 `src` |
 | 目录跟踪 | `cd` / `Set-Location` / `Push-Location`（及 `chdir`、`sl`、`pushd`）跟踪工作目录，包括内置函数 `cd..`、`cd\`；`Pop-Location`、`cd -`、多个参数、动态值 → 工作目录未知（相对路径灰色 `cwd-unknown`） | `cd ..; Get-Content .env` |
 | 通配符 | PowerShell 的通配符（`*` `?` `[...]`）**会匹配以点开头的文件**（和 Bash 不同）：`Get-Content *` 在含 `.env` 的项目里会被 `no-secret-read` deny。`-LiteralPath` 的值不当通配符；`-Path` 的才是 | `gc *`、`gc .e*` → deny（项目里有 `.env`）；`gc -LiteralPath 'a[1].txt'` 是字面名 |
 | 读 | `Get-Content`、`Get-ChildItem`、`Get-Item`、`Get-ItemProperty`、`Select-String`、`Test-Path`、`Get-FileHash`、`Import-Csv` / `Import-Clixml`、`Get-Acl`、`Resolve-Path`、`Format-Hex` 等 | |
@@ -92,6 +94,7 @@ Claude Code 的 PowerShell 工具调用
 | `ps-dot-source` (E) | `. .\x.ps1` 点源 | |
 | `ps-encoded-command` (E) | `powershell -EncodedCommand` / `-enc` | |
 | `ps-pipe-to-interpreter` (E) | `... \| iex`、`... \| powershell -` 等把管道当代码 | |
+| `ps-pipeline-head-dynamic` | 以变量、子表达式、括号表达式等**不是纯常量**的表达式开头的管道（`$env:SECRET_TOKEN \| Select-Object`、`$x \| Out-String`、`(Get-Content f) \| ...`） | 值流进后面的每一段，却没有命令代表它（M1c-2 起；之前整行不带任何标记） |
 | `ps-script-exec` (E) | 调用脚本文件（`.ps1` `.bat` `.cmd` `.vbs` `.js` `.py` `.msi` `.lnk` 等）或路径限定的非 `.exe` | |
 | `ps-nested-shell` (E) | `powershell` `pwsh` `cmd` `wsl` `bash` `sh` `wscript` `cscript` `mshta` `rundll32` `regsvr32` 等 | |
 | `ps-exec:<名字>` (E) | `Invoke-Expression`（`iex`）、`Invoke-Command`（`icm`）、`Start-Process`（`saps`、`start`）、`Invoke-Item`、`Add-Type`、`Invoke-WmiMethod` / `Invoke-CimMethod`、`Start-Job`、`Register-ScheduledJob` / `Register-ObjectEvent`、构建运行器、`Import-Module <路径>`、`New-Object -ComObject` | |
@@ -104,7 +107,7 @@ Claude Code 的 PowerShell 工具调用
 
 ## 5. 已知无法处理的写法 / 已知缺口
 
-每条都不会变成 allow；下面是"仍然看不清"或"没有规则可用"的清单。除非特别说明，结果都是灰色（ask）或"没有规则命中"（也是 ask，默认策略里没有 shell 命令的 allow 规则）。
+每条都不会变成 allow；下面是"仍然看不清"或"没有规则可用"的清单。除非特别说明，结果都是灰色（ask）或"没有规则命中"（也是 ask）。
 
 **策略语言的缺口（需要改策略 schema 才能补）**
 
@@ -114,7 +117,7 @@ Claude Code 的 PowerShell 工具调用
 
 **解析与归一化的缺口**
 
-4. **管道里的字符串字面量不当路径**：`"~\.ssh\id_rsa" | Get-Content` 灰色（没有 deny）。修它需要改辅助进程的摘要（把纯表达式语句也报出来）。
+4. **（M1c-2 已关闭）管道开头的字面量**：`"~\.ssh\id_rsa" | Get-Content` 以前灰色且没有 deny；现在辅助进程的摘要在后续各段带 `stage.head`，纯常量开头成为读文件 cmdlet 的读路径（命中 `no-credential-store-read` / `no-secret-read` 就是 deny），非常量开头整行灰色 `ps-pipeline-head-dynamic`。仍然看不清的：开头是 `(Get-Content f)` 这类括号表达式时，括号里的命令按子表达式灰色，不做路径推断。
 5. **计算出来的路径**：`$(Join-Path ...)`、`(Join-Path ...)`、成员访问如 `$PROFILE.CurrentUserAllHosts`、`('a' + 'b')` 都是动态值，灰色。
 6. **`$PROFILE` 假定默认的 Documents 位置。** Documents 被 OneDrive 重定向时，`$PROFILE` 指向的真实路径不会被跟随；直接写出真实路径时被 `**/documents/...` 规则覆盖。
 7. **UNC / 网络路径不算联网**：`\\host\share` 被当作普通（项目外）路径，不进 `domains`，`net-allowlist` 看不到。
@@ -133,7 +136,7 @@ Claude Code 的 PowerShell 工具调用
 
 **使用上的后果**
 
-17. **没有命中任何规则的普通 PowerShell 命令仍会 ask**（没有 allow 规则）。日常使用在策略与 LLM 里程碑之前建议 `boundkeep mode audit-only`。
+17. **没有命中任何规则的普通 PowerShell 命令仍会 ask**（默认策略的 allow 规则只覆盖日常的只读、数据整理与项目内写入，strict 没有）。
 18. **`Get-Content *`、`Get-ChildItem *` 在含 `.env` 的项目里现在会 deny**：PowerShell 的通配符确实匹配点开头的文件（与 Bash 不同），boundkeep 按真实语义展开。想读别的文件请写具体文件名。
 
 ## 6. 如何排查

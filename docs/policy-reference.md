@@ -13,6 +13,7 @@ defaults:
   emit_allow: false            # true：规则判为 allow 时向 Claude Code 输出 allow（替用户自动批准）
 llm_audit: {...}               # 只校验结构（M3 才有后端）
 taint: {sources: [WebFetch, WebSearch, "mcp__*"]}   # 决定 PostToolUse 的 matcher
+trusted_projects: []           # 你明确信任的项目目录（默认空），见下面的"受信任的项目"
 rules: [...]
 tests: [...]
 ```
@@ -55,12 +56,32 @@ rules:
 | `path_outside_project: true` | 任一路径**不能确定**在项目内（`inside_project` 为 false 或 null）即匹配；没有路径时不匹配。与 `path_glob` / `access` 同用时见下面的"同一条路径" |
 | `path_inside_project: true` | 至少一个路径，且**每个**路径都**确定**在项目内。这是 allow 侧用的，不确定不算。不能和 `path_outside_project` 同写（永远不会命中，加载报错） |
 | `paths_read_only: true` | **每个**路径的访问方式都恰好是 `read`。`write` 与 `unknown`（可能写）都不算只读；没有任何路径的动作匹配（`pwd`、`echo hi`，空真）。与其他字段 AND，不要求路径在项目内（要的话再写 `path_inside_project`）。这是 allow 侧用的；写在 deny / ask 规则里时，访问方式为 `unknown` 的路径不会让它命中 |
+| `project_trusted: true` | 该动作的**项目目录**等于或位于顶层 `trusted_projects` 的某一项之内才匹配（见"受信任的项目"）。项目目录未知、不确定、过宽（文件系统根、盘符根、主目录或其祖先），或会话的工作目录不在项目内时，不匹配。**单独写它不满足** allow 规则必须点名工具或程序的加载检查。失败方向：allow 规则里任何问题都算不匹配；deny / ask 规则里"无法判断项目是否受信任"算匹配（已知不受信任才不匹配） |
 | `network: true` | 该动作联网 |
 | `domain_not_in` | 联网，且（目标域名未知，或**任一**域名不在列表里）。域名精确相等或是真正的子域才算"在" |
 | `domain_in` | 联网，且域名非空且**每个**都在列表里 |
 | `mcp_server` | MCP 工具的 server 名。**区分大小写**（`GitHub` 不是 `github`） |
 
 所有布尔字段只能写 `true`，列表不能为空。**任何 match 字段、`tool`、`platform` 都不能写成 null**（`key:` 后面留空、`null`、`~`）：缺省才表示"不限"，一个悄悄等价于缺省的 null 会让 `path_inside_project:` 这样的笔误把 allow 规则放宽。加载时报 `rules[0].match.path_inside_project: ... is null`，带行号。
+
+### 受信任的项目（`trusted_projects`）
+
+```yaml
+trusted_projects:
+  - ~/work/my-own-project        # 主目录相对：~/ 或 ~\，按加载时的 home 展开，和 path_glob 里的 ~ 一样
+  - C:\Users\me\code\other       # 绝对路径：C:\... 或 C:/...（Windows），/...（POSIX）
+```
+
+**A trusted project is one whose own code you let tools run without asking: a prompt injection that gets the agent to write a test file and run pytest then executes code unreviewed; do not trust a repository you did not write or audit.**（受信任的项目，就是你允许其自身代码在不询问的情况下被工具运行的项目：提示注入只要让 agent 写一个测试文件再运行 pytest，就会不经审查地执行代码。不要信任你没有写过或审计过的仓库。）
+
+- 默认空列表，缺省等于空。**条目不是 glob**：一个条目表示"这个目录以及它下面的一切"。
+- 每项是字符串，加载时校验并规范化一次（存成规范键：`/` 分隔，Windows 风格整条小写；重复项折叠，保留第一次出现的顺序），出错时点名那一项（`trusted_projects[2]: '...' ...`）。最多 64 项，每项最长 1024 字符。
+- **拒绝**：空白或首尾带空白；相对路径（含 `C:foo`、`\foo`）；UNC / 网络路径（`\\host\share`、`//host/share`）；含 `*`、`?`、`[`、`$`、`%` 的条目（不是模式，也不是变量）；含 `..` 段；含 NUL 与控制字符；`~user` 形式；NTFS 备用数据流、尾随的点或空格、`/mnt/c/...` 与 `/c/...` 这类被翻译的写法（写成 `C:\...`，首个目录名是单个字母的 POSIX 路径会被读成盘符）；以及**过宽**的目录：主目录本身、主目录的任何祖先、盘符根、`/`、`/home`、`/Users`、`C:\Users`、`~/Documents`、`~/Desktop`、`~/Downloads` 本身、`/tmp`、`/var/tmp`、`/usr`、`/opt` 一类放着许多东西的目录本身，以及 `C:\Windows`、`C:\Program Files*`、`/etc` 等系统目录（含其下）。过宽的判断与归一化层拒绝过宽的项目根是同一份代码（`policy.schema.too_broad`）。
+- 另一种平台风格的条目（Windows 守护进程里的 `/home/x/p`，POSIX 里的 `C:\p`）能加载，但永远匹配不到。
+- 比较按路径段前缀（`/home/a/proj2` 不在 `/home/a/proj` 内），不是字符串前缀；Windows 风格不区分大小写，POSIX 风格区分。
+- "项目目录"就是归一化层用于 `inside_project` 的那个目录（事件的 `project_dir`，没有时取 `cwd` 所在的 git 根），规范键放在 `Action.project`（每个动作都有；`Action.project_resolved` 是符号链接 / junction 解析后的目录，只在与前者不同时设置，两者都要在受信任的项目里才匹配）。项目目录未知、过宽，或会话的 `cwd` 已不在项目内（命令在别处运行，不是在运行这个项目的代码）时 `Action.project` 为 `None`，`project_trusted` 不匹配。
+- `boundkeep explain` 里命中规则的明细行写 `project_trusted: project is inside a trusted project`；不受信任的说明行 `project_trusted: project is not trusted` 由 `policy.matcher.project_trust_line(action, trusted_projects)` 生成（没命中的规则本来就不列明细）。
+- **`project_trusted` 只说明"项目是否受信任"**，不说明命令读写哪些路径；运行仓库代码的 allow 规则仍应同时用 `path_inside_project` 等字段约束路径。
 
 ### 同一条路径（correlation）
 
@@ -113,7 +134,7 @@ tests:
 | 规则 | 动作 | 内容 |
 |---|---|---|
 | `protect-guard-config` | deny | 写 `.claude/settings*.json`、`.boundkeep/**`、`.claude` 目录本身与 `~/.claude`（删除、改名、移动、覆盖都算写）、`managed-settings.json`、`managed-settings.d/**` |
-| `deny-boundkeep-state-commands` | deny | `boundkeep` / `boundkeep-hook` 的 `mode`、`uninstall`、`init`、`serve`（**依赖归一化层报告 boundkeep 的子命令，见下文"程序命令行规则"**） |
+| `deny-boundkeep-state-commands` | deny | `boundkeep` / `boundkeep-hook` 的 `mode`、`uninstall`、`init`、`serve`、`trust`（`trust` 的每种写法都拒绝，`trust list` 也一样：规则只看得到子命令；用户在自己的终端里运行它，列表用 `boundkeep doctor` 看；CLI 自己在 stdin 不是终端时也会拒绝，这是纵深防御）（**依赖归一化层报告 boundkeep 的子命令，见下文"程序命令行规则"**） |
 | `deny-boundkeep-state-flags` | deny | `boundkeep` / `boundkeep-hook` 带 `--reset-policy`、`--purge`、`--python`、`--hook-style`、`--rotate-endpoint`、`--home`（按标志即可匹配，现在就生效） |
 | `deny-boundkeep-hook-run` | deny | 手工运行 `boundkeep-hook` |
 | `ask-boundkeep-cli` | ask | `boundkeep` 其余命令（`doctor`、`test`、`explain`、`log --tail`、`llm`）；这些是给用户自己终端用的，ask 让确认框里有带 boundkeep 字样的理由 |
@@ -163,6 +184,10 @@ tests:
 | `allow-ps-no-path-commands` | allow | PowerShell `Get-Location`、`Get-Date`、`Measure-Object`（都在归一化层的"无路径"清单里；只打印计数或日期）。排除 `Get-Date -Format` / `-UFormat`（原样打印格式串）与 `-Date`（解析失败的值会出现在错误信息里）。**`Write-Output` 与 `Select-Object` 不在其中**：前者打印展开后的参数（`$env:SECRET_TOKEN`），后者打印管道里的值，而归一化层会丢掉以变量开头的管道元素（`$env:SECRET_TOKEN \| Select-Object` 不带任何标记） |
 | `allow-mkdir-touch-inside-project` | allow | Bash `mkdir` / `touch`，路径都在项目内；排除 `touch -r` / `--reference`（参考文件的时间戳）。名字敏感的（`Makefile`、`.env`、`.git/...`）由上面的 ask 规则拦住。PowerShell 的 `mkdir`、`New-Item`（可建符号链接与联接点）、`cp`、`mv`、`rm`、重定向、`tee`、`sed -i` 都不在其中 |
 | `allow-project-file-writes` | allow | Write / Edit / MultiEdit / NotebookEdit 写项目内的文件（`path_inside_project`；`..` 走出项目、别的盘、解析不了的路径都不算）。上面所有保护名字的规则都比它严：守护进程自己的文件（deny），会让代码日后运行的文件、秘密、凭据、`.git`、agent 配置（ask） |
+| `ask-python-tool-config-write`（strict：`deny-python-tool-config-write`） | ask（strict：deny） | 写（`access: write`，没有 `tool:` 限制）会让开发工具加载代码的配置文件：`mypy.ini`、`.mypy.ini`（`plugins =`）、`pylintrc`、`.pylintrc`、`pylintrc.toml`、`.pylintrc.toml`（`init-hook`、`load-plugins`）、`.flake8`（本地插件）、`.coveragerc`（插件）、`pytest.ini`、`.pytest.ini`（`addopts = -p ...`、rootdir）。和 `ask-project-autorun-files` 同一个理由，单独成一条规则是因为一条规则的 `path_glob` 最多 64 项（那一条已满）。信任项目里的 dev-tool allow 规则绝不能在 agent 刚写的配置后面运行 |
+| `allow-ps-data-shaping` | allow | **仅 default。** PowerShell 只整理管道内容、不带路径的 cmdlet：`Select-Object`、`Where-Object`、`Sort-Object`、`Group-Object`、`Format-Table`、`Format-List`、`Out-String`、`Out-Null`、`ConvertTo-Json`、`ConvertFrom-Json`（`paths_read_only`；排除 `-InputObject`：`Select-Object -InputObject $env:SECRET_TOKEN` 会原样打印它拿到的值）。上游命令单独判定，整行全是 allow 才 allow；以变量或表达式开头的管道整行灰色（`ps-pipeline-head-dynamic`），所以 `$env:SECRET_TOKEN \| Select-Object` 不是 allow。脚本块参数本来就灰色。**不在其中**：`ForEach-Object`（脚本块）、`Out-File`、`Set-Content`、`Tee-Object`、`Export-*`（写文件）、`Invoke-*`（运行代码）、`Write-Output` |
+| `ask-devtools-path-outside-project` | ask | **仅 default。** 下一行 allow 规则的搭档（模式同 `ask-shell-read-outside-project`）：dev 工具命令可以没有任何路径，所以 allow 规则不能要求 `path_inside_project`；这条让任何不能证明在项目内的路径（操作数、`-c` 文件、路径限定的 python 或工具本身的可执行文件）都 ask。程序清单与 allow 规则相同（有测试检查）。带 `project_trusted: true`，所以不信任的项目里它不出声（那里本来就没有 allow，命令是灰色）；无法判断项目时算命中。没有 `path_glob` / `access`，原因同上面的守卫规则 |
+| `allow-devtools-trusted-project` | allow | **仅 default，且只在 `trusted_projects` 里的项目生效**（默认列表为空：没有项目被信任，这些命令仍是灰色 ask）。`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`（也包括 `python -m 工具`、`.exe`、项目自己虚拟环境里按路径写的形式）。`flags_none` 就是 `programs.DEVTOOL_RISKY_FLAGS`（各工具的清单合并，有测试保证两边相等）。见"Dev-tools preset"一节 |
 
 ### 日常 allow 规则（M1c，仅 default）
 
@@ -196,6 +221,31 @@ default 加了上面这批 allow 规则，strict 没有（它的唯一 allow 规
 - 不带路径的 `Get-ChildItem`、`Select-Object` 等也可能从管道接收字符串路径（`Get-Content list.txt \| Get-ChildItem` 会列出 list.txt 里写的目录，只泄露名字）。
 - 写规则里的 `**`（`ask-write-outside-project`、`ask-find-delete`、`ask-git-discard-paths`）是 `access: write`，不进入递归读取的子树扫描；**读规则里不能有 `**`**：`pipeline.protected_read_globs`（子树扫描用的"受保护名字"）会把它当作名字，目录下的每一项都命中，扫描在第一层就停下，`certs/a.pem` 这样嵌套的受保护文件永远看不到。strict 的 `ask-read-outside-project` 原先正是 `path_glob: ["**"]` + `access: read`，因此在 strict 里对含 `certs/a.pem` 的项目目录做 `Grep` 会被放行（M1c 之前就有）；现在它只写 `path_outside_project: true`（任何不能证明在项目内的路径都问），有测试（`test_no_read_rule_has_a_catch_all_glob`、`test_a_recursive_read_still_finds_a_nested_secret`）。
 - `allow-project-file-writes` 允许写项目内的任何普通文件，包括源码与测试：它们日后被运行时才会执行，这与 Claude Code 自己的行为一致。`.venv` 与 `node_modules` 里的文件也在其中。
+
+### Dev-tools preset (trusted projects)
+
+**A trusted project is one whose own code you let tools run without asking. Together with the Write/Edit allow rules this forms a write-then-run chain: a prompt injection that gets the agent to write a test file (tests/test_x.py is an ordinary project file) and run pytest executes that code unreviewed. Trust only repositories you wrote or audited; the session taint tracking planned for M3 is meant to tighten this.**
+
+- **默认策略没有任何受信任的项目**（`trusted_projects` 缺省为空），所以默认用户完全不受影响：`pytest`、`ruff` 等仍是灰色（ask）。**strict 永远不放行**（它没有 dev-tool 规则，信任与否都一样）。
+- **怎么开启**：在你自己的终端里运行 `boundkeep trust add`（在项目目录里，或 `--project-dir <目录>`）。这个命令在 stdin 不是终端时拒绝，策略里的 `deny-boundkeep-state-commands` 也拒绝 agent 运行任何 `boundkeep trust ...`（含 `list`、`remove`）。
+- **怎么看**：`boundkeep trust list`（在你自己的终端里）和 `boundkeep doctor`（会列出受信任的项目，指出过期、被重定向或多余的条目）。
+- **允许的形式**：`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`，裸名、`.exe`、路径限定（项目自己的 `.venv\Scripts\ruff.exe`），或 `python [无害选项] -m <工具>`（`python` / `python3` / `python3.N` / `py`，无害选项是 `-I -u -B -E -s -S -q -O -OO`、`-X 项`、`-W 项`）。PowerShell 里的 `& '.\.venv\Scripts\ruff.exe' check .` 同样。归一化层对它们给出：程序名就是工具、已知、`exec` 标签、**没有灰色原因、没有包装器标记**，操作数是访问方式 `unknown` 的路径（这些工具可能写：`--fix`、`black`、`isort`、缓存），路径限定的工具或解释器的可执行文件作为读路径列出。
+- **不放行的**：带包装器（`sudo pytest`、`uv run pytest`、`timeout 5 pytest`、`env X=1 pytest`、`nohup`）；带代码型环境变量前缀（`PYTHONPATH=...`、`PYTEST_ADDOPTS=...`、`PYTEST_PLUGINS`、`PYLINTRC`、`PATH` ……）；`python script.py`、`python -c`、`python -m pip install`、`node`、`npm test`；项目之外的解释器或工具（`C:\Python312\python.exe -m pytest`）；操作数在项目之外（`pytest ../other`）；操作数是秘密文件（`pytest .env`，deny）；同一行里先写文件再运行（`echo x > tests/test_x.py; pytest`：`exec-of-written-file`，灰色）；命令的项目不是受信任的那个（兄弟目录 `/home/a/proj-evil`、父目录、cwd 在项目之外）。
+- **`flags_none` = `programs.DEVTOOL_RISKY_FLAGS`**（合并，下表按工具列出）：这些选项加载或运行命令行上点名的文件或代码，或把输出写到别处，保留为标志，任何一个出现都不放行（包括各种写法：`--flag=x`、`--flag x`、`-pX`、`-qpX`，以及长选项的唯一缩写，工具表会把缩写还原成全名）。
+
+| 工具 | 排除的选项 |
+|---|---|
+| pytest | `-p`、`-c`、`--rootdir`、`--confcutdir`、`--basetemp`、`--junitxml`、`--cov-report`、`-o`、`--override-ini`、`--pdbcls`、`--cov-config`、`--log-file`、`--report-log`、`--html`、`--tx`、`--rsyncdir`、`--pastebin` |
+| ruff | `--config`、`--output-file`、`--cache-dir` |
+| mypy | `--config-file`、`--python-executable`、`--install-types`、`--non-interactive`、`--cache-dir`、`--junit-xml`、`--custom-typeshed-dir`、`--shadow-file`、`--report-dir` 以及各种 `--*-report` |
+| black | `--config`、`--stdin-filename` |
+| isort | `--settings-path`、`--settings-file`、`--sp`、`--virtual-env`、`--conda-env`、`--src` |
+| flake8 | `--config`、`--append-config`、`--output-file` |
+| pylint | `--rcfile`、`--load-plugins`、`--init-hook`、`--output`、`--source-roots`、`--extension-pkg-allow-list`、`--extension-pkg-whitelist` |
+
+- 规则是**一条**，各工具的清单合并：副作用：某个工具的危险选项对七个工具一起生效，例如 `mypy -p 包名`（对 mypy 它只是包名）和 `pylint --src` 也会 ask，因为 `-p`、`--src` 在别的工具里是危险的。想精确可以拆成每工具一条规则（`DEVTOOL_RISKY_FLAGS` 本来就按工具分）。
+- 仍然要问或拒绝的：操作数是密钥、凭据、`.claude/settings*.json`、`.boundkeep/**`、`.mcp.json`（deny）；操作数是 `Makefile`、`pyproject.toml`、`conftest.py`、CI 文件、`.git/**`、`mypy.ini` 等会运行代码的文件（ask，`ruff check --fix Makefile`、`black pyproject.toml`）；任何不在项目内的路径（`ask-devtools-path-outside-project`）；网络地址。
+- **已知缺口（响亮版）**：规则看不到"上一次调用写了什么"。agent 先用 Write 写 `tests/test_x.py`（普通项目文件，`allow-project-file-writes` 放行），下一次调用再运行 `pytest`，这两步各自都是 allow：写后运行的链在跨调用时没有任何规则能拦住。只有同一行里的"写后运行"会被识别（`exec-of-written-file`）。所以只信任你自己写的或审计过的仓库；M3 计划的会话污点追踪才是真正收紧这条链的办法。`conftest.py`、`mypy.ini`、`pytest.ini` 等配置文件本身的写入是 ask。
 
 **settings 文件的读与写保护不对称（有意如此，X1 复审 U-2）**：写保护覆盖所有 settings 文件（`**/.claude/settings*.json`、`~/.claude/settings*.json`，`protect-guard-config`）；读保护只覆盖真正放凭据的文件：`~/.claude/settings.json`、`~/.claude/settings.local.json`（含 WSL 看到的 `/mnt/c/Users/x/.claude/...`）和项目的 `.claude/settings.local.json`，外加 `.mcp.json`。**项目级 `.claude/settings.json` 可以读**：它通常提交进仓库，`init` 默认就把 hook 条目写在这里；如果把它读保护，每个受保护项目里没有 glob 的 `Grep`、`Glob **/*`、`grep -rn TODO .`、`ls -R` 都会被 deny（目录遍历命中受保护文件名）。代价：项目级 settings.json 里若有人写了令牌（`env` 块），agent 能读到；令牌应放 `settings.local.json` 或用户级文件。
 `PowerShell` 工具的命令由辅助进程（Windows PowerShell 5.1 或 pwsh，只调用解析器、不执行任何用户文本）解析，结果和 Bash 一样是 Action 列表，命令类规则与路径规则同样适用。仍然灰色的构造见下一节。

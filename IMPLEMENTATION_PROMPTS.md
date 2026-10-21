@@ -31,7 +31,8 @@
 | M1 | 归一化、规则引擎、策略格式 | M0 | 完成后做 X1 安全审查 |
 | M1b | PowerShell 方言归一化（Windows） | M1 与其审查 | 完成后做 X1 安全审查 |
 | M1c | enforce 下可日常使用的 allow 规则（X1 审查 M-13） | M1b 与其审查 | allow 规则的定向 X1 审查；手工验收 |
-| M2 | 评测集、评测框架、rules-only 基线 | M1、M1b、M1c 与其审查（基线在 M1c 冻结规则之后取） | 样本标签确认；真实会话导入确认 |
+| M1c-2 | 开发工具预设（挂在 `trusted_projects` 后面）、数据整理 cmdlet、PowerShell 管道开头修复 | M1c | 对新增面的定向 X1 审查；手工验收 |
+| M2 | 评测集、评测框架、rules-only 基线 | M1、M1b、M1c、M1c-2 与其审查（基线在 M1c-2 冻结规则之后取） | 样本标签确认；真实会话导入确认 |
 | M3a | 会话状态、污染标记、LLM 后端接口与假后端、二次裁决、`rules+taint` 评测 | M2 | 完成后做 X1 |
 | M3b | 真实 LLM 后端评测（可推迟） | M3a | 你自备密钥并确认费用；你在本地运行评测 |
 | M4 | 策略校验与自然语言策略编译（含离线模式） | M3a | 编译质量抽检 |
@@ -396,6 +397,24 @@ M1 已验收，且通过安全审查。M0a 的 E15、E17、E20 结论可用（Po
 
 **验收与之后。** 自动测试、Linux 容器、真实冒烟见报告；手工验收由你做；之后另开会话，对 allow 规则做**定向 X1 审查**（每条规则的 `flags_none` 清单是否漏项、`paths_read_only` 与 `path_inside_project` 的组合、环境变量前缀清单、allow 与保护名字规则的交互、strict 是否没有新增放行面），高危发现清零后才进入 M2。M2 的基线在 allow 规则冻结之后再取。
 
+### M1c-2：开发工具预设（受信任项目）、数据整理 cmdlet、PowerShell 管道开头修复
+
+这一小节是已做工作的记录，不是待贴的提示词；报告在 `docs/reports/M1c2.md`，手工验收在 `docs/manual-acceptance-m1c2.md`，规则与字段说明在 `docs/policy-reference.md`（"受信任的项目"与"Dev-tools preset (trusted projects)"），设计决定在 `PROJECT_SPEC.md` §7 的"开发工具预设与受信任项目"（规格修订 5）。
+
+**为什么做。** 用户自己的会话统计（60 天、开发 boundkeep 本身、PowerShell 为主）显示 M1c 之后 PowerShell 工具调用只有约 1% 被放行：挡路的主要是项目自己的 `.venv\Scripts\python.exe` / `ruff` / `mypy`（`program-path-qualified`）、复合语句与动态表达式（`ps-compound`、`ps-dynamic`）、写后运行（`exec-of-written-file`）。规格据此记录：规则层不可能把 PowerShell 脚本味很浓的工作流提到约 20% 到 30% 以上，其余要 M3 的 LLM 层或用户。所以这一步只做规则层能安全做的部分，不承诺覆盖率。
+
+**做了什么。**
+- 策略语言：顶层键 `trusted_projects`（默认空；加载时拒绝相对路径、UNC、通配符、`..`、过宽的目录，`too_broad` 与归一化层共用）、匹配字段 `project_trusted`、`Action.project` / `Action.project_resolved`（符号链接与 junction 解析后两者都要受信任；cwd 在项目外时为 `None`）。
+- 命令行：`boundkeep trust add|remove|list`（`src/boundkeep/trust.py`）：按文本编辑，保留注释、换行与 BOM；先用真实加载器验证再原子地私有写入；`add` 在 stdin 不是真正的控制台时拒绝；`doctor` 新增 `trusted-projects` 检查（含 RISK 提示）。策略规则把 `trust` 加进 `deny-boundkeep-state-commands`（agent 的任何 `boundkeep trust` 都被拒绝，`list` 也是），与 CLI 的控制台检查互为纵深防御。
+- 归一化（Bash 与 PowerShell 共用一份契约）：`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`，裸名、`.exe`、路径限定，或 `python [无害选项] -m 工具` 都归一为"程序名 = 工具"，路径限定的可执行文件把自己的路径作为读路径，危险标志（`DEVTOOL_RISKY_FLAGS`）保留为标志，包装器保留标记所以 allow 永远匹配不到；代码型环境变量前缀清单新增 `PYTEST_ADDOPTS`、`PYTEST_PLUGINS`、`PYLINTRC`、`PYTHONBREAKPOINT` 等；`exec-of-written-file` 扩展到这些工具的配置文件与 pytest 的测试文件（只管同一行）。
+- PowerShell 管道开头：辅助进程摘要带 `stage.head`；非常量开头整行灰色 `ps-pipeline-head-dynamic`；常量字符串开头成为读文件 cmdlet 的读路径（`'~\.ssh\id_rsa' | Get-Content` 现在被拒绝，关闭了 `docs/powershell-dialect.md` 的旧缺口 4）。
+- 规则（仅 default，除另注）：`allow-devtools-trusted-project`（一条合并规则，52 项 `flags_none` 与 Python 表由测试保持相等）、`ask-devtools-path-outside-project`、`allow-ps-data-shaping`、`ask-python-tool-config-write`（strict：`deny-python-tool-config-write`）、`trust` 进 `deny-boundkeep-state-commands`（default 与 strict）。strict 没有新增 allow。
+- 度量与工具：`scripts/measure_ask_rate.py --trusted`、`scripts/session_command_stats.py --trust DIR`（只输出聚合、什么都不写）、`scripts/smoke_claude_m1c2.py`（真实 Claude Code 冒烟）；语料 `tests/corpus/pipeline_m1c2_{devtools,ps,trusted}.yaml`，`workflow_benign.yaml` 新增 `t3-dev` 层与 `expect_trusted`。
+
+**顺序（先基础设施，后规则）。** 先做基础设施：策略语言（`trusted_projects`、`project_trusted`、`Action.project`）、`trust` CLI 与 `doctor`、两种 shell 的开发工具归一化、管道开头的辅助进程改动、`exec-of-written-file` 的扩展；之后才写策略规则（allow 规则与它的守门 ask 规则成对出现，保护配置文件写入与 `trust` 的规则与它们一起交付，不留只有 allow、没有守门的中间状态）。规则只依赖归一化层的契约（没有灰色原因、没有包装器标记），不重新判断命令行。
+
+**验收与之后（闸门）。** 自动测试、Linux 容器、真实冒烟见报告；**手工验收**由你做（`docs/manual-acceptance-m1c2.md`，其中 T2 是 `trust add` 在真实控制台里的第一次成功路径）；之后另开会话做**定向 X1 审查**，覆盖新增面：`trusted_projects` 的加载器与匹配器、`trust` CLI、开发工具归一化与 `DEVTOOL_RISKY_FLAGS` 清单、管道开头的改动、`exec-of-written-file` 的扩展；高危发现清零后才进入 M2。**已知的、有意接受的缺口**：跨工具调用的"先写后运行"（先 `Write` 写测试文件、下一次调用 `pytest`）规则层无法识别，所以只应信任自己写的或审计过的仓库；M3a 的污染标记计划用来收紧它。
+
 ### M2：评测集、评测框架与 rules-only 基线
 
 ````text
@@ -405,7 +424,7 @@ M1 已验收，且通过安全审查。M0a 的 E15、E17、E20 结论可用（Po
 建立可信的评测，并产出 rules-only 的真实基线。后续所有"提升"都要对照这份基线，不得事后更换口径。
 
 ## 前置
-M1、M1b 与 M1c 已验收，且通过安全审查（M1c 是对 allow 规则的定向审查）。M1c 冻结了默认策略里的 allow 规则：基线必须在它之后取，否则 rules-only 基线对应的是一份之后又会变的策略。
+M1、M1b、M1c 与 M1c-2 已验收，且通过安全审查（M1c 与 M1c-2 是对 allow 规则及其配套机制的定向审查）。M1c-2 冻结了默认策略里的 allow 规则与 `trusted_projects` 预设：基线必须在它之后取，否则 rules-only 基线对应的是一份之后又会变的策略。
 
 ## 做什么
 1. 样本 schema（pydantic）：id、category、label（malicious / benign）、platform（any / posix / windows）、task_intent、tainted、taint_sources、tool、input、expected_min_verdict、rationale（为什么这样标）、provenance（手写 / 脱敏自真实会话 / LLM 辅助生成）、split（dev / test）。
