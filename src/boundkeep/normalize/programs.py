@@ -1087,6 +1087,10 @@ def _h_cd(a: _Acc, args: Sequence[Word]) -> None:
     for w in sc.pos[:1]:
         if w.text != "-":
             a.path(w, "read")
+    if len(sc.pos) > 1:
+        # bash: an error; zsh: ``cd old new`` substitutes inside the current directory's path, so
+        # the shell can end up anywhere and the commands after it run there
+        a.gray.append("cd-extra-arguments")
 
 
 # --- writes INTO a directory: the directory hides the written file names --------------------------

@@ -1452,6 +1452,31 @@ rules:
       flags_none: ["-InputObject"]
       paths_read_only: true
     action: allow
+  - id: allow-cd-family
+    # cd and pushd (Bash) and Set-Location and Push-Location (PowerShell; the normalizer gives its
+    # aliases sl, chdir, cd and pushd these canonical names) only change the working directory: no
+    # read, no write, no exec, no network. Without this rule every `Set-Location 'proj'; <command>`
+    # line was gray even when the rest was allow (a line is allow only if every command of it is).
+    # The normalizer follows the new directory for the commands after the cd (cd .., cd -, pushd,
+    # popd, ~, $HOME ...) and judges their relative paths against it, so `cd ~/.ssh && cat id_rsa`
+    # and `cd .. && cat .env` are decided by the secret rules exactly as before.
+    # The target must be KNOWN to be inside the project (`path_inside_project`, one read path, no
+    # write): a cd out of the project, to a variable, a command substitution or a glob, `cd -`, a
+    # bare `cd` (home) and popd / Pop-Location (no path to prove anything) stay gray. The path
+    # condition is not optional. A command without a path (`git status`, `pwd`) takes its directory
+    # from the cd and has nothing for any rule to judge: with a cd out of the project allowed,
+    # `cd ../other && git status` would be allow while `git -C ../other status` asks
+    # (ask-git-read-outside-project). The protected targets (~/.ssh, ~/.aws, .env ...) are decided
+    # by the deny and ask rules above through the directory path the cd carries; strictest wins.
+    # An allow rule never matches a wrapper (sudo cd, env X=1 cd, nohup, time), a gray action (a
+    # glob, a provider path such as HKLM:, an unresolved parameter, -Credential) or a cd that
+    # redirects output (a written path). Strict has no such rule.
+    tool: [Bash, PowerShell]
+    match:
+      program: [cd, pushd, Set-Location, Push-Location]
+      paths_read_only: true
+      path_inside_project: true
+    action: allow
   - id: allow-devtools-trusted-project
     # pytest, ruff, mypy, black, isort, flake8 and pylint (also `python -m TOOL`, a `.exe`, or the
     # project's own virtual environment by path) are allowed ONLY in a project the user listed in
@@ -1965,3 +1990,41 @@ tests:
   - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Out-File x.txt" }, expect: gray }
   - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Select-Object Name > Makefile" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem C:\\Windows | Select-Object Name" }, expect: ask }
+
+  # ---- M1c-3: cd / pushd / Set-Location / Push-Location into the project are allow; every command after
+  # them is judged against the new directory, and a cd that leaves the project or cannot be resolved is not.
+  - { tool: Bash, input: { command: "cd src" }, expect: allow }
+  - { tool: Bash, input: { command: "cd src && ls" }, expect: allow }
+  - { tool: Bash, input: { command: "cd . && git status" }, expect: allow }
+  - { tool: Bash, input: { command: "pushd src" }, expect: allow }
+  - { tool: Bash, input: { command: "cd src && cd lib && cat README.md" }, expect: allow }
+  - { tool: Bash, input: { command: "cd .." }, expect: gray }   # leaves the project: nothing here can tell what a no-path command does there
+  - { tool: Bash, input: { command: "cd .. && ls" }, expect: gray }
+  - { tool: Bash, input: { command: "cd /tmp && git status" }, expect: gray }
+  - { tool: Bash, input: { command: "cd ~/.ssh" }, expect: deny }   # the secret rule sees the directory the cd carries
+  - { tool: Bash, input: { command: "cd ~/.ssh && cat id_rsa" }, expect: deny }
+  - { tool: Bash, input: { command: "cd .. && cat .env" }, expect: deny }   # judged against the new directory
+  - { tool: Bash, input: { command: "cd src && cat ../.env" }, expect: deny }
+  - { tool: Bash, input: { command: "cd src && pip install x" }, expect: ask }
+  - { tool: Bash, input: { command: "cd src && python script.py" }, expect: gray }
+  - { tool: Bash, input: { command: "cd $x" }, expect: gray }   # an unknown target
+  - { tool: Bash, input: { command: "cd -" }, expect: gray }
+  - { tool: Bash, input: { command: "popd" }, expect: gray }
+  - { tool: Bash, input: { command: "sudo cd src" }, expect: gray }   # a wrapper: a different action
+  - { tool: Bash, input: { command: "cd src > out.txt" }, expect: gray }   # the redirect writes
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location src" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location src; Get-ChildItem" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "cd src; git status" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Push-Location -Path src -PassThru" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location 'C:\\Users\\testuser\\proj'; git status" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location .." }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location ..; Get-ChildItem" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location ~\\.ssh" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location ~\\.ssh; Get-Content id_rsa" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location ..; Get-Content .env" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location src; pip install x" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location src; Set-Content a b" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location $x" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-Location src -Credential x" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Pop-Location" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "if ($true) { cd src }" }, expect: gray }   # a compound statement stays gray

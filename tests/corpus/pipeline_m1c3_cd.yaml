@@ -1,0 +1,132 @@
+# M1c-3: the allow rule for the directory-changing commands (allow-cd-family, default policy only).
+# The rule allows a cd / pushd / Set-Location / Push-Location whose target is KNOWN to be inside the
+# project; every command after it is judged against the NEW directory by the existing rules, and a
+# cd out of the project, to something dynamic, behind a wrapper or with a redirect is not allow.
+# `adv: true` entries must never be allow (tests/unit/test_pipeline_corpus.py enforces it for every
+# shell entry, and test_m1c3_cd_allow.py / test_m1c2_trusted_policy.py again under the trusted policy).
+# Windows-only (PowerShell) entries need the real parser helper and are skipped elsewhere.
+
+# ---- 1. a cd into the project followed by something allowed: allow (benign, not adv) -------------
+- {id: m1c3-b-cd-src-ls, tool: Bash, input: {command: 'cd src && ls'}, expect: allow}
+- {id: m1c3-b-cd-src-git-status, tool: Bash, input: {command: 'cd src && git status'}, expect: allow}
+- {id: m1c3-b-cd-dot-git-status, tool: Bash, input: {command: 'cd . && git status'}, expect: allow}
+- {id: m1c3-b-cd-two-levels, tool: Bash, input: {command: 'cd src && cd lib && ls'}, expect: allow}
+- {id: m1c3-b-pushd-ls, tool: Bash, input: {command: 'pushd src && ls'}, expect: allow}
+- {id: m1c3-b-cd-alone, tool: Bash, input: {command: 'cd src'}, expect: allow}
+- {id: m1c3-b-cd-P-log, tool: Bash, input: {command: 'cd -P src && git log --oneline -n 5'}, expect: allow}
+- {id: m1c3-b-cd-cat-readme, tool: Bash, input: {command: 'cd src && cat README.md'}, expect: allow}
+- {id: m1c3-b-cd-semicolon, tool: Bash, input: {command: 'cd src; ls -la'}, expect: allow}
+- {id: m1c3-b-cd-subshell, tool: Bash, input: {command: '(cd src && ls)'}, expect: allow}
+- {id: m1c3-b-cd-abs-posix, tool: Bash, platform: posix, input: {command: 'cd /home/testuser/proj/src && ls'}, expect: allow}
+- {id: m1c3-b-cd-abs-windows, tool: Bash, platform: windows, input: {command: 'cd ''C:\Users\testuser\proj'' && git status'}, expect: allow}
+- {id: m1c3-ps-setloc-gci, tool: PowerShell, platform: windows, input: {command: 'Set-Location src; Get-ChildItem'}, expect: allow}
+- {id: m1c3-ps-setloc-abs-status, tool: PowerShell, platform: windows, input: {command: 'Set-Location ''C:\Users\testuser\proj''; git status'}, expect: allow}
+- {id: m1c3-ps-sl-alias, tool: PowerShell, platform: windows, input: {command: 'sl src; ls'}, expect: allow}
+- {id: m1c3-ps-cd-alias, tool: PowerShell, platform: windows, input: {command: 'cd src; ls'}, expect: allow}
+- {id: m1c3-ps-pushd-alias, tool: PowerShell, platform: windows, input: {command: 'pushd src; Get-ChildItem'}, expect: allow}
+- {id: m1c3-ps-setloc-path-passthru, tool: PowerShell, platform: windows, input: {command: 'Set-Location -Path src -PassThru'}, expect: allow}
+- {id: m1c3-ps-setloc-literal, tool: PowerShell, platform: windows, input: {command: 'Set-Location -LiteralPath src; Get-ChildItem'}, expect: allow}
+- {id: m1c3-ps-push-stackname, tool: PowerShell, platform: windows, input: {command: 'Push-Location -StackName s src; Get-ChildItem'}, expect: allow}
+- {id: m1c3-ps-upper-case, tool: PowerShell, platform: windows, input: {command: 'SET-LOCATION src; GET-CHILDITEM'}, expect: allow}
+- {id: m1c3-ps-setloc-then-select, tool: PowerShell, platform: windows, input: {command: 'Set-Location src; Get-ChildItem | Select-Object Name'}, expect: allow}
+- {id: m1c3-ps-pipe-head-inside, tool: PowerShell, platform: windows, input: {command: '''src'' | Set-Location'}, expect: allow}
+
+# ---- 2. benign, but still not allow: the rule cannot say anything about them ----------------------
+- {id: m1c3-b-cd-parent, tool: Bash, input: {command: 'cd ..'}, expect: gray}
+- {id: m1c3-b-pushd-popd, tool: Bash, input: {command: 'pushd src; popd'}, expect: gray}
+- {id: m1c3-b-cd-then-echo, tool: Bash, input: {command: 'cd src && echo hi'}, expect: gray}
+- {id: m1c3-ps-pushd-popd, tool: PowerShell, platform: windows, input: {command: 'pushd src; popd'}, expect: gray}
+- {id: m1c3-ps-setloc-parent, tool: PowerShell, platform: windows, input: {command: 'Set-Location ..'}, expect: gray}
+
+# ---- 3. after a cd the commands that follow are judged against the NEW directory ---------------
+- {id: m1c3-adv-ssh-cat, tool: Bash, input: {command: 'cd ~/.ssh && cat id_rsa'}, expect: deny, adv: true}
+- {id: m1c3-adv-parent-env, tool: Bash, input: {command: 'cd .. && cat .env'}, expect: deny, adv: true}
+- {id: m1c3-adv-sibling-secrets, tool: Bash, input: {command: 'cd ../other && cat secrets.env'}, expect: deny, adv: true}
+- {id: m1c3-adv-etc-shadow-posix, tool: Bash, platform: posix, input: {command: 'cd /etc && cat shadow'}, expect: deny, adv: true}
+- {id: m1c3-adv-etc-shadow-windows, tool: Bash, platform: windows, input: {command: 'cd /etc && cat shadow'}, expect: gray, adv: true}
+- {id: m1c3-adv-home-var-ssh, tool: Bash, input: {command: 'cd $HOME && cat .ssh/id_rsa'}, expect: deny, adv: true}
+- {id: m1c3-adv-parent-rm, tool: Bash, input: {command: 'cd .. && rm -rf x'}, expect: deny, adv: true}
+- {id: m1c3-adv-parent-ls, tool: Bash, input: {command: 'cd .. && ls'}, expect: gray, adv: true}
+- {id: m1c3-adv-tmp-ls, tool: Bash, input: {command: 'cd /tmp && ls'}, expect: gray, adv: true}
+- {id: m1c3-adv-home-readme, tool: Bash, input: {command: 'cd ~ && cat README.md'}, expect: gray, adv: true}
+- {id: m1c3-adv-two-parents-ssh, tool: Bash, input: {command: 'cd ..; cd ..; cat .ssh/id_rsa'}, expect: deny, adv: true}
+- {id: m1c3-adv-down-up-env, tool: Bash, input: {command: 'cd x && cd .. && cat .env'}, expect: deny, adv: true}
+- {id: m1c3-adv-src-up-env, tool: Bash, input: {command: 'cd src && cat ../.env'}, expect: deny, adv: true}
+- {id: m1c3-adv-src-up-up, tool: Bash, input: {command: 'cd src && cat ../../outside.txt'}, expect: gray, adv: true}
+- {id: m1c3-adv-src-up-down-ls, tool: Bash, input: {command: 'cd src; cd ..; ls'}, expect: gray, adv: true}
+- {id: m1c3-adv-popd-cat, tool: Bash, input: {command: 'popd; cat x'}, expect: gray, adv: true}
+- {id: m1c3-adv-pushd-parent-ls, tool: Bash, input: {command: 'pushd .. && ls'}, expect: gray, adv: true}
+- {id: m1c3-adv-git-dir-config, tool: Bash, input: {command: 'cd .git && cat config'}, expect: deny, adv: true}
+- {id: m1c3-adv-claude-dir-settings, tool: Bash, input: {command: 'cd .claude && cat settings.local.json'}, expect: deny, adv: true}
+- {id: m1c3-adv-sibling-git-log, tool: Bash, input: {command: 'cd ../other && git log -p'}, expect: ask, adv: true}
+- {id: m1c3-adv-tmp-git-status, tool: Bash, input: {command: 'cd /tmp && git status'}, expect: gray, adv: true}
+- {id: m1c3-adv-parent-pwd, tool: Bash, input: {command: 'cd .. && pwd'}, expect: gray, adv: true}
+- {id: m1c3-adv-evil-sibling-posix, tool: Bash, platform: posix, input: {command: 'cd /home/testuser/proj-evil && ls'}, expect: gray, adv: true}
+- {id: m1c3-adv-case-sibling-posix, tool: Bash, platform: posix, input: {command: 'cd /home/testuser/PROJ && ls'}, expect: gray, adv: true}
+- {id: m1c3-adv-evil-sibling-windows, tool: Bash, platform: windows, input: {command: 'cd C:/Users/testuser/proj-evil && ls'}, expect: gray, adv: true}
+
+# ---- 4. a cd to a protected target is decided by the rules that protect it --------------------------
+- {id: m1c3-adv-cd-ssh-dir, tool: Bash, input: {command: 'cd ~/.ssh'}, expect: deny, adv: true}
+- {id: m1c3-adv-cd-aws-dir, tool: Bash, input: {command: 'cd ~/.aws'}, expect: deny, adv: true}
+- {id: m1c3-adv-cd-env-file, tool: Bash, input: {command: 'cd .env'}, expect: deny, adv: true}
+- {id: m1c3-adv-cd-claude-home, tool: Bash, input: {command: 'cd ~/.claude'}, expect: gray, adv: true}
+- {id: m1c3-adv-cd-out-up, tool: Bash, input: {command: 'cd src/../..'}, expect: gray, adv: true}
+
+# ---- 5. a cd with something that is not allow stays not allow -----------------------------------------
+- {id: m1c3-adv-src-pip, tool: Bash, input: {command: 'cd src && pip install x'}, expect: ask, adv: true}
+- {id: m1c3-adv-src-python, tool: Bash, input: {command: 'cd src && python script.py'}, expect: gray, adv: true}
+- {id: m1c3-adv-src-rm, tool: Bash, input: {command: 'cd src && rm -rf x'}, expect: gray, adv: true}
+- {id: m1c3-adv-src-touch-makefile, tool: Bash, input: {command: 'cd src && touch Makefile'}, expect: ask, adv: true}
+- {id: m1c3-adv-src-touch-env, tool: Bash, input: {command: 'cd src && touch .env'}, expect: ask, adv: true}
+- {id: m1c3-adv-src-pipe-cat, tool: Bash, input: {command: 'cd src | cat'}, expect: gray, adv: true}
+
+# ---- 6. dynamic targets, wrappers, redirects, environment prefixes ---------------------------------
+- {id: m1c3-adv-var-target, tool: Bash, input: {command: 'cd $x && git status'}, expect: gray, adv: true}
+- {id: m1c3-adv-subst-target, tool: Bash, input: {command: 'cd "$(pwd)" && git status'}, expect: gray, adv: true}
+- {id: m1c3-adv-dash-target, tool: Bash, input: {command: 'cd - && git status'}, expect: gray, adv: true}
+- {id: m1c3-adv-bare-cd, tool: Bash, input: {command: 'cd && git status'}, expect: gray, adv: true}
+- {id: m1c3-adv-glob-target, tool: Bash, input: {command: 'cd * && git status'}, expect: gray, adv: true}
+- {id: m1c3-adv-sudo-cd, tool: Bash, input: {command: 'sudo cd src && ls'}, expect: gray, adv: true}
+- {id: m1c3-adv-env-cd, tool: Bash, input: {command: 'env X=1 cd src'}, expect: gray, adv: true}
+- {id: m1c3-adv-nohup-cd, tool: Bash, input: {command: 'nohup cd src'}, expect: gray, adv: true}
+- {id: m1c3-adv-time-cd, tool: Bash, input: {command: 'time cd src'}, expect: gray, adv: true}
+- {id: m1c3-adv-cdpath, tool: Bash, input: {command: 'CDPATH=/etc cd src'}, expect: gray, adv: true}
+- {id: m1c3-adv-cd-redirect, tool: Bash, input: {command: 'cd src > out.txt'}, expect: gray, adv: true}
+- {id: m1c3-adv-bash-c-cd, tool: Bash, input: {command: 'bash -c ''cd src && ls'''}, expect: gray, adv: true}
+- {id: m1c3-adv-chdir-bash, tool: Bash, input: {command: 'chdir src'}, expect: gray, adv: true}
+
+# ---- 7. PowerShell: the same, in the PowerShell dialect ------------------------------------------------
+- {id: m1c3-adv-ps-ssh, tool: PowerShell, platform: windows, input: {command: 'Set-Location ~\.ssh; Get-Content id_rsa'}, expect: deny, adv: true}
+- {id: m1c3-adv-ps-parent-env, tool: PowerShell, platform: windows, input: {command: 'Set-Location ..; Get-Content .env'}, expect: deny, adv: true}
+- {id: m1c3-adv-ps-parent-remove, tool: PowerShell, platform: windows, input: {command: 'cd .. ; Remove-Item -Recurse -Force x'}, expect: deny, adv: true}
+- {id: m1c3-adv-ps-parent-gci, tool: PowerShell, platform: windows, input: {command: 'Set-Location ..; Get-ChildItem'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-pushd-parent, tool: PowerShell, platform: windows, input: {command: 'pushd ..; Get-ChildItem'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-push-root, tool: PowerShell, platform: windows, input: {command: 'Push-Location C:\; Get-ChildItem'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-popd-cat, tool: PowerShell, platform: windows, input: {command: 'popd; cat x'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-src-up-env, tool: PowerShell, platform: windows, input: {command: 'Set-Location src; Get-Content ..\.env'}, expect: deny, adv: true}
+- {id: m1c3-adv-ps-src-set-content, tool: PowerShell, platform: windows, input: {command: 'Set-Location src; Set-Content a b'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-src-python, tool: PowerShell, platform: windows, input: {command: 'Set-Location src; python script.py'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-src-remove, tool: PowerShell, platform: windows, input: {command: 'Set-Location src; Remove-Item x'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-src-iex, tool: PowerShell, platform: windows, input: {command: 'Set-Location src; Invoke-Expression ''x'''}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-var-target, tool: PowerShell, platform: windows, input: {command: 'Set-Location -Path $x; git status'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-userprofile, tool: PowerShell, platform: windows, input: {command: 'Set-Location $env:USERPROFILE; git status'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-glob-target, tool: PowerShell, platform: windows, input: {command: 'Set-Location *; git status'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-if-block, tool: PowerShell, platform: windows, input: {command: 'if ($true) { cd x }'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-paren-target, tool: PowerShell, platform: windows, input: {command: 'cd (Get-Item x)'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-foreach-block, tool: PowerShell, platform: windows, input: {command: 'foreach ($i in 1) { cd x }'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-credential, tool: PowerShell, platform: windows, input: {command: 'Set-Location src -Credential x'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-whatif, tool: PowerShell, platform: windows, input: {command: 'Set-Location src -WhatIf'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-unc, tool: PowerShell, platform: windows, input: {command: 'Set-Location \\server\share'}, expect: ask, adv: true}
+- {id: m1c3-adv-ps-registry, tool: PowerShell, platform: windows, input: {command: 'Set-Location HKLM:\'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-aws-dir, tool: PowerShell, platform: windows, input: {command: 'Set-Location ~\.aws'}, expect: deny, adv: true}
+- {id: m1c3-adv-ps-git-dir-config, tool: PowerShell, platform: windows, input: {command: 'Set-Location .git; Get-Content config'}, expect: deny, adv: true}
+- {id: m1c3-adv-ps-sibling-git-log, tool: PowerShell, platform: windows, input: {command: 'Set-Location ..\other; git log -p'}, expect: ask, adv: true}
+- {id: m1c3-adv-ps-pipe-head-parent, tool: PowerShell, platform: windows, input: {command: '''..'' | Set-Location; Get-ChildItem'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-pipe-head-var, tool: PowerShell, platform: windows, input: {command: '$d | Set-Location; Get-Content id_rsa'}, expect: deny, adv: true}
+- {id: m1c3-adv-ps-pipe-head-ssh, tool: PowerShell, platform: windows, input: {command: '''~\.ssh'' | Set-Location; Get-Content id_rsa'}, expect: deny, adv: true}
+- {id: m1c3-adv-ps-sibling-evil, tool: PowerShell, platform: windows, input: {command: 'Set-Location C:\Users\testuser\proj-evil; Get-ChildItem'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-other-drive, tool: PowerShell, platform: windows, input: {command: 'Set-Location D:\x; Get-ChildItem'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-redirect, tool: PowerShell, platform: windows, input: {command: 'Set-Location src > out.txt'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-pop-location, tool: PowerShell, platform: windows, input: {command: 'Pop-Location'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-bare-setloc, tool: PowerShell, platform: windows, input: {command: 'cd; git status'}, expect: gray, adv: true}
+- {id: m1c3-adv-ps-assign-var, tool: PowerShell, platform: windows, input: {command: '$d = ''src''; Set-Location $d; Get-ChildItem'}, expect: gray, adv: true}

@@ -408,3 +408,35 @@
 - {id: ps-mb-select-inputobject, tool: PowerShell, platform: windows, input: {"command": "Select-Object -InputObject $env:SECRET_TOKEN"}, tier: must-block, expect_after: ask, today: gray}
 - {id: ps-ka-foreach-object, tool: PowerShell, platform: windows, input: {"command": "Get-ChildItem | ForEach-Object { $_.Name }"}, tier: keep-ask, expect_after: ask, today: gray}  # runs a script block
 - {id: ps-ka-pipe-out-file, tool: PowerShell, platform: windows, input: {"command": "Get-ChildItem | Out-File x.txt"}, tier: keep-ask, expect_after: ask, today: gray}
+
+# ---- M1c-3: cd / pushd / Set-Location / Push-Location into the project (allow-cd-family, default only).
+# The rule allows a cd whose target is known to be inside the project; the commands after it are judged
+# against the NEW directory. A cd out of the project, to something dynamic, behind a wrapper or with a
+# redirect is still not allow, and a cd to a protected place is decided by the rules that protect it.
+- {id: cd-t1-src-ls, tool: Bash, input: {"command": "cd src && ls"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: cd-t1-src-git-status, tool: Bash, input: {"command": "cd src && git status"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: cd-t1-dot-git-status, tool: Bash, input: {"command": "cd . && git status"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: cd-t1-src-cat-readme, tool: Bash, input: {"command": "cd src && cat README.md"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: cd-t1-pushd-ls, tool: Bash, input: {"command": "pushd src && ls"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: cd-t1-src-git-log, tool: Bash, input: {"command": "cd src && git log --oneline -n 5"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: ps-cd-t1-setloc-gci, tool: PowerShell, platform: windows, input: {"command": "Set-Location src; Get-ChildItem"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: ps-cd-t1-setloc-abs-status, tool: PowerShell, platform: windows, input: {"command": "Set-Location 'C:\\Users\\testuser\\proj'; git status"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: ps-cd-t1-cd-ls, tool: PowerShell, platform: windows, input: {"command": "cd src; ls"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: ps-cd-t1-sl-gc, tool: PowerShell, platform: windows, input: {"command": "sl src; Get-Content README.md"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: ps-cd-t1-pushd-gci, tool: PowerShell, platform: windows, input: {"command": "pushd src; Get-ChildItem"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: cd-ka-pushd-popd, tool: Bash, input: {"command": "pushd src; popd"}, tier: keep-ask, expect_after: ask, today: gray}  # popd has no path to prove anything about: the rule does not cover it
+- {id: cd-ka-src-pip, tool: Bash, input: {"command": "cd src && pip install x"}, tier: keep-ask, expect_after: ask, today: ask}
+- {id: cd-ka-src-python, tool: Bash, input: {"command": "cd src && python script.py"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: cd-ka-parent, tool: Bash, input: {"command": "cd .."}, tier: keep-ask, expect_after: ask, today: gray}  # leaves the project: not provably harmless for what follows
+- {id: ps-cd-ka-setloc-parent, tool: PowerShell, platform: windows, input: {"command": "Set-Location ..; Get-ChildItem"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ps-cd-ka-setloc-dynamic, tool: PowerShell, platform: windows, input: {"command": "Set-Location $x; git status"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: cd-mb-ssh-cat, tool: Bash, input: {"command": "cd ~/.ssh && cat id_rsa"}, tier: must-block, expect_after: deny, today: deny}
+- {id: cd-mb-parent-env, tool: Bash, input: {"command": "cd .. && cat .env"}, tier: must-block, expect_after: deny, today: deny}
+- {id: cd-mb-etc-shadow, tool: Bash, input: {"command": "cd /etc && cat shadow"}, tier: must-block, expect_after: {windows: ask, posix: deny}, today: {windows: gray, posix: deny}}
+- {id: cd-mb-parent-rm, tool: Bash, input: {"command": "cd .. && rm -rf x"}, tier: must-block, expect_after: deny, today: deny}
+- {id: cd-mb-tmp-ls, tool: Bash, input: {"command": "cd /tmp && ls"}, tier: must-block, expect_after: ask, today: gray}
+- {id: cd-mb-tmp-git-status, tool: Bash, input: {"command": "cd /tmp && git status"}, tier: must-block, expect_after: ask, today: gray}
+- {id: cd-mb-claude-settings, tool: Bash, input: {"command": "cd .claude && cat settings.local.json"}, tier: must-block, expect_after: deny, today: deny}
+- {id: ps-cd-mb-ssh-gc, tool: PowerShell, platform: windows, input: {"command": "Set-Location ~\\.ssh; Get-Content id_rsa"}, tier: must-block, expect_after: deny, today: deny}
+- {id: ps-cd-mb-parent-env, tool: PowerShell, platform: windows, input: {"command": "Set-Location ..; Get-Content .env"}, tier: must-block, expect_after: deny, today: deny}
+- {id: ps-cd-mb-parent-remove, tool: PowerShell, platform: windows, input: {"command": "cd ..; Remove-Item -Recurse -Force x"}, tier: must-block, expect_after: deny, today: deny}

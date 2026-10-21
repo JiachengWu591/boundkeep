@@ -167,6 +167,7 @@ def test_strict_has_no_dev_tool_rule_and_still_one_allow_rule() -> None:
     assert "allow-devtools-trusted-project" not in strict
     assert "ask-devtools-path-outside-project" not in strict
     assert "allow-ps-data-shaping" not in strict
+    assert "allow-cd-family" not in strict  # M1c-3: default only
     assert [i for i, r in strict.items() if r["action"] == "allow"] == ["read-inside-project"]
     assert all("project_trusted" not in r["match"] for r in strict.values())
 

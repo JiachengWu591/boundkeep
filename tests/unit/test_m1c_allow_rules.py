@@ -59,6 +59,7 @@ EXPECTED_ALLOW_IDS = {
     "allow-mkdir-touch-inside-project",
     "allow-project-file-writes",
     "allow-ps-data-shaping",
+    "allow-cd-family",  # M1c-3 (tests/unit/test_m1c3_cd_allow.py)
     "allow-devtools-trusted-project",
 }
 NEW_ASK_IDS = {"ask-secret-file-write", "ask-credential-file-write", "ask-git-internals-write"}
@@ -257,6 +258,7 @@ SHELL_ALLOW = sorted(
         "allow-ps-inspect-inside-project",
         "allow-ps-list-here",
         "allow-ps-no-path-commands",
+        "allow-cd-family",
     }
 )
 
@@ -523,6 +525,7 @@ CANON: dict[str, dict[str, Any]] = {
         "paths": [],
     },
     "allow-mkdir-touch-inside-project": {"program": "mkdir", "paths": [("write", True)]},
+    "allow-cd-family": {"program": "cd", "paths": [("read", True)]},
     "allow-project-file-writes": {
         "tool": "Write",
         "shell": None,
