@@ -59,7 +59,9 @@ rules:
     # boundkeep's own command line changes the gate from inside: `mode audit-only` records
     # decisions and stops enforcing them, `uninstall` removes the hook entries, `init` rewrites
     # them (and, with --python or --hook-style, names the interpreter they run), `serve` starts a
-    # second daemon, and `--reset-policy`, `--purge`, `--rotate-endpoint` and `--home` replace the
+    # second daemon, `trust` edits trusted_projects (every `trust` form is refused, `trust list`
+    # too: the rule language sees the subcommand only; the user runs it in a terminal, and
+    # `boundkeep doctor` shows the list), and `--reset-policy`, `--purge`, `--rotate-endpoint` and `--home` replace the
     # policy, delete the audit log, change the endpoint or point it all somewhere else. The
     # path rules above cannot see any of that because boundkeep itself writes the files. These
     # are for the user's own terminal, never for the agent. The subcommand rule needs the
@@ -67,9 +69,9 @@ rules:
     tool: [Bash, PowerShell]
     match:
       program: [boundkeep, boundkeep-hook]
-      subcommand: [mode, uninstall, init, serve]
+      subcommand: [mode, uninstall, init, serve, trust]
     action: deny
-    reason: "boundkeep's own mode, uninstall, init and serve commands change the gate and are not allowed for the agent"
+    reason: "boundkeep's own mode, uninstall, init, serve and trust commands change the gate and are not allowed for the agent"
   - id: deny-boundkeep-state-flags
     # The flag half of deny-boundkeep-state-commands: these options only exist on commands that
     # replace the policy, delete the audit log, rewrite the hook registration or relocate the
@@ -325,6 +327,30 @@ rules:
       access: write
     action: deny
     reason: "this file makes a build, CI run, editor, container or tool run code later"
+  - id: deny-python-tool-config-write
+    # The configuration files of the dev tools that load code named in them: mypy `plugins =`, pylint
+    # `init-hook` and `load-plugins`, flake8 local plugins, coverage plugins, and pytest.ini (the
+    # `addopts = -p ...` plugin list, the rootdir that decides which conftest.py is imported). A line
+    # added there is code that runs the next time the tool does, which is why the dev-tool allow
+    # rule for trusted projects must never be able to run behind a config the agent just wrote:
+    # writing one is refused. Same reasoning as the autorun rule above, in a rule of its own because a
+    # rule's path_glob list holds at most 64 entries. No `tool:` filter: Write, Edit, MultiEdit and
+    # every shell write carry the same path with access write.
+    match:
+      path_glob:
+        - "**/mypy.ini"
+        - "**/.mypy.ini"
+        - "**/pylintrc"
+        - "**/.pylintrc"
+        - "**/pylintrc.toml"
+        - "**/.pylintrc.toml"
+        - "**/.flake8"
+        - "**/.coveragerc"
+        - "**/pytest.ini"
+        - "**/.pytest.ini"
+      access: write
+    action: deny
+    reason: "this file configures a dev tool that loads code named in it"
   - id: ask-secret-file-write
     # The write side of no-secret-read, with the same globs word for word (a test keeps the two
     # lists equal). Their content is a secret, so reading them is refused; creating or changing one
@@ -1274,3 +1300,19 @@ tests:
   - { tool: Bash, input: { command: "touch .env" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "git status" }, expect: gray }
   - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem" }, expect: gray }
+
+  # M1c-2: trust is refused for the agent (every form, `list` too), also behind runners.
+  - { tool: Bash, input: { command: "boundkeep trust add" }, expect: deny }
+  - { tool: Bash, input: { command: "boundkeep trust list" }, expect: deny }
+  - { tool: Bash, input: { command: "uv run boundkeep trust add" }, expect: deny }
+  - { tool: Bash, input: { command: "python -m boundkeep trust add --project-dir X" }, expect: deny }
+  - { tool: Bash, input: { command: "pytest -q tests" }, expect: gray }   # strict has no dev-tool allow rule, trusted or not
+  - { tool: Bash, input: { command: "ruff check ." }, expect: gray }
+  - { tool: Bash, input: { command: "pytest .env" }, expect: deny }
+  - { tool: Write, input: { file_path: "mypy.ini", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: "pylintrc", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: ".flake8", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: ".coveragerc", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: "pytest.ini", content: "x" }, expect: deny }
+  - { tool: Bash, input: { command: "echo x > .pytest.ini" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Select-Object Name" }, expect: gray }

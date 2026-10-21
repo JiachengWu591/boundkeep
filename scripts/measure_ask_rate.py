@@ -12,8 +12,11 @@ platform and per tier:
   * the entries whose verdict differs from ``expect_after``. Comparison is by prompt class: allow,
     deny, and 'prompt' (ask and gray count as the same class, since the user is asked either way).
 
-Corpus entries: ``{id, tool, platform?, input, tier, expect_after, today?}``; ``expect_after`` may be
-a mapping ``{windows: ..., posix: ...}`` when the two machines are designed to differ. PowerShell
+Corpus entries: ``{id, tool, platform?, input, tier, expect_after, expect_trusted?, today?}``;
+``expect_after`` may be a mapping ``{windows: ..., posix: ...}`` when the two machines are designed
+to differ. ``expect_trusted`` is the verdict designed for a project listed in ``trusted_projects``
+(the dev-tool entries of the ``t3-dev`` tier: ask untrusted, allow trusted); ``--trusted`` runs the
+corpus with the fake machine's project trusted and compares against it. PowerShell
 entries need the parser helper (Windows PowerShell 5.1 or pwsh); when it is not ready they are
 skipped with a visible note, never counted.
 
@@ -24,6 +27,7 @@ Usage (from the repository, with the venv):
     python scripts/measure_ask_rate.py                                  # the shipped default policy
     python scripts/measure_ask_rate.py --policy old.yaml --policy new.yaml
     python scripts/measure_ask_rate.py --platform posix --corpus tests/corpus/workflow_benign.yaml
+    python scripts/measure_ask_rate.py --trusted                        # the project is trusted
 Compare the committed policy with the working copy:
     git show HEAD:policies/default.yaml > %TEMP%\\default_head.yaml   (any scratch path)
     python scripts/measure_ask_rate.py --policy %TEMP%\\default_head.yaml --policy policies/default.yaml
@@ -131,6 +135,18 @@ def default_run_one(policy: Policy, platform: str, tool: str, tool_input: Mappin
     return str(result.verdict.decision)
 
 
+def trust_fake_project(policy: Policy, platform: str) -> Policy:
+    """``policy`` with the fake machine's project directory in ``trusted_projects`` (in memory only).
+
+    What ``boundkeep trust add`` would do on that machine; the shipped policy files are not touched.
+    """
+    from boundkeep.normalize.paths import normalize_path
+
+    project = policycli._FAKE[platform]["project"]
+    key = normalize_path(project, cwd=None, home=None, dialect="tool", literal=True).key
+    return policy.model_copy(update={"trusted_projects": (*policy.trusted_projects, key)})
+
+
 def measure_platform(
     entries: Sequence[Mapping[str, Any]],
     policy: Policy,
@@ -138,6 +154,7 @@ def measure_platform(
     *,
     ps_available: bool,
     run_one: RunOne = default_run_one,
+    trusted: bool = False,
 ) -> PlatformResult:
     out = PlatformResult(platform)
     for entry in entries:
@@ -153,7 +170,12 @@ def measure_platform(
         except Exception:  # a broken entry must not stop the measurement
             got = "error"
         out.by_tier.setdefault(tier, Counter())[got] += 1
-        expected = resolve(entry["expect_after"], platform)
+        design = (
+            entry["expect_trusted"]
+            if trusted and "expect_trusted" in entry
+            else entry["expect_after"]
+        )
+        expected = resolve(design, platform)
         if expected is None:
             continue
         out.target_by_tier.setdefault(tier, Counter())[expected] += 1
@@ -210,6 +232,12 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     )
     parser.add_argument("--corpus", default=str(DEFAULT_CORPUS))
     parser.add_argument("--platform", choices=[*PLATFORMS, "all"], default="all")
+    parser.add_argument(
+        "--trusted",
+        action="store_true",
+        help="run with the fake machine's project in trusted_projects (in memory): the target "
+        "of an entry is its expect_trusted when it has one",
+    )
     args = parser.parse_args(argv)
     out = out or sys.stdout
     try:
@@ -224,6 +252,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     out.write(f"corpus: {args.corpus} ({len(entries)} entries)\n")
     for path in paths:
         label = os.path.basename(path) if path else "the shipped default policy"
+        if args.trusted:
+            label += " (project trusted)"
         results = []
         for platform in platforms:
             try:
@@ -231,7 +261,13 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
             except (PolicyError, OSError) as exc:
                 sys.stderr.write(f"measure_ask_rate: cannot load the policy {path}: {exc}\n")
                 return 1
-            results.append(measure_platform(entries, policy, platform, ps_available=ps_available))
+            if args.trusted:
+                policy = trust_fake_project(policy, platform)
+            results.append(
+                measure_platform(
+                    entries, policy, platform, ps_available=ps_available, trusted=args.trusted
+                )
+            )
         render(label, results, out)
     return 0
 

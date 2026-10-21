@@ -1,0 +1,300 @@
+# M1c-2: the dev-tool allow rule (`allow-devtools-trusted-project`) through the whole pipeline, run by
+# tests/unit/test_m1c2_trusted_policy.py with the DEFAULT policy text plus
+#   trusted_projects: ["<the fake project of the platform>"]
+# (C:\Users\testuser\proj on the Windows fake machine, /home/testuser/proj on the POSIX one).
+# Not a pipeline*.yaml file on purpose: test_pipeline_corpus.py runs those with the UNTRUSTED policy.
+#
+# Entry: id, tool, platform?, input, expect (the TRUSTED policy), expect_untrusted? (the policy as
+# shipped: no trusted project; when absent the entry is only run trusted), adv? (must NEVER be allow,
+# whatever else changes), trusted: true, and optionally
+#   project_dir / cwd   the session's project directory and working directory (default: the fake project)
+#   trust               "empty": run with an EMPTY trusted_projects list
+# `expect_untrusted` is `gray` for every benign dev-tool form: nothing allows it without trust.
+
+# ============ allowed in a trusted project =========================================================
+- {id: m2t-a-pytest, tool: Bash, trusted: true, input: {command: 'pytest'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-pytest-q, tool: Bash, trusted: true, input: {command: 'pytest -q tests'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-pytest-node, tool: Bash, trusted: true, input: {command: 'pytest tests/test_x.py::test_a -x'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-pytest-k, tool: Bash, trusted: true, input: {command: 'pytest -k "alpha and not beta" tests'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-pytest-collect, tool: Bash, trusted: true, input: {command: 'pytest --collect-only -q'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-python-m-pytest, tool: Bash, trusted: true, input: {command: 'python -m pytest -q tests'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-python3-m-pytest, tool: Bash, trusted: true, input: {command: 'python3 -m pytest'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-python-flags, tool: Bash, trusted: true, input: {command: 'python -u -B -X dev -W error -m pytest'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-py-launcher, tool: Bash, trusted: true, input: {command: 'py -m pytest -q'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ruff-check, tool: Bash, trusted: true, input: {command: 'ruff check .'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ruff-format, tool: Bash, trusted: true, input: {command: 'ruff format --check src'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-python-m-ruff, tool: Bash, trusted: true, input: {command: 'python -m ruff check .'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-mypy, tool: Bash, trusted: true, input: {command: 'mypy src'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-python-m-mypy, tool: Bash, trusted: true, input: {command: 'python -m mypy src'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-black, tool: Bash, trusted: true, input: {command: 'black --check .'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-isort, tool: Bash, trusted: true, input: {command: 'isort --check .'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-flake8, tool: Bash, trusted: true, input: {command: 'flake8 src'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-pylint, tool: Bash, trusted: true, input: {command: 'pylint src'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-pipe-head, tool: Bash, trusted: true, input: {command: 'pytest -q | head -n 5'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-chain, tool: Bash, trusted: true, input: {command: 'ruff check . && mypy src && pytest -q'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-subdir-session, tool: Bash, platform: posix, trusted: true, project_dir: /home/testuser/proj/sub, cwd: /home/testuser/proj/sub, input: {command: 'pytest'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-subdir-session-win, tool: Bash, platform: windows, trusted: true, project_dir: 'C:\Users\testuser\proj\sub', cwd: 'C:\Users\testuser\proj\sub', input: {command: 'pytest'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-win-case, tool: Bash, platform: windows, trusted: true, project_dir: 'C:\USERS\TestUser\PROJ', cwd: 'C:\USERS\TestUser\PROJ', input: {command: 'pytest'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-exe-win, tool: Bash, platform: windows, trusted: true, input: {command: 'pytest.exe -q'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-venv-python-posix, tool: Bash, platform: posix, trusted: true, input: {command: './.venv/bin/python -m pytest -q'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-venv-ruff-posix, tool: Bash, platform: posix, trusted: true, input: {command: './.venv/bin/ruff check .'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-venv-abs-posix, tool: Bash, platform: posix, trusted: true, input: {command: '/home/testuser/proj/.venv/bin/python -m pytest'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-venv-python-win, tool: Bash, platform: windows, trusted: true, input: {command: 'C:/Users/testuser/proj/.venv/Scripts/python.exe -m pytest -q'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-venv-python-win-quoted, tool: Bash, platform: windows, trusted: true, input: {command: '''C:\Users\testuser\proj\.venv\Scripts\python.exe'' -m pytest -q'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-pytest, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pytest'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-python-m-pytest, tool: PowerShell, platform: windows, trusted: true, input: {command: 'python -m pytest -q tests'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-ruff, tool: PowerShell, platform: windows, trusted: true, input: {command: 'ruff check .'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-ruff-format, tool: PowerShell, platform: windows, trusted: true, input: {command: 'ruff format --check src'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-mypy, tool: PowerShell, platform: windows, trusted: true, input: {command: 'mypy src'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-black, tool: PowerShell, platform: windows, trusted: true, input: {command: 'black --check .'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-isort, tool: PowerShell, platform: windows, trusted: true, input: {command: 'isort --check .'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-flake8, tool: PowerShell, platform: windows, trusted: true, input: {command: 'flake8 src'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-pylint, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pylint src'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-exe, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pytest.exe -q'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-venv-ruff, tool: PowerShell, platform: windows, trusted: true, input: {command: '& ''.\.venv\Scripts\ruff.exe'' check .'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-venv-ruff-direct, tool: PowerShell, platform: windows, trusted: true, input: {command: '.\.venv\Scripts\ruff.exe check .'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-venv-python, tool: PowerShell, platform: windows, trusted: true, input: {command: '& ''.\.venv\Scripts\python.exe'' -m pytest -q'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-venv-abs, tool: PowerShell, platform: windows, trusted: true, input: {command: '& ''C:\Users\testuser\proj\.venv\Scripts\python.exe'' -m pytest'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-pipe-select, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pytest -q | Select-Object -First 5'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-a-ps-pytest-then-ls, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pytest -q; Get-ChildItem'}, expect: allow, expect_untrusted: gray}
+
+# ============ NOT allowed even in a trusted project =================================================
+# ---- wrappers: a different action, and the runners are not dev tools -----------------------------
+- {id: m2t-n-sudo, tool: Bash, trusted: true, input: {command: 'sudo pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env, tool: Bash, trusted: true, input: {command: 'env X=1 pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-nohup, tool: Bash, trusted: true, input: {command: 'nohup pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-timeout, tool: Bash, trusted: true, input: {command: 'timeout 5 pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-uv-run, tool: Bash, trusted: true, input: {command: 'uv run pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-poetry-run, tool: Bash, trusted: true, input: {command: 'poetry run python -m mypy src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-xargs, tool: Bash, trusted: true, input: {command: 'echo tests | xargs pytest'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-sudo-python-m, tool: Bash, trusted: true, input: {command: 'sudo python -m pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-bash-c, tool: Bash, trusted: true, input: {command: 'bash -c "pytest"'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-a-subshell, tool: Bash, trusted: true, input: {command: '(pytest)'}, expect: allow, expect_untrusted: gray}
+- {id: m2t-n-ps-sudo, tool: PowerShell, platform: windows, trusted: true, input: {command: 'sudo pytest'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-ps-uv-run, tool: PowerShell, platform: windows, trusted: true, input: {command: 'uv run pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-start-process, tool: PowerShell, platform: windows, trusted: true, input: {command: 'Start-Process pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-invoke-expression, tool: PowerShell, platform: windows, trusted: true, input: {command: 'Invoke-Expression "pytest"'}, expect: gray, expect_untrusted: gray, adv: true}
+# ---- environment prefixes that carry code stay gray ------------------------------------------------
+- {id: m2t-n-env-pythonpath, tool: Bash, trusted: true, input: {command: 'PYTHONPATH=/tmp/x pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env-pythonpath-inside, tool: Bash, trusted: true, input: {command: 'PYTHONPATH=src pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env-addopts, tool: Bash, trusted: true, input: {command: 'PYTEST_ADDOPTS="-p evil" pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env-plugins, tool: Bash, trusted: true, input: {command: 'PYTEST_PLUGINS=evil python -m pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env-pylintrc, tool: Bash, trusted: true, input: {command: 'PYLINTRC=/tmp/rc pylint src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env-breakpoint, tool: Bash, trusted: true, input: {command: 'PYTHONBREAKPOINT=os.system pytest --pdb'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env-path, tool: Bash, trusted: true, input: {command: 'PATH=/tmp/x:$PATH pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env-ld-preload, tool: Bash, trusted: true, input: {command: 'LD_PRELOAD=/tmp/x.so ruff check .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env-home, tool: Bash, trusted: true, input: {command: 'HOME=/tmp/x pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env-xdg-config, tool: Bash, trusted: true, input: {command: 'XDG_CONFIG_HOME=/tmp/x ruff check .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-env-export-then, tool: Bash, trusted: true, input: {command: 'export PYTHONPATH=/tmp/x; pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-env-pythonpath, tool: PowerShell, platform: windows, trusted: true, input: {command: '$env:PYTHONPATH = "C:\x"; pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-env-pytest-addopts, tool: PowerShell, platform: windows, trusted: true, input: {command: '$env:PYTEST_ADDOPTS = "-p evil"; pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-env-path, tool: PowerShell, platform: windows, trusted: true, input: {command: '$env:PATH = "C:\x;" + $env:PATH; pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+# ---- an interpreter or tool outside the project --------------------------------------------------------
+- {id: m2t-n-global-python-posix, tool: Bash, platform: posix, trusted: true, input: {command: '/usr/bin/python3 -m pytest -q'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-global-python-win, tool: Bash, platform: windows, trusted: true, input: {command: 'C:/Python312/python.exe -m pytest -q'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-global-python-win-quoted, tool: Bash, platform: windows, trusted: true, input: {command: '''C:\Python312\python.exe'' -m pytest -q'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-home-venv, tool: Bash, trusted: true, input: {command: '~/.venv/bin/python -m pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-parent-venv, tool: Bash, trusted: true, input: {command: '../venv/bin/python -m pytest'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-parent-tool, tool: Bash, trusted: true, input: {command: '../other/.venv/bin/ruff check .'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-tmp-tool, tool: Bash, platform: posix, trusted: true, input: {command: '/tmp/ruff check .'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-project-prefix-sibling, tool: Bash, platform: posix, trusted: true, input: {command: '/home/testuser/proj-evil/.venv/bin/python -m pytest'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-project-prefix-sibling-win, tool: Bash, platform: windows, trusted: true, input: {command: 'C:/Users/testuser/proj-evil/.venv/Scripts/python.exe -m pytest'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-dotdot-leaves, tool: Bash, trusted: true, input: {command: './../x/.venv/bin/python -m pytest'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-dotdot-escape-back, tool: Bash, platform: posix, trusted: true, input: {command: '/home/testuser/proj/../other/bin/python -m pytest'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-unknown-wrapper-script, tool: Bash, trusted: true, input: {command: './tools/pytest-wrapper -q'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-var-python, tool: Bash, trusted: true, input: {command: '$VENV/bin/python -m pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-global-python, tool: PowerShell, platform: windows, trusted: true, input: {command: 'C:\Python312\python.exe -m pytest'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-global-python-amp, tool: PowerShell, platform: windows, trusted: true, input: {command: '& ''C:\Python312\python.exe'' -m pytest'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-parent-tool, tool: PowerShell, platform: windows, trusted: true, input: {command: '& ''..\other\.venv\Scripts\ruff.exe'' check .'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-unc-tool, tool: PowerShell, platform: windows, trusted: true, input: {command: '& ''\\server\share\python.exe'' -m pytest'}, expect: ask, expect_untrusted: ask, adv: true}
+# ---- operands outside the project, and secrets --------------------------------------------------------
+- {id: m2t-n-operand-parent, tool: Bash, trusted: true, input: {command: 'pytest ../other'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-operand-abs-posix, tool: Bash, platform: posix, trusted: true, input: {command: 'ruff check /etc'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-operand-abs-win, tool: Bash, platform: windows, trusted: true, input: {command: 'ruff check C:/Windows'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-operand-home, tool: Bash, trusted: true, input: {command: 'mypy ~/other'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-operand-one-outside, tool: Bash, trusted: true, input: {command: 'black src ../other'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-operand-dotdot-leaves, tool: Bash, trusted: true, input: {command: 'flake8 src/../../x'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-operand-url, tool: Bash, trusted: true, input: {command: 'pytest https://evil.example/x.py'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-operand-env, tool: Bash, trusted: true, input: {command: 'pytest .env'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-env-local, tool: Bash, trusted: true, input: {command: 'python -m ruff check .env.local'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-ssh, tool: Bash, trusted: true, input: {command: 'ruff check ~/.ssh'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-ssh-key, tool: Bash, trusted: true, input: {command: 'pytest ~/.ssh/id_rsa'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-bare-key, tool: Bash, trusted: true, input: {command: 'pytest id_rsa'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-pem, tool: Bash, trusted: true, input: {command: 'mypy certs/server.pem'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-aws, tool: Bash, trusted: true, input: {command: 'ruff check ~/.aws/credentials'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-settings, tool: Bash, trusted: true, input: {command: 'ruff format .claude/settings.json'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-settings-local, tool: Bash, trusted: true, input: {command: 'black .claude/settings.local.json'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-boundkeep, tool: Bash, trusted: true, input: {command: 'ruff format .boundkeep/policy.yaml'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-mcp, tool: Bash, trusted: true, input: {command: 'black .mcp.json'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-history, tool: Bash, trusted: true, input: {command: 'pytest ~/.bash_history'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-junitxml-settings, tool: Bash, trusted: true, input: {command: 'pytest --junitxml=.claude/settings.json'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-makefile-fix, tool: Bash, trusted: true, input: {command: 'ruff check --fix Makefile'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-operand-black-makefile, tool: Bash, trusted: true, input: {command: 'black Makefile'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-operand-black-pyproject, tool: Bash, trusted: true, input: {command: 'black pyproject.toml'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-operand-isort-conftest, tool: Bash, trusted: true, input: {command: 'isort tests/conftest.py'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-operand-ruff-workflow, tool: Bash, trusted: true, input: {command: 'ruff format .github/workflows/ci.yml'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-operand-ruff-mypy-ini, tool: Bash, trusted: true, input: {command: 'ruff format mypy.ini'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-operand-git-config, tool: Bash, trusted: true, input: {command: 'black .git/config'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-operand-git-hook, tool: Bash, trusted: true, input: {command: 'ruff format .git/hooks/pre-commit'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-ps-operand-parent, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pytest ..\other'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-operand-abs, tool: PowerShell, platform: windows, trusted: true, input: {command: 'ruff check C:\Windows'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-operand-env, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pytest .env'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-ps-operand-ssh, tool: PowerShell, platform: windows, trusted: true, input: {command: 'ruff check ~\.ssh'}, expect: deny, expect_untrusted: deny, adv: true}
+- {id: m2t-n-ps-operand-makefile, tool: PowerShell, platform: windows, trusted: true, input: {command: 'ruff check --fix Makefile'}, expect: ask, expect_untrusted: ask, adv: true}
+# ---- the flags that load or run something, named files, argument files -----------------------------------
+- {id: m2t-n-flag-pytest-p, tool: Bash, trusted: true, input: {command: 'pytest -p evil_plugin'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-p-glued, tool: Bash, trusted: true, input: {command: 'pytest -pevil_plugin'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-qp, tool: Bash, trusted: true, input: {command: 'pytest -qp evil_plugin'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-c-inside, tool: Bash, trusted: true, input: {command: 'pytest -c tox.ini'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-flag-pytest-c-outside, tool: Bash, trusted: true, input: {command: 'python -m pytest -c /tmp/x.ini'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-config-file-new, tool: Bash, trusted: true, input: {command: 'pytest -c ci/pytest-ci.ini'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-rootdir, tool: Bash, trusted: true, input: {command: 'pytest --rootdir=/tmp/x'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-rootdir-inside, tool: Bash, trusted: true, input: {command: 'pytest --rootdir=sub'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-rootdir-abbrev, tool: Bash, trusted: true, input: {command: 'pytest --root=sub'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-override-ini, tool: Bash, trusted: true, input: {command: 'pytest -o addopts="-p evil"'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-override-ini-long, tool: Bash, trusted: true, input: {command: 'pytest --override-ini=addopts=-pevil'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-confcutdir, tool: Bash, trusted: true, input: {command: 'pytest --confcutdir=.'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-basetemp, tool: Bash, trusted: true, input: {command: 'pytest --basetemp=out'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-junitxml, tool: Bash, trusted: true, input: {command: 'pytest --junitxml=out.xml'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-pdbcls, tool: Bash, trusted: true, input: {command: 'pytest --pdbcls=evil:Pdb'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-cov-config, tool: Bash, trusted: true, input: {command: 'pytest --cov-config=.coveragerc'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-flag-pytest-log-file, tool: Bash, trusted: true, input: {command: 'pytest --log-file=out.log'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-html, tool: Bash, trusted: true, input: {command: 'pytest --html=report.html'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-tx, tool: Bash, trusted: true, input: {command: 'pytest --tx ssh=evil'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pytest-pastebin, tool: Bash, trusted: true, input: {command: 'pytest --pastebin=all'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-ruff-config, tool: Bash, trusted: true, input: {command: 'ruff check --config ci.toml .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-ruff-config-eq, tool: Bash, trusted: true, input: {command: 'ruff check --config=ci.toml .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-ruff-output-file, tool: Bash, trusted: true, input: {command: 'ruff check --output-file=out.txt .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-ruff-cache-dir, tool: Bash, trusted: true, input: {command: 'ruff check --cache-dir=/tmp/c .'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-mypy-config, tool: Bash, trusted: true, input: {command: 'mypy --config-file ci.ini src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-mypy-python-exec, tool: Bash, trusted: true, input: {command: 'mypy --python-executable .venv/bin/python src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-mypy-install-types, tool: Bash, trusted: true, input: {command: 'mypy --install-types --non-interactive src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-mypy-install-types-only, tool: Bash, trusted: true, input: {command: 'mypy --install-types src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-mypy-cache-dir, tool: Bash, trusted: true, input: {command: 'mypy --cache-dir=.mypy_cache2 src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-mypy-junit-xml, tool: Bash, trusted: true, input: {command: 'mypy --junit-xml out.xml src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-mypy-html-report, tool: Bash, trusted: true, input: {command: 'mypy --html-report out src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-mypy-typeshed, tool: Bash, trusted: true, input: {command: 'mypy --custom-typeshed-dir ts src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-mypy-shadow, tool: Bash, trusted: true, input: {command: 'mypy --shadow-file a.py b.py src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-black-config, tool: Bash, trusted: true, input: {command: 'black --config ci.toml .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-black-stdin-filename, tool: Bash, trusted: true, input: {command: 'black --stdin-filename x.py -'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-isort-settings-path, tool: Bash, trusted: true, input: {command: 'isort --settings-path ci .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-isort-settings-file, tool: Bash, trusted: true, input: {command: 'isort --settings-file ci.cfg .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-isort-sp, tool: Bash, trusted: true, input: {command: 'isort --sp ci .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-isort-virtual-env, tool: Bash, trusted: true, input: {command: 'isort --virtual-env .venv .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-isort-src, tool: Bash, trusted: true, input: {command: 'isort --src lib .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-flake8-config, tool: Bash, trusted: true, input: {command: 'flake8 --config ci.cfg src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-flake8-append-config, tool: Bash, trusted: true, input: {command: 'flake8 --append-config ci.cfg src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-flake8-output-file, tool: Bash, trusted: true, input: {command: 'flake8 --output-file=out.txt src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pylint-rcfile, tool: Bash, trusted: true, input: {command: 'pylint --rcfile=ci.rc src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pylint-load-plugins, tool: Bash, trusted: true, input: {command: 'pylint --load-plugins=evil src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pylint-init-hook, tool: Bash, trusted: true, input: {command: 'pylint --init-hook="import os" src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pylint-output, tool: Bash, trusted: true, input: {command: 'pylint --output=out.txt src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-pylint-source-roots, tool: Bash, trusted: true, input: {command: 'pylint --source-roots=lib src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-python-m-pylint-plugins, tool: Bash, trusted: true, input: {command: 'python -m pylint --load-plugins=evil src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-python-m-pytest-p, tool: Bash, trusted: true, input: {command: 'python -m pytest -p evil'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-argfile-pytest, tool: Bash, trusted: true, input: {command: 'pytest @args.txt'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-argfile-mypy, tool: Bash, trusted: true, input: {command: 'mypy @args.txt'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-glob, tool: Bash, trusted: true, input: {command: 'pytest tests/*.py'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-lone-var, tool: Bash, trusted: true, input: {command: 'pytest $ARGS'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-cmdsubst, tool: Bash, trusted: true, input: {command: 'ruff check $(cat files.txt)'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-backtick, tool: Bash, trusted: true, input: {command: 'ruff check `cat files.txt`'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-flag-pytest-p, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pytest -p evil_plugin'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-flag-pytest-c, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pytest -c ci.ini'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-flag-ruff-config, tool: PowerShell, platform: windows, trusted: true, input: {command: 'ruff check --config ci.toml .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-flag-mypy-config, tool: PowerShell, platform: windows, trusted: true, input: {command: 'mypy --config-file ci.ini src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-flag-pylint-plugins, tool: PowerShell, platform: windows, trusted: true, input: {command: 'python -m pylint --load-plugins=evil src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-lone-var, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pytest $args'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-subexpr, tool: PowerShell, platform: windows, trusted: true, input: {command: 'ruff check $(Get-Content files.txt)'}, expect: ask, expect_untrusted: gray, adv: true}
+# ---- a line that writes a file and then runs it -------------------------------------------------------------
+- {id: m2t-n-written-test, tool: Bash, trusted: true, input: {command: 'echo x > tests/test_x.py; python -m pytest tests/test_x.py'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-written-test-and, tool: Bash, trusted: true, input: {command: 'echo x > t.py && pytest t.py'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-written-test-implicit, tool: Bash, trusted: true, input: {command: 'echo x > tests/test_evil.py; pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-written-conftest, tool: Bash, trusted: true, input: {command: 'echo x > conftest.py; python -m pytest'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-written-mypy-ini, tool: Bash, trusted: true, input: {command: 'echo x > mypy.ini; mypy src'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-written-pyproject, tool: Bash, trusted: true, input: {command: 'echo x > pyproject.toml; ruff check .'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-written-flake8, tool: Bash, trusted: true, input: {command: 'echo x > .flake8; flake8 src'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-written-pylintrc, tool: Bash, trusted: true, input: {command: 'echo x > pylintrc; pylint src'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-written-pytest-ini, tool: Bash, trusted: true, input: {command: 'echo x > pytest.ini; pytest'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-written-tool, tool: Bash, trusted: true, input: {command: 'echo x > .venv/bin/ruff; .venv/bin/ruff check .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-written-python, tool: Bash, trusted: true, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-written-python-ruff, tool: Bash, trusted: true, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m ruff check .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-copied-tool, tool: Bash, trusted: true, input: {command: 'cp /tmp/evil .venv/bin/mypy; .venv/bin/mypy src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-tee-test, tool: Bash, trusted: true, input: {command: 'echo x | tee t.py; pytest t.py'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-sed-test, tool: Bash, trusted: true, input: {command: "sed -i 's/a/b/' tests/test_x.py; pytest"}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-cp-test, tool: Bash, trusted: true, input: {command: 'cp /tmp/x tests/test_x.py && pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-redirect-then-ruff-fix, tool: Bash, trusted: true, input: {command: 'echo x > a.py; ruff check --fix a.py'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-written-test, tool: PowerShell, platform: windows, trusted: true, input: {command: 'Set-Content tests\test_x.py "x"; pytest tests\test_x.py'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-written-conftest, tool: PowerShell, platform: windows, trusted: true, input: {command: 'Set-Content conftest.py "x"; pytest'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-ps-written-mypy-ini, tool: PowerShell, platform: windows, trusted: true, input: {command: '"x" | Out-File mypy.ini; mypy src'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-ps-written-tool, tool: PowerShell, platform: windows, trusted: true, input: {command: 'Set-Content .venv\Scripts\ruff.exe "x"; & ''.\.venv\Scripts\ruff.exe'' check .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-redirect-test, tool: PowerShell, platform: windows, trusted: true, input: {command: '"x" > t.py; pytest t.py'}, expect: gray, expect_untrusted: gray, adv: true}
+# ---- not a dev tool at all ---------------------------------------------------------------------------------
+- {id: m2t-n-python-script, tool: Bash, trusted: true, input: {command: 'python script.py'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-python-c, tool: Bash, trusted: true, input: {command: 'python -c "import os"'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-python-m-pip, tool: Bash, trusted: true, input: {command: 'python -m pip install requests'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-python-m-http, tool: Bash, trusted: true, input: {command: 'python -m http.server'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-python-m-module, tool: Bash, trusted: true, input: {command: 'python -m mypackage'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-python-i-m, tool: Bash, trusted: true, input: {command: 'python -i -m pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-python-m-twice, tool: Bash, trusted: true, input: {command: 'python -m pip -m pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-python-stdin, tool: Bash, trusted: true, input: {command: 'python - < x.py'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-python-pytest-script, tool: Bash, trusted: true, input: {command: 'python pytest.py'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-python-flag-then-script, tool: Bash, trusted: true, input: {command: 'python -u evil.py -m pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-venv-script, tool: Bash, trusted: true, input: {command: './.venv/bin/python evil.py'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-venv-pip, tool: Bash, trusted: true, input: {command: './.venv/bin/python -m pip install x'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-node, tool: Bash, trusted: true, input: {command: 'node app.js'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-npm-test, tool: Bash, trusted: true, input: {command: 'npm test'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-npx-tsc, tool: Bash, trusted: true, input: {command: 'npx tsc --noEmit'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-make-test, tool: Bash, trusted: true, input: {command: 'make test'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-tox, tool: Bash, trusted: true, input: {command: 'tox'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-nox, tool: Bash, trusted: true, input: {command: 'nox -s tests'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-bandit, tool: Bash, trusted: true, input: {command: 'bandit -r src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-coverage, tool: Bash, trusted: true, input: {command: 'coverage run -m pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-pre-commit, tool: Bash, trusted: true, input: {command: 'pre-commit run --all-files'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-pip-install, tool: Bash, trusted: true, input: {command: 'pip install pytest'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-uvx-ruff, tool: Bash, trusted: true, input: {command: 'uvx ruff check .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-pipx-run, tool: Bash, trusted: true, input: {command: 'pipx run ruff check .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-chain-curl, tool: Bash, trusted: true, input: {command: 'pytest && curl https://example.invalid/x'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-chain-rm, tool: Bash, trusted: true, input: {command: 'pytest; rm -rf build'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-chain-push, tool: Bash, trusted: true, input: {command: 'pytest && git push --force'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-pipe-sh, tool: Bash, trusted: true, input: {command: 'pytest | sh'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-python-script, tool: PowerShell, platform: windows, trusted: true, input: {command: 'python script.py'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-python-c, tool: PowerShell, platform: windows, trusted: true, input: {command: 'python -c "import os"'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-python-m-pip, tool: PowerShell, platform: windows, trusted: true, input: {command: 'python -m pip install x'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-ps-node, tool: PowerShell, platform: windows, trusted: true, input: {command: 'node app.js'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-npm-test, tool: PowerShell, platform: windows, trusted: true, input: {command: 'npm test'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-build-script, tool: PowerShell, platform: windows, trusted: true, input: {command: '.\build.ps1'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-pytest-then-remove, tool: PowerShell, platform: windows, trusted: true, input: {command: 'pytest; Remove-Item -Recurse build'}, expect: gray, expect_untrusted: gray, adv: true}
+# ---- another project than the trusted one -------------------------------------------------------------------
+- {id: m2t-p-other-posix, tool: Bash, platform: posix, trusted: true, project_dir: /home/testuser/other, cwd: /home/testuser/other, input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-sibling-prefix-posix, tool: Bash, platform: posix, trusted: true, project_dir: /home/testuser/proj-evil, cwd: /home/testuser/proj-evil, input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-sibling-suffix-posix, tool: Bash, platform: posix, trusted: true, project_dir: /home/testuser/proj2, cwd: /home/testuser/proj2, input: {command: 'ruff check .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-parent-posix, tool: Bash, platform: posix, trusted: true, project_dir: /home/testuser, cwd: /home/testuser, input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-root-posix, tool: Bash, platform: posix, trusted: true, project_dir: /, cwd: /, input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-case-posix, tool: Bash, platform: posix, trusted: true, project_dir: /home/testuser/PROJ, cwd: /home/testuser/PROJ, input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-cwd-outside-posix, tool: Bash, platform: posix, trusted: true, cwd: /home/testuser/other, input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-cwd-parent-posix, tool: Bash, platform: posix, trusted: true, cwd: /home/testuser, input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-cwd-dotdot-posix, tool: Bash, platform: posix, trusted: true, cwd: /home/testuser/proj/../other, input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-cd-out-then-pytest, tool: Bash, platform: posix, trusted: true, input: {command: 'cd ../other && pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-cd-out-then-ruff, tool: Bash, platform: posix, trusted: true, input: {command: 'cd /tmp && ruff check .'}, expect: ask, expect_untrusted: gray, adv: true}
+- {id: m2t-p-other-win, tool: Bash, platform: windows, trusted: true, project_dir: 'C:\Users\testuser\other', cwd: 'C:\Users\testuser\other', input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-sibling-prefix-win, tool: Bash, platform: windows, trusted: true, project_dir: 'C:\Users\testuser\proj-evil', cwd: 'C:\Users\testuser\proj-evil', input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-parent-win, tool: Bash, platform: windows, trusted: true, project_dir: 'C:\Users\testuser', cwd: 'C:\Users\testuser', input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-drive-root-win, tool: Bash, platform: windows, trusted: true, project_dir: 'C:\', cwd: 'C:\', input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-other-drive-win, tool: Bash, platform: windows, trusted: true, project_dir: 'D:\Users\testuser\proj', cwd: 'D:\Users\testuser\proj', input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-cwd-outside-win, tool: Bash, platform: windows, trusted: true, cwd: 'C:\Users\testuser\other', input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-unc-win, tool: Bash, platform: windows, trusted: true, project_dir: '\\server\share\proj', cwd: '\\server\share\proj', input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-ps-other-win, tool: PowerShell, platform: windows, trusted: true, project_dir: 'C:\Users\testuser\other', cwd: 'C:\Users\testuser\other', input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-ps-sibling-win, tool: PowerShell, platform: windows, trusted: true, project_dir: 'C:\Users\testuser\proj-evil', cwd: 'C:\Users\testuser\proj-evil', input: {command: 'ruff check .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-ps-cwd-outside-win, tool: PowerShell, platform: windows, trusted: true, cwd: 'C:\Users\testuser\other', input: {command: pytest}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-p-ps-cd-out-win, tool: PowerShell, platform: windows, trusted: true, input: {command: 'Set-Location ..\other; pytest'}, expect: gray, expect_untrusted: gray, adv: true}
+# ---- an EMPTY trusted_projects list: nothing is trusted -------------------------------------------------------
+- {id: m2t-e-pytest, tool: Bash, trust: empty, trusted: true, input: {command: pytest}, expect: gray, adv: true}
+- {id: m2t-e-python-m-pytest, tool: Bash, trust: empty, trusted: true, input: {command: 'python -m pytest -q'}, expect: gray, adv: true}
+- {id: m2t-e-ruff, tool: Bash, trust: empty, trusted: true, input: {command: 'ruff check .'}, expect: gray, adv: true}
+- {id: m2t-e-mypy, tool: Bash, trust: empty, trusted: true, input: {command: 'mypy src'}, expect: gray, adv: true}
+- {id: m2t-e-black, tool: Bash, trust: empty, trusted: true, input: {command: 'black --check .'}, expect: gray, adv: true}
+- {id: m2t-e-isort, tool: Bash, trust: empty, trusted: true, input: {command: 'isort --check .'}, expect: gray, adv: true}
+- {id: m2t-e-flake8, tool: Bash, trust: empty, trusted: true, input: {command: 'flake8 src'}, expect: gray, adv: true}
+- {id: m2t-e-pylint, tool: Bash, trust: empty, trusted: true, input: {command: 'pylint src'}, expect: gray, adv: true}
+- {id: m2t-e-ps-pytest, tool: PowerShell, platform: windows, trust: empty, trusted: true, input: {command: pytest}, expect: gray, adv: true}
+- {id: m2t-e-ps-ruff, tool: PowerShell, platform: windows, trust: empty, trusted: true, input: {command: 'ruff check .'}, expect: gray, adv: true}

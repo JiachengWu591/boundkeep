@@ -1,0 +1,55 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    6,
+    19
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Select-Object"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 3,
+    "head": {
+     "t": "str",
+     "kind": "single",
+     "v": "x"
+    }
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    22,
+    33
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Content"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 2,
+    "of": 3,
+    "head": {
+     "t": "str",
+     "kind": "single",
+     "v": "x"
+    }
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

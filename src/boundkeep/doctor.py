@@ -35,6 +35,7 @@ from boundkeep import (
     paths,
     protocol,
     settings_io,
+    trust,
 )
 from boundkeep.ipc import client as ipc_client
 from boundkeep.ipc.endpoint import TRANSPORT_NAMED_PIPE, Endpoint, EndpointError, read_endpoint
@@ -666,6 +667,75 @@ def check_emit_allow(home: str, layers: list[Layer]) -> list[Check]:
     return [Check("emit-allow", WARN, detail, "run 'boundkeep init' again")]
 
 
+def _redirects(entry: str) -> str | None:
+    """Where an existing trusted directory really is, when that is not where its entry says
+    (a symlink or junction, in the leaf or in a parent); None when it is where it says."""
+    expanded = trust.expand_entry(entry)
+    if not os.path.isdir(expanded):
+        return None
+    real = trust.canonical_dir(expanded)
+    isjunction = getattr(os.path, "isjunction", None)  # Python 3.12+
+    leaf_link = os.path.islink(expanded) or bool(isjunction and isjunction(expanded))
+    if leaf_link or trust.path_key(real) != trust.path_key(expanded):
+        return real
+    return None
+
+
+def check_trusted_projects(home: str) -> list[Check]:
+    """The ``trusted_projects`` list: what it holds, stale or redirected entries, redundant ones.
+
+    Each trusted directory lets dev tools run that project's own code unreviewed, so a non-empty
+    list always gets a loud INFO line, and an entry that no longer means what it did is a WARN.
+    """
+    name = "trusted-projects"
+    try:
+        entries = trust.read_entries(paths.policy_file(home))
+    except (PolicyError, trust.TrustEditError):
+        return []  # check_policy reports an unusable policy
+    if not entries:
+        return [Check(name, INFO, "no trusted projects (boundkeep trust add DIR to add one)")]
+    shown = ", ".join(trust.printable_entry(e) for e in entries[:10])
+    more = f" and {len(entries) - 10} more" if len(entries) > 10 else ""
+    checks = [
+        Check(name, INFO, f"{len(entries)} trusted project(s): {shown}{more}"),
+        Check(name, INFO, f"RISK: {trust.DOCTOR_RISK}"),
+    ]
+    expanded = [trust.expand_entry(e) for e in entries]
+    for index, entry in enumerate(entries):
+        text = trust.printable_entry(entry)
+        fix = "run 'boundkeep trust remove --project-dir <dir>' (or edit trusted_projects)"
+        if not os.path.isdir(expanded[index]):
+            checks.append(Check(name, WARN, f"{text} no longer exists", fix))
+            continue
+        real = _redirects(entry)
+        if real is not None:
+            checks.append(
+                Check(
+                    name,
+                    WARN,
+                    f"{text} is a symlink or junction (or sits behind one) that leads to "
+                    f"{trust.printable_entry(real)}: trust follows the real location",
+                    "list the real directory instead",
+                )
+            )
+        for other, other_path in enumerate(expanded):
+            if other == index:
+                continue
+            same = trust.path_key(other_path) == trust.path_key(expanded[index])
+            if trust.is_inside(expanded[index], other_path) and not (same and other > index):
+                checks.append(
+                    Check(
+                        name,
+                        WARN,
+                        f"{text} is already covered by the trusted entry "
+                        f"{trust.printable_entry(entries[other])} (redundant)",
+                        fix,
+                    )
+                )
+                break
+    return checks
+
+
 def check_hook_command_self_test(layers: list[Layer]) -> list[Check]:
     seen: dict[tuple[str, tuple[str, ...]], str] = {}
     for layer in layers:
@@ -1008,6 +1078,7 @@ def run_checks(project_dir: str, home: str | None = None, *, dir_given: bool = T
         )
     checks += _guard("scope", lambda: check_scope(project_dir, dir_given, layers))
     checks += _guard("emit-allow", lambda: check_emit_allow(home, layers))
+    checks += _guard("trusted-projects", lambda: check_trusted_projects(home))
     checks += _guard("hook-command", lambda: check_hook_command_self_test(layers))
     checks += _guard("managed-settings", check_managed_settings)
     checks += _guard("workspace-trust", lambda: check_workspace_trust(project_dir))

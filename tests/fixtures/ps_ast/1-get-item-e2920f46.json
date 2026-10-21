@@ -1,0 +1,31 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    4,
+    12
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Item"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2,
+    "head": {
+     "t": "num",
+     "v": "1"
+    }
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

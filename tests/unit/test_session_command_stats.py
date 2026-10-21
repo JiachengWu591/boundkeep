@@ -148,3 +148,53 @@ def test_only_ast_class_names_follow_the_three_detail_kinds() -> None:
     )
     assert module._reason_detail("ps-exec:Invoke-Expression") is None
     assert module._reason_detail("ps-dynamic") is None
+
+
+def test_trust_pretends_a_project_is_trusted_without_writing_anything(
+    transcripts: Path, tmp_path: Path
+) -> None:
+    module = _load()
+    project = tmp_path / "my-trusted-project"
+    project.mkdir()
+    out = io.StringIO()
+    code = module.main(
+        ["--root", str(transcripts), "--since-days", "1", "--trust", str(project)], out
+    )
+    assert code == 0
+    text = out.getvalue()
+    assert "dev-tools preset trusted for 1 project(s)" in text
+    assert "my-trusted-project" not in text  # the directory name is not echoed
+    assert list(project.iterdir()) == []  # nothing was written anywhere
+
+
+def test_trust_needs_the_shipped_policy(transcripts: Path, tmp_path: Path) -> None:
+    module = _load()
+    policy = tmp_path / "p.yaml"
+    policy.write_text("version: 1\nrules: []\n", encoding="utf-8")
+    code = module.main(
+        ["--root", str(transcripts), "--policy", str(policy), "--trust", str(tmp_path)],
+        io.StringIO(),
+    )
+    assert code == 1
+
+
+def test_no_self_protection_drops_only_the_runtime_guard_in_memory(
+    transcripts: Path,
+) -> None:
+    module = _load()
+    out = io.StringIO()
+    code = module.main(
+        ["--root", str(transcripts), "--since-days", "1", "--no-self-protection"], out
+    )
+    assert code == 0
+    assert "without the runtime rule protect-guard-code" in out.getvalue()
+
+
+def test_places_are_fixed_labels_never_paths(transcripts: Path) -> None:
+    module = _load()
+    out = io.StringIO()
+    assert module.main(["--root", str(transcripts), "--since-days", "1"], out) == 0
+    text = out.getvalue()
+    assert "by where the FIRST path is (labels only)" in text
+    assert "jane-doe-privatename" not in text
+    assert "app.py" not in text

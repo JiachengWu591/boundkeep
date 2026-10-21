@@ -32,6 +32,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 from collections import Counter
 from collections.abc import Iterator
@@ -103,26 +104,53 @@ def _reason_detail(reason: str) -> str | None:
     return f"{kind}:{names[0]}" if names else None
 
 
+def where_is_it(ref: Any, tmp_key: str, home_key: str) -> str:
+    """A fixed label for where a path is, never the path: the statistics must not leak locations."""
+    if ref.inside_project is True:
+        return "inside the project"
+    key = str(ref.key)
+    if ref.uncertain:
+        return "path not knowable (variable, glob, ...)"
+    if tmp_key and (key == tmp_key or key.startswith(tmp_key + "/")):
+        return "the temp directory"
+    if home_key and (key == home_key or key.startswith(home_key + "/")):
+        return "the user home (outside the project)"
+    return "elsewhere outside the project"
+
+
 def _reason_kind(reason: str) -> str:
     kind = reason.split(":", 1)[0]
     return kind if re.match(r"^[a-z][a-z0-9-]{0,40}$", kind) else "other"
 
 
 def analyse(
-    calls: Iterator[tuple[str, dict[str, Any], str | None]], policies: list[Any], home: str
+    calls: Iterator[tuple[str, dict[str, Any], str | None]],
+    policies: list[Any],
+    home: str,
+    self_protection: bool = True,
 ) -> dict[str, Any]:
     from boundkeep.daemon import pipeline
 
     platform = pipeline.local_platform()
+    fold = (lambda s: s.replace("\\", "/").lower()) if platform == "windows" else (lambda s: s)
+    tmp_key = fold(tempfile.gettempdir())
+    home_key = fold(home)
     runtimes = []
     for policy in policies:
         runtime, _problem = pipeline.runtime_policy_checked(policy, os.environ, home)
+        if not self_protection:
+            # measurement only: what the policy would say for a project that is NOT boundkeep's own
+            # installed package (the runtime rule protect-guard-code guards that directory)
+            runtime = runtime.model_copy(
+                update={"rules": tuple(r for r in runtime.rules if r.id != "protect-guard-code")}
+            )
         runtimes.append(runtime)
     tools: Counter[str] = Counter()
     verdicts: list[Counter[tuple[str, str]]] = [Counter() for _ in policies]
     programs: list[Counter[tuple[str, str]]] = [Counter() for _ in policies]
     reasons: list[Counter[str]] = [Counter() for _ in policies]
     details: list[Counter[str]] = [Counter() for _ in policies]
+    places: list[Counter[tuple[str, str]]] = [Counter() for _ in policies]
     rules: list[Counter[tuple[str, str]]] = [Counter() for _ in policies]
     blockers: list[Counter[tuple[str, str]]] = [Counter() for _ in policies]
     for name, tool_input, cwd in calls:
@@ -145,6 +173,10 @@ def analyse(
             verdicts[index][(name, decision)] += 1
             if decision == "allow":
                 continue
+            if name in FILE_TOOLS:
+                first = next((p for a in result.actions for p in a.paths), None)
+                label = where_is_it(first, tmp_key, home_key) if first else "no path in the call"
+                places[index][(name, label)] += 1
             for rule_id in result.verdict.rule_ids:
                 if re.match(r"^[A-Za-z0-9_-]{1,60}$", rule_id):
                     rules[index][(name, rule_id)] += 1
@@ -170,6 +202,7 @@ def analyse(
         "reasons": reasons,
         "rules": rules,
         "blockers": blockers,
+        "places": places,
         "details": details,
     }
 
@@ -203,6 +236,9 @@ def render(stats: dict[str, Any], labels: list[str], min_count: int, out: TextIO
         say("   gray reasons (cut at the first ':'):")
         for kind, count in stats["reasons"][index].most_common(15):
             say(f"     {kind:<30} {count}")
+        say("   file-tool calls that were not allowed, by where the FIRST path is (labels only):")
+        for (tool, label), count in stats["places"][index].most_common(20):
+            say(f"     {tool:<10} {label:<46} {count}")
         say("   AST node types behind ps-compound / ps-dynamic (class names only):")
         for detail, count in stats["details"][index].most_common(20):
             say(f"     {detail:<44} {count}")
@@ -227,6 +263,19 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
         action="append",
         help="a policy file; repeat to compare (default: the shipped one)",
     )
+    parser.add_argument(
+        "--trust",
+        action="append",
+        metavar="DIR",
+        help="for the SHIPPED policy only: pretend this project directory is trusted (what "
+        "`boundkeep trust add DIR` would do), to measure the dev-tools preset; nothing is written",
+    )
+    parser.add_argument(
+        "--no-self-protection",
+        action="store_true",
+        help="measurement only: drop the runtime rule protect-guard-code (it guards boundkeep's "
+        "own installed package, so sessions that develop boundkeep itself are skewed by it)",
+    )
     parser.add_argument("--since-days", type=float, default=90.0)
     parser.add_argument("--min-count", type=int, default=5)
     parser.add_argument("--limit", type=int, default=20000, help="maximum number of tool calls")
@@ -247,9 +296,27 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
         policies.append(load_policy(path, home=home))
         labels.append(os.path.basename(path))
     if not policies:
-        policies.append(parse_policy_text(default_policy_text(), home=home))
-        labels.append("the shipped default policy")
-    stats = analyse(iter_tool_calls(root, args.since_days, args.limit), policies, home)
+        text = default_policy_text()
+        label = "the shipped default policy"
+        if args.trust:
+            from boundkeep import trust
+
+            for directory in args.trust:
+                text = trust.add_entry_text(text, trust.canonical_dir(directory))
+            label += " + dev-tools preset trusted for %d project(s)" % len(args.trust)
+        policies.append(parse_policy_text(text, home=home))
+        labels.append(label)
+    elif args.trust:
+        sys.stderr.write("--trust only applies to the shipped policy (no --policy)\n")
+        return 1
+    stats = analyse(
+        iter_tool_calls(root, args.since_days, args.limit),
+        policies,
+        home,
+        self_protection=not args.no_self_protection,
+    )
+    if args.no_self_protection:
+        labels = [label + " (without the runtime rule protect-guard-code)" for label in labels]
     render(stats, labels, max(args.min_count, 1), out)
     return 0
 

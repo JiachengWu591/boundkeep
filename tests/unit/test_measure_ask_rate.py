@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "measure_ask_rate.py"
 CORPUS = ROOT / "tests" / "corpus" / "workflow_benign.yaml"
 
-TIERS = {"t1-read", "t2-write", "t3-exec", "keep-ask", "must-block"}
+TIERS = {"t1-read", "t2-write", "t3-exec", "t3-dev", "keep-ask", "must-block"}
 VERDICTS = {"allow", "ask", "deny", "gray"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
 FILE_TOOLS = {"Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"}
@@ -69,7 +69,17 @@ def test_corpus_entries_have_the_required_fields() -> None:
     for entry in _corpus():
         for key in ("id", "tool", "input", "tier", "expect_after"):
             assert key in entry, f"{entry.get('id')} lacks {key}"
-        assert set(entry) <= {"id", "tool", "platform", "input", "tier", "expect_after", "today"}
+        allowed = {
+            "id",
+            "tool",
+            "platform",
+            "input",
+            "tier",
+            "expect_after",
+            "expect_trusted",
+            "today",
+        }
+        assert set(entry) <= allowed
         assert isinstance(entry["input"], dict), entry["id"]
         assert entry["tool"] in KNOWN_TOOLS, entry["id"]
         assert entry.get("platform") in (None, "windows", "posix"), entry["id"]
@@ -99,8 +109,13 @@ def test_corpus_design_verdicts_follow_the_tier() -> None:
         tier = entry["tier"]
         if tier in ("t1-read", "t2-write"):
             assert expect == {"allow"}, entry["id"]
-        elif tier in ("t3-exec", "keep-ask"):
+        elif tier in ("t3-exec", "keep-ask", "t3-dev"):
             assert expect <= {"ask", "gray"}, entry["id"]
+            # a dev tool is allowed once its project is trusted; nothing else has a trusted verdict
+            if tier == "t3-dev":
+                assert _verdicts(entry["expect_trusted"]) == {"allow"}, entry["id"]
+            else:
+                assert "expect_trusted" not in entry, entry["id"]
         else:
             assert expect <= {"ask", "deny"}, entry["id"]
 
@@ -372,3 +387,95 @@ def test_the_shipped_corpus_runs_with_the_default_policy_and_is_deterministic() 
     assert tool.main(["--platform", "posix"], second) == 0
     assert first.getvalue() == second.getvalue()
     assert "asks/100" in first.getvalue()
+
+
+# ---- --trusted: the fake project is trusted (in memory), the target is expect_trusted ------------
+
+_TRUST_POLICY = """\
+version: 1
+mode: enforce
+rules:
+  - id: allow-pytest-when-trusted
+    tool: [Bash]
+    match: {program: pytest, project_trusted: true}
+    action: allow
+"""
+
+
+def _trust_entries() -> list[dict[str, Any]]:
+    dev = _entry("dev", "pytest", "t3-dev", "ask")
+    dev["expect_trusted"] = "allow"
+    return [dev, _entry("plain", "ls", "keep-ask", "ask")]
+
+
+def test_trust_fake_project_adds_the_fake_project_of_the_platform() -> None:
+    for platform in ("windows", "posix"):
+        base = parse_policy_text(_TRUST_POLICY, home=policycli._FAKE[platform]["home"])
+        assert base.trusted_projects == ()
+        trusted = tool.trust_fake_project(base, platform)
+        assert len(trusted.trusted_projects) == 1
+        expected = policycli._FAKE[platform]["project"].replace("\\", "/").casefold()
+        assert trusted.trusted_projects[0].casefold() == expected
+        assert base.trusted_projects == ()  # the original is untouched
+
+
+@pytest.mark.parametrize("platform", ["windows", "posix"], ids=["on-windows", "on-posix"])
+def test_trusted_measure_uses_expect_trusted_and_the_policy_allows_only_when_trusted(
+    platform: str,
+) -> None:
+    base = parse_policy_text(_TRUST_POLICY, home=policycli._FAKE[platform]["home"])
+    untrusted = tool.measure_platform(_trust_entries(), base, platform, ps_available=False)
+    assert untrusted.by_tier["t3-dev"] == Counter(gray=1)
+    assert untrusted.mismatches == []  # ask is the target and gray prompts the same
+    trusted_policy = tool.trust_fake_project(base, platform)
+    # measured against the untrusted target the allow is a mismatch ...
+    wrong = tool.measure_platform(_trust_entries(), trusted_policy, platform, ps_available=False)
+    assert [m.id for m in wrong.mismatches] == ["dev"]
+    # ... and against expect_trusted it is the design
+    right = tool.measure_platform(
+        _trust_entries(), trusted_policy, platform, ps_available=False, trusted=True
+    )
+    assert right.by_tier["t3-dev"] == Counter(allow=1)
+    assert right.mismatches == []
+    assert tool.asks_per_100(right.target_by_tier["t3-dev"]) == 0.0
+
+
+def test_main_trusted_labels_the_run_and_uses_the_trusted_target(tmp_path: Path) -> None:
+    corpus = _write(tmp_path / "c.yaml", yaml.safe_dump(_trust_entries()))
+    policy = _write(tmp_path / "p.yaml", _TRUST_POLICY)
+    plain, trusted = io.StringIO(), io.StringIO()
+    assert tool.main(["--corpus", corpus, "--policy", policy, "--platform", "posix"], plain) == 0
+    assert (
+        tool.main(
+            ["--corpus", corpus, "--policy", policy, "--platform", "posix", "--trusted"], trusted
+        )
+        == 0
+    )
+    assert "(project trusted)" not in plain.getvalue()
+    assert "p.yaml (project trusted) / posix" in trusted.getvalue()
+    assert "differs from expect_after: 0" in plain.getvalue()
+    assert "differs from expect_after: 0" in trusted.getvalue()
+    assert "t3-dev" in trusted.getvalue()
+
+
+@pytest.mark.parametrize("platform", ["windows", "posix"], ids=["on-windows", "on-posix"])
+def test_the_shipped_default_policy_meets_the_design_trusted_and_untrusted(platform: str) -> None:
+    entries = _corpus()
+    ps_ready = _ps_ready()
+    base = parse_policy_text(default_policy_text(), home=policycli._FAKE[platform]["home"])
+    untrusted = tool.measure_platform(entries, base, platform, ps_available=ps_ready)
+    assert untrusted.mismatches == []
+    assert tool.asks_per_100(untrusted.by_tier["t3-dev"]) == 100.0
+    trusted = tool.measure_platform(
+        entries,
+        tool.trust_fake_project(base, platform),
+        platform,
+        ps_available=ps_ready,
+        trusted=True,
+    )
+    assert trusted.mismatches == []
+    assert tool.asks_per_100(trusted.by_tier["t3-dev"]) == 0.0
+    # the entries that must prompt still do, trusted or not (t3-exec, keep-ask, must-block)
+    for tier in ("t3-exec", "keep-ask"):
+        assert tool.asks_per_100(trusted.by_tier[tier]) == 100.0, tier
+    assert trusted.by_tier["must-block"].get("allow", 0) == 0

@@ -35,6 +35,7 @@ What this layer adds on top of the pieces:
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -52,6 +53,7 @@ from boundkeep.normalize.model import (
     Word,
 )
 from boundkeep.policy.glob import GlobError, compile_glob
+from boundkeep.policy.schema import too_broad
 
 SHELL_TOOLS: dict[str, Shell] = {"Bash": "bash", "PowerShell": "powershell"}
 FILE_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
@@ -123,8 +125,20 @@ _BUILD_FILES: dict[str, frozenset[str]] = {
     "tox": frozenset({"tox.ini"}),
     "nox": frozenset({"noxfile.py"}),
     "invoke": frozenset({"tasks.py"}),
-    "pytest": frozenset({"conftest.py"}),
+    # M1c-2: dev tools that run repository code; a file written earlier on the same line that they
+    # load as code or configuration (plugins, init hooks, conftest) makes the line gray
+    "pytest": frozenset(
+        {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml"}
+    ),
+    "mypy": frozenset({"mypy.ini", ".mypy.ini", "setup.cfg", "pyproject.toml"}),
+    "pylint": frozenset(
+        {".pylintrc", "pylintrc", ".pylintrc.toml", "pylintrc.toml", "setup.cfg", "pyproject.toml"}
+    ),
+    "flake8": frozenset({".flake8", "setup.cfg", "tox.ini"}),
 }
+
+# pytest also runs the test modules it discovers: one written earlier on the line counts
+_PYTEST_TEST_FILE = re.compile(r"^(test_.*|.*_test)\.py$", re.IGNORECASE)
 
 # Directories whose programs are the system's own (an allow rule may rely on the name there).
 _POSIX_SYSTEM_DIRS = frozenset(
@@ -257,18 +271,7 @@ def find_git_root(cwd: str) -> str | None:
     return None
 
 
-def _is_anchor_key(key: str) -> bool:
-    """A filesystem root, a drive root or a UNC share root."""
-    if key == "/" or (len(key) == 3 and key[1:] == ":/"):
-        return True
-    return key.startswith("//") and len([p for p in key[2:].split("/") if p]) <= 2
-
-
-def _too_broad(root: paths.NormPath, home: paths.NormPath | None) -> bool:
-    """A root that is a filesystem or drive root, or holds the home directory (or is it)."""
-    if _is_anchor_key(root.key):
-        return True
-    return home is not None and paths.inside_project(home, root) is True
+_too_broad = too_broad  # shared with the ``trusted_projects`` check (policy/schema.py)
 
 
 def _home_of(home: str | None, env: Mapping[str, str]) -> paths.NormPath | None:
@@ -306,6 +309,44 @@ def _project_root(
             continue
         return root, resolved
     return None, None
+
+
+def _project_keys(
+    cwd: str | None,
+    root: paths.NormPath | None,
+    root_resolved: paths.NormPath | None,
+    home: str | None,
+    env: Mapping[str, str],
+) -> tuple[str | None, str | None]:
+    """(``Action.project``, ``Action.project_resolved``): the project root's canonical keys.
+
+    Both None when there is no (acceptable) root. They are also None when the session's working
+    directory is known and NOT definitely inside the project, lexically or after link resolution:
+    a command that runs somewhere else does not run this project's code, so the ``project_trusted``
+    match field must not apply. An absent ``cwd`` does not change anything (real events always
+    carry one; relative paths are then gray anyway). ``project_resolved`` is only set when it
+    differs from ``project``. Never raises.
+    """
+    try:
+        if root is None:
+            return None, None
+        if cwd:
+            norm = paths.normalize_path(cwd, cwd=None, home=home, env=env, dialect="tool")
+            if paths.inside_project(norm, root) is not True:
+                return None, None
+            if (
+                norm.key != root.key
+            ):  # cwd is the project root itself: already resolved, no 2nd lookup
+                resolved_cwd = paths.resolve_on_disk(norm)
+                if resolved_cwd.key != norm.key and (
+                    paths.inside_project(resolved_cwd, root_resolved or root) is not True
+                ):
+                    return None, None
+        project = root.key
+        resolved_key = root_resolved.key if root_resolved is not None else project
+        return project, (resolved_key if resolved_key != project else None)
+    except Exception:  # noqa: BLE001 - a failure here only means "no trusted project"
+        return None, None
 
 
 def _inside(refs: Sequence[PathRef]) -> bool | None:
@@ -1130,6 +1171,10 @@ def _executes_written(
         names = _BUILD_FILES.get(program, frozenset())
         if any(key.rsplit("/", 1)[-1].lower() in names for key in st.written):
             return True
+        if program == "pytest" and any(
+            _PYTEST_TEST_FILE.match(key.rsplit("/", 1)[-1]) for key in st.written
+        ):
+            return True
     raw = cmd.argv[0].text if cmd.argv else ""
     if "/" in raw or "\\" in raw:
         for cwd in st.cwds:
@@ -1706,6 +1751,11 @@ def normalize_event(
             if value is not None:
                 base[key] = value
         root, root_resolved = _project_root(payload, env, home)
+        project, project_resolved = _project_keys(base.get("cwd"), root, root_resolved, home, env)
+        if project is not None:  # on every Action of the event (``base`` is shared)
+            base["project"] = project
+            if project_resolved is not None:
+                base["project_resolved"] = project_resolved
         ctx = _Ctx(
             platform=platform,
             env=env,
@@ -1746,6 +1796,7 @@ def normalize_event(
                 gray=True,
                 gray_reasons=(f"internal-error:{type(exc).__name__}",),
                 platform=platform,
+                **{k: v for k, v in base.items() if k in ("project", "project_resolved")},
             )
         ]
 

@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    47
+   ],
+   "invoke": "&",
+   "name": {
+    "kind": "single",
+    "v": "C:\\Python312\\python.exe"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "m",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "pytest"
+    },
+    {
+     "t": "param",
+     "name": "p",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "myplug"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

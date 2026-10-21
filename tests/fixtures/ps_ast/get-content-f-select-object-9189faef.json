@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    2,
+    15
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Content"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "f"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  },
+  {
+   "pos": [
+    19,
+    32
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Select-Object"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2,
+    "head": {
+     "t": "other",
+     "ast": "SubExpressionAst",
+     "text": "$(Get-Content f)"
+    }
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "SubExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

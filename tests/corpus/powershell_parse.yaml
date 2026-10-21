@@ -1582,3 +1582,437 @@
     - program: $(gc)
       known: false
       gray_has: [dynamic-program]
+# ---- M1c-2 (pscmd / psprograms): pipeline heads, dev tools, data shaping ----
+- id: cmd-m1c2-head-constant-into-get-content
+  text: "'~\\.ssh\\id_rsa' | Get-Content"
+  fixture: ps_ast/ssh-id-rsa-get-content-e2fc628e.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Content"
+      args: ["-Path", "~\\.ssh\\id_rsa"]
+      paths: [["~\\.ssh\\id_rsa", "read"]]
+      tags: ["secret_access"]
+      pipe: true
+- id: cmd-m1c2-head-double-quoted-into-get-content
+  text: "\"~\\.ssh\\id_rsa\" | Get-Content"
+  fixture: ps_ast/ssh-id-rsa-get-content-fa76f1db.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Content"
+      paths: [["~\\.ssh\\id_rsa", "read"]]
+      tags: ["secret_access"]
+- id: cmd-m1c2-head-env-into-select-string
+  text: "'.env' | Select-String KEY"
+  fixture: ps_ast/env-select-string-key-b2bf2ec5.json
+  expect:
+    gray: []
+    commands:
+    - program: "Select-String"
+      args: ["KEY", "-Path", ".env"]
+      paths: [[".env", "read"]]
+      tags: ["secret_access"]
+- id: cmd-m1c2-head-constant-into-get-childitem
+  text: "'x' | Get-ChildItem"
+  fixture: ps_ast/x-get-childitem-17a8ca5a.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-ChildItem"
+      args: ["-Path", "x"]
+      paths: [["x", "read"]]
+      tags: []
+- id: cmd-m1c2-head-array-into-get-content
+  text: "'a','b' | Get-Content"
+  fixture: ps_ast/a-b-get-content-8b040681.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Content"
+      args: ["-Path", "a", ",", "b"]
+      paths: [["a", "read"], ["b", "read"]]
+- id: cmd-m1c2-head-number-into-get-item
+  text: "1 | Get-Item"
+  fixture: ps_ast/1-get-item-e2920f46.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Item"
+      args: ["-Path", "1"]
+      paths: [["1", "read"]]
+- id: cmd-m1c2-head-here-string-into-get-content
+  text: "@'\n.env\n'@ | Get-Content"
+  fixture: ps_ast/env-get-content-0b6e3ae2.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Content"
+      args: ["-Path", ".env"]
+      paths: [[".env", "read"]]
+      tags: ["secret_access"]
+- id: cmd-m1c2-head-constant-into-select-object-adds-nothing
+  text: "'x' | Select-Object"
+  fixture: ps_ast/x-select-object-277d8de5.json
+  expect:
+    gray: []
+    commands:
+    - program: "Select-Object"
+      args: []
+      paths: []
+      tags: []
+      known: true
+      gray: []
+      pipe: true
+- id: cmd-m1c2-head-constant-into-out-file-is-content
+  text: "'x' | Out-File y.txt"
+  fixture: ps_ast/x-out-file-y-txt-33522295.json
+  expect:
+    gray: []
+    commands:
+    - program: "Out-File"
+      args: ["y.txt"]
+      paths: [["y.txt", "write"]]
+      tags: ["file_write"]
+- id: cmd-m1c2-head-constant-into-copy-item
+  text: "'x' | Copy-Item -Destination y"
+  fixture: ps_ast/x-copy-item-destination-y-3ceb5d5c.json
+  expect:
+    gray: []
+    commands:
+    - program: "Copy-Item"
+      args: ["-Destination", "y", "-Path", "x"]
+      paths_has: [["x", "read"], ["y", "write"]]
+- id: cmd-m1c2-head-constant-into-remove-item-stays-gray
+  text: "'x' | Remove-Item -Recurse"
+  fixture: ps_ast/x-remove-item-recurse-64787968.json
+  expect:
+    gray: []
+    commands:
+    - program: "Remove-Item"
+      args: ["-Recurse"]
+      gray_has: ["arguments-from-pipeline"]
+- id: cmd-m1c2-head-reaches-the-later-stage
+  text: "'x' | Select-Object | Get-Content"
+  fixture: ps_ast/x-select-object-get-content-4aa323ce.json
+  expect:
+    gray: []
+    commands:
+    - program: "Select-Object"
+      args: []
+    - program: "Get-Content"
+      args: ["-Path", "x"]
+      paths: [["x", "read"]]
+- id: cmd-m1c2-head-constant-into-iex-is-still-exec
+  text: "'echo hi' | iex"
+  fixture: ps_ast/echo-hi-iex-6f4a84a2.json
+  expect:
+    gray_has: ["ps-pipe-to-interpreter"]
+    exec_has: ["ps-pipe-to-interpreter"]
+    commands:
+    - program: "Invoke-Expression"
+- id: cmd-m1c2-head-env-variable-is-gray
+  text: "$env:SECRET_TOKEN | Select-Object"
+  fixture: ps_ast/env-secret-token-select-object-1aa9b1ce.json
+  expect:
+    gray: ["ps-pipeline-head-dynamic"]
+    exec: []
+    commands:
+    - program: "Select-Object"
+      args: []
+      gray: []
+- id: cmd-m1c2-head-variable-into-get-childitem-is-gray
+  text: "$x | Get-ChildItem"
+  fixture: ps_ast/x-get-childitem-e3241015.json
+  expect:
+    gray: ["ps-pipeline-head-dynamic"]
+    commands:
+    - program: "Get-ChildItem"
+      args: ["-Path", "$x"]
+      paths: [["$x", "read"]]
+- id: cmd-m1c2-head-null-is-gray
+  text: "$null | Out-String"
+  fixture: ps_ast/null-out-string-0e7cd8a5.json
+  expect:
+    gray: ["ps-pipeline-head-dynamic"]
+    commands:
+    - program: "Out-String"
+- id: cmd-m1c2-head-paren-is-gray
+  text: "(Get-Content f) | Select-Object"
+  fixture: ps_ast/get-content-f-select-object-f23e26a2.json
+  expect:
+    gray: ["ps-pipeline-head-dynamic", "ps-dynamic-value:ParenExpressionAst"]
+    commands:
+    - program: "Get-Content"
+      paths: [["f", "read"]]
+    - program: "Select-Object"
+- id: cmd-m1c2-head-subexpression-is-gray
+  text: "$(Get-Content f) | Select-Object"
+  fixture: ps_ast/get-content-f-select-object-9189faef.json
+  expect:
+    gray_has: ["ps-pipeline-head-dynamic", "ps-dynamic:SubExpressionAst"]
+    exec_has: ["ps-dynamic:SubExpressionAst"]
+    commands:
+    - program: "Get-Content"
+      paths: [["f", "read"]]
+    - program: "Select-Object"
+- id: cmd-m1c2-head-array-expression-is-gray
+  text: "@(1,2) | Select-Object"
+  fixture: ps_ast/1-2-select-object-72694efd.json
+  expect:
+    gray_has: ["ps-pipeline-head-dynamic", "ps-dynamic:ArrayExpressionAst"]
+    commands:
+    - program: "Select-Object"
+- id: cmd-m1c2-head-member-access-is-gray
+  text: "$x.Name | Get-Content"
+  fixture: ps_ast/x-name-get-content-ca680872.json
+  expect:
+    gray_has: ["ps-pipeline-head-dynamic", "ps-dynamic:MemberExpressionAst"]
+    commands:
+    - program: "Get-Content"
+      args: ["-Path", "$($x.Name)"]
+- id: cmd-m1c2-head-method-call-is-gray
+  text: "$x.ToString() | Get-Content"
+  fixture: ps_ast/x-tostring-get-content-fad7746d.json
+  expect:
+    gray_has: ["ps-pipeline-head-dynamic", "ps-dynamic:InvokeMemberExpressionAst"]
+    commands:
+    - program: "Get-Content"
+- id: cmd-m1c2-head-static-call-is-gray
+  text: "[IO.Path]::GetTempPath() | Get-ChildItem"
+  fixture: ps_ast/io-path-gettemppath-get-childitem-f337bae7.json
+  expect:
+    gray_has: ["ps-pipeline-head-dynamic", "ps-dynamic:InvokeMemberExpressionAst"]
+    commands:
+    - program: "Get-ChildItem"
+- id: cmd-m1c2-head-expandable-string-is-gray-but-listed
+  text: "\"$env:USERPROFILE\\.ssh\\id_rsa\" | Get-Content"
+  fixture: ps_ast/env-userprofile-ssh-id-rsa-get-content-9dab2d59.json
+  expect:
+    gray: ["ps-pipeline-head-dynamic"]
+    commands:
+    - program: "Get-Content"
+      args: ["-Path", "$env:USERPROFILE\\.ssh\\id_rsa"]
+      paths: [["$env:USERPROFILE\\.ssh\\id_rsa", "read"]]
+      tags: ["secret_access"]
+- id: cmd-m1c2-head-variable-into-copy-item-stays-gray
+  text: "$x | Copy-Item -Destination y"
+  fixture: ps_ast/x-copy-item-destination-y-5ac843b4.json
+  expect:
+    gray: ["ps-pipeline-head-dynamic"]
+    commands:
+    - program: "Copy-Item"
+      args: ["-Destination", "y"]
+      gray_has: ["arguments-from-pipeline"]
+- id: cmd-m1c2-command-head-is-not-a-head
+  text: "Get-Content a | Select-Object"
+  fixture: ps_ast/get-content-a-select-object-dd2ab6f7.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Content"
+      paths: [["a", "read"]]
+    - program: "Select-Object"
+- id: cmd-m1c2-dev-pytest
+  text: "pytest -q tests"
+  fixture: ps_ast/pytest-q-tests-fab93ca4.json
+  expect:
+    gray: []
+    exec: []
+    commands:
+    - program: "pytest"
+      args: ["-q", "tests"]
+      flags: ["-q"]
+      paths: [["tests", "unknown"]]
+      tags_has: ["exec"]
+      known: true
+      sub: null
+      gray: []
+- id: cmd-m1c2-dev-ruff-check
+  text: "ruff check ."
+  fixture: ps_ast/ruff-check-a0e3ed3d.json
+  expect:
+    gray: []
+    commands:
+    - program: "ruff"
+      args: ["check", "."]
+      paths: [[".", "unknown"]]
+      tags_has: ["exec"]
+      known: true
+      gray: []
+- id: cmd-m1c2-dev-python-dash-m-pytest
+  text: "python -m pytest -q tests"
+  fixture: ps_ast/python-m-pytest-q-tests-6cf02501.json
+  expect:
+    gray: []
+    commands:
+    - program: "pytest"
+      args: ["-q", "tests"]
+      flags: ["-q"]
+      paths: [["tests", "unknown"]]
+      tags_has: ["exec"]
+      known: true
+      gray: []
+- id: cmd-m1c2-dev-python-harmless-flags-then-mypy
+  text: "python -I -X utf8 -W error -m mypy src"
+  fixture: ps_ast/python-i-x-utf8-w-error-m-mypy-src-45e7bea1.json
+  expect:
+    gray: []
+    commands:
+    - program: "mypy"
+      args: ["src"]
+      paths: [["src", "unknown"]]
+      tags_has: ["exec"]
+      known: true
+      gray: []
+- id: cmd-m1c2-dev-path-qualified-exe
+  text: ".\\.venv\\Scripts\\ruff.exe check ."
+  fixture: ps_ast/venv-scripts-ruff-exe-check-93acc759.json
+  expect:
+    gray: []
+    exec: []
+    commands:
+    - program: "ruff"
+      args: ["check", "."]
+      paths: [[".", "unknown"]]
+      gray: []
+- id: cmd-m1c2-dev-quoted-python-exe-with-plugin-flag
+  text: "& 'C:\\Python312\\python.exe' -m pytest -p myplug"
+  fixture: ps_ast/c-python312-python-exe-m-pytest-p-myplug-35db791b.json
+  expect:
+    gray: []
+    commands:
+    - program: "pytest"
+      args: ["-p", "myplug"]
+      flags: ["-p"]
+      paths: []
+      gray: []
+- id: cmd-m1c2-dev-dangerous-flags-and-node-id
+  text: "pytest --rootdir=C:\\x -c evil.ini tests\\t.py::test_a[1]"
+  fixture: ps_ast/pytest-rootdir-c-x-c-evil-ini-tests-t-py-e7db4cec.json
+  expect:
+    gray: []
+    commands:
+    - program: "pytest"
+      flags: ["--rootdir", "-c"]
+      paths: [["tests\\t.py", "unknown"]]
+      gray: []
+- id: cmd-m1c2-dev-python-c-is-not-a-dev-tool
+  text: "python -c 'import os'"
+  fixture: ps_ast/python-c-import-os-0c3b08a3.json
+  expect:
+    gray: []
+    commands:
+    - program: "python"
+      args: ["-c", "import os"]
+      gray_has: ["inline-code:-c"]
+- id: cmd-m1c2-dev-python-m-pip-is-not-a-dev-tool
+  text: "python -m pip install requests"
+  fixture: ps_ast/python-m-pip-install-requests-a168f0dd.json
+  expect:
+    gray: []
+    commands:
+    - program: "python"
+      args: ["-m", "pip", "install", "requests"]
+      sub: "install"
+- id: cmd-m1c2-shape-select-expand-property
+  text: "Get-Process | Select-Object -ExpandProperty Name"
+  fixture: ps_ast/get-process-select-object-expandproperty-5b2a4642.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Process"
+    - program: "Select-Object"
+      args: ["-ExpandProperty", "Name"]
+      flags: ["-ExpandProperty"]
+      paths: []
+      tags: []
+      known: true
+      gray: []
+      pipe: true
+- id: cmd-m1c2-shape-aliases-chain
+  text: "Get-Process | sort CPU -Descending | select -First 3 | ft Name"
+  fixture: ps_ast/get-process-sort-cpu-descending-select-f-e614ac20.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Process"
+    - program: "Sort-Object"
+      args: ["CPU", "-Descending"]
+      flags: ["-Descending"]
+      paths: []
+      tags: []
+      known: true
+      gray: []
+    - program: "Select-Object"
+      args: ["-First", "3"]
+      flags: ["-First"]
+      paths: []
+      tags: []
+      known: true
+      gray: []
+    - program: "Format-Table"
+      args: ["Name"]
+      paths: []
+      tags: []
+      known: true
+      gray: []
+- id: cmd-m1c2-shape-where-object-comparison
+  text: "Get-Process | Where-Object Name -eq x"
+  fixture: ps_ast/get-process-where-object-name-eq-x-28816a8e.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Process"
+    - program: "Where-Object"
+      args: ["Name", "-EQ", "x"]
+      flags: ["-EQ"]
+      paths: []
+      tags: []
+      known: true
+      gray: []
+- id: cmd-m1c2-shape-question-mark-and-measure
+  text: "Get-Process | ? Name -like 'a*' | Measure-Object"
+  fixture: ps_ast/get-process-name-like-a-measure-object-3c2ed992.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Process"
+    - program: "Where-Object"
+      args: ["Name", "-Like", "a*"]
+      paths: []
+      tags: []
+      gray: []
+    - program: "Measure-Object"
+      paths: []
+      tags: []
+      known: true
+      gray: []
+- id: cmd-m1c2-shape-script-block-stays-gray
+  text: "Get-Process | Where-Object { $_.CPU -gt 1 }"
+  fixture: ps_ast/get-process-where-object-cpu-gt-1-b168a91e.json
+  expect:
+    gray_has: ["ps-dynamic-value:ScriptBlockExpressionAst", "ps-dynamic:ScriptBlockExpressionAst"]
+    commands:
+    - program: "Get-Process"
+    - program: "Where-Object"
+      args: ["$({ $_.CPU -gt 1 })"]
+- id: cmd-m1c2-shape-json-and-out-string
+  text: "Get-Process | ConvertTo-Json -Depth 3 | Out-String"
+  fixture: ps_ast/get-process-convertto-json-depth-3-out-s-8b950ba8.json
+  expect:
+    gray: []
+    commands:
+    - program: "Get-Process"
+    - program: "ConvertTo-Json"
+      args: ["-Depth", "3"]
+      flags: ["-Depth"]
+      paths: []
+      tags: []
+      known: true
+      gray: []
+    - program: "Out-String"
+      paths: []
+      tags: []
+      known: true
+      gray: []

@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    30
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "python"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "m",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "pip"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "install"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "requests"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

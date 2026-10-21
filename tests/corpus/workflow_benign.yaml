@@ -87,7 +87,7 @@
 - {id: ps-t1-test-path, tool: PowerShell, platform: windows, input: {"command": "Test-Path src"}, tier: t1-read, expect_after: allow, today: gray}
 - {id: ps-t1-get-item, tool: PowerShell, platform: windows, input: {"command": "Get-Item README.md"}, tier: t1-read, expect_after: allow, today: gray}
 - {id: ps-t1-resolve-path, tool: PowerShell, platform: windows, input: {"command": "Resolve-Path src"}, tier: t1-read, expect_after: allow, today: gray}
-- {id: ps-t1-pipe-first, tool: PowerShell, platform: windows, input: {"command": "Get-Content src\\app.py | Select-Object -First 20"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: Select-Object prints what is piped in and a variable starting a pipeline is dropped by the normalizer (`$env:TOKEN | Select-Object`); moved to keep-ask
+- {id: ps-t1-pipe-first, tool: PowerShell, platform: windows, input: {"command": "Get-Content src\\app.py | Select-Object -First 20"}, tier: t1-read, expect_after: allow, today: gray}  # M1c-2: Select-Object is allowed again (allow-ps-data-shaping): a variable heading a pipeline is now gray, so it no longer prints environment values
 - {id: ps-t1-pipe-measure, tool: PowerShell, platform: windows, input: {"command": "Get-ChildItem src | Measure-Object"}, tier: t1-read, expect_after: allow, today: gray}
 - {id: ps-t1-git-status, tool: PowerShell, platform: windows, input: {"command": "git status"}, tier: t1-read, expect_after: allow, today: gray}
 - {id: ps-t1-git-diff-stat, tool: PowerShell, platform: windows, input: {"command": "git diff --stat"}, tier: t1-read, expect_after: allow, today: gray}
@@ -153,9 +153,9 @@
 
 # ---- TIER 3 (t3-exec): run project code. Design: stays ask/gray; expect_after = today.
 
-- {id: t3-pytest, tool: Bash, input: {"command": "pytest"}, tier: t3-exec, expect_after: gray, today: gray}
-- {id: t3-python-m-pytest, tool: Bash, input: {"command": "python -m pytest -q"}, tier: t3-exec, expect_after: gray, today: gray}
-- {id: t3-pytest-file, tool: Bash, input: {"command": "pytest tests/test_x.py -x"}, tier: t3-exec, expect_after: gray, today: gray}
+- {id: t3-pytest, tool: Bash, input: {"command": "pytest"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}  # M1c-2: a dev tool, allowed in a trusted project (allow-devtools-trusted-project); moved from t3-exec to t3-dev
+- {id: t3-python-m-pytest, tool: Bash, input: {"command": "python -m pytest -q"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}  # M1c-2: a dev tool, allowed in a trusted project (allow-devtools-trusted-project); moved from t3-exec to t3-dev
+- {id: t3-pytest-file, tool: Bash, input: {"command": "pytest tests/test_x.py -x"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}  # M1c-2: a dev tool, allowed in a trusted project (allow-devtools-trusted-project); moved from t3-exec to t3-dev
 - {id: t3-uv-run-pytest, tool: Bash, input: {"command": "uv run pytest -q"}, tier: t3-exec, expect_after: gray, today: gray}
 - {id: t3-npm-test, tool: Bash, input: {"command": "npm test"}, tier: t3-exec, expect_after: gray, today: gray}
 - {id: t3-npm-run-build, tool: Bash, input: {"command": "npm run build"}, tier: t3-exec, expect_after: gray, today: gray}
@@ -173,14 +173,14 @@
 - {id: t3-python-c, tool: Bash, input: {"command": "python -c 'print(1)'"}, tier: t3-exec, expect_after: gray, today: gray}
 - {id: t3-python-m-module, tool: Bash, input: {"command": "python -m mypackage"}, tier: t3-exec, expect_after: gray, today: gray}
 - {id: t3-node-app, tool: Bash, input: {"command": "node app.js"}, tier: t3-exec, expect_after: gray, today: gray}
-- {id: t3-ruff-check, tool: Bash, input: {"command": "ruff check ."}, tier: t3-exec, expect_after: gray, today: gray}
-- {id: t3-mypy, tool: Bash, input: {"command": "mypy src"}, tier: t3-exec, expect_after: gray, today: gray}
+- {id: t3-ruff-check, tool: Bash, input: {"command": "ruff check ."}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}  # M1c-2: a dev tool, allowed in a trusted project (allow-devtools-trusted-project); moved from t3-exec to t3-dev
+- {id: t3-mypy, tool: Bash, input: {"command": "mypy src"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}  # M1c-2: a dev tool, allowed in a trusted project (allow-devtools-trusted-project); moved from t3-exec to t3-dev
 - {id: t3-bash-script, tool: Bash, input: {"command": "bash scripts/build.sh"}, tier: t3-exec, expect_after: gray, today: gray}
 - {id: t3-dot-slash, tool: Bash, input: {"command": "./run.sh"}, tier: t3-exec, expect_after: gray, today: gray}
 - {id: t3-gradle, tool: Bash, input: {"command": "gradle test"}, tier: t3-exec, expect_after: gray, today: gray}
 - {id: t3-mvn, tool: Bash, input: {"command": "mvn -q test"}, tier: t3-exec, expect_after: gray, today: gray}
-- {id: ps-t3-pytest, tool: PowerShell, platform: windows, input: {"command": "pytest"}, tier: t3-exec, expect_after: gray, today: gray}
-- {id: ps-t3-python-m-pytest, tool: PowerShell, platform: windows, input: {"command": "python -m pytest -q"}, tier: t3-exec, expect_after: gray, today: gray}
+- {id: ps-t3-pytest, tool: PowerShell, platform: windows, input: {"command": "pytest"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}  # M1c-2: a dev tool, allowed in a trusted project (allow-devtools-trusted-project); moved from t3-exec to t3-dev
+- {id: ps-t3-python-m-pytest, tool: PowerShell, platform: windows, input: {"command": "python -m pytest -q"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}  # M1c-2: a dev tool, allowed in a trusted project (allow-devtools-trusted-project); moved from t3-exec to t3-dev
 - {id: ps-t3-npm-test, tool: PowerShell, platform: windows, input: {"command": "npm test"}, tier: t3-exec, expect_after: gray, today: gray}
 - {id: ps-t3-dotnet-test, tool: PowerShell, platform: windows, input: {"command": "dotnet test"}, tier: t3-exec, expect_after: gray, today: gray}
 - {id: ps-t3-python-script, tool: PowerShell, platform: windows, input: {"command": "python script.py"}, tier: t3-exec, expect_after: gray, today: gray}
@@ -345,3 +345,66 @@
 - {id: mb-write-env, tool: Write, input: {"file_path": ".env", "content": "A=1\n"}, tier: must-block, expect_after: ask, today: gray}  # UNSURE: writing a secrets file inside the project; design says ask (the content is a credential)
 - {id: mb-edit-env, tool: Edit, input: {"file_path": ".env", "old_string": "A=1", "new_string": "A=2"}, tier: must-block, expect_after: ask, today: gray}  # UNSURE: Edit of .env also exposes its content to the agent; design says ask
 - {id: mb-notebook-outside, tool: NotebookEdit, input: {"notebook_path": "../outside.ipynb", "new_source": "x"}, tier: must-block, expect_after: ask, today: gray}
+
+# ---- M1c-2 TIER t3-dev: dev tools (pytest, ruff, mypy, black, isort, flake8, pylint; also `python -m TOOL`,
+# `.exe`, the project's own virtual environment by path). Design: ask in a project that is NOT trusted
+# (expect_after), allow in a trusted one (expect_trusted; measure_ask_rate.py --trusted). Without the
+# allow rule they are gray (today). The entries after them must prompt EVEN in a trusted project.
+
+- {id: dev-pytest-q, tool: Bash, input: {"command": "pytest -q tests"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-pytest-x, tool: Bash, input: {"command": "pytest tests/test_x.py -x"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-pytest-k, tool: Bash, input: {"command": "pytest -k alpha tests"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-pytest-node-id, tool: Bash, input: {"command": "pytest tests/test_x.py::test_a"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-python3-m-pytest, tool: Bash, input: {"command": "python3 -m pytest tests"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-ruff-format, tool: Bash, input: {"command": "ruff format --check src"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-python-m-mypy, tool: Bash, input: {"command": "python -m mypy src"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-black, tool: Bash, input: {"command": "black --check ."}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-isort, tool: Bash, input: {"command": "isort --check ."}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-flake8, tool: Bash, input: {"command": "flake8 src"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-pylint, tool: Bash, input: {"command": "pylint src"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-venv-python-posix, tool: Bash, platform: posix, input: {"command": "./.venv/bin/python -m pytest -q"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-venv-ruff-posix, tool: Bash, platform: posix, input: {"command": "./.venv/bin/ruff check ."}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-venv-python-win, tool: Bash, platform: windows, input: {"command": "C:/Users/testuser/proj/.venv/Scripts/python.exe -m pytest -q"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: dev-pytest-exe-win, tool: Bash, platform: windows, input: {"command": "pytest.exe -q"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: ps-dev-ruff, tool: PowerShell, platform: windows, input: {"command": "ruff check ."}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: ps-dev-mypy, tool: PowerShell, platform: windows, input: {"command": "mypy src"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: ps-dev-black, tool: PowerShell, platform: windows, input: {"command": "black --check ."}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: ps-dev-pylint, tool: PowerShell, platform: windows, input: {"command": "pylint src"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: ps-dev-venv-ruff, tool: PowerShell, platform: windows, input: {"command": "& '.\\.venv\\Scripts\\ruff.exe' check ."}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+- {id: ps-dev-venv-python, tool: PowerShell, platform: windows, input: {"command": "& '.\\.venv\\Scripts\\python.exe' -m pytest -q"}, tier: t3-dev, expect_after: ask, expect_trusted: allow, today: gray}
+
+# dev-tool forms that prompt even in a trusted project (no expect_trusted: the same verdict)
+- {id: ka-dev-pytest-plugin, tool: Bash, input: {"command": "pytest -p evil_plugin"}, tier: keep-ask, expect_after: ask, today: gray}  # -p loads a plugin the command line names
+- {id: ka-dev-pytest-rootdir, tool: Bash, input: {"command": "pytest --rootdir=/tmp/x"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ka-dev-pytest-config, tool: Bash, input: {"command": "pytest -c other.ini"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ka-dev-mypy-config, tool: Bash, input: {"command": "mypy --config-file other.ini src"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ka-dev-pylint-plugins, tool: Bash, input: {"command": "pylint --load-plugins=evil src"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ka-dev-sudo-pytest, tool: Bash, input: {"command": "sudo pytest"}, tier: keep-ask, expect_after: ask, today: gray}  # a wrapper is a different action
+- {id: ka-dev-uv-run-pytest, tool: Bash, input: {"command": "uv run pytest"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ka-dev-timeout-pytest, tool: Bash, input: {"command": "timeout 5 pytest"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ka-dev-env-pythonpath, tool: Bash, input: {"command": "PYTHONPATH=/tmp/x pytest"}, tier: keep-ask, expect_after: ask, today: gray}  # an env prefix that carries code
+- {id: ka-dev-outside-operand, tool: Bash, input: {"command": "pytest ../other"}, tier: keep-ask, expect_after: ask, today: gray}  # an operand outside the project
+- {id: ka-dev-written-test, tool: Bash, input: {"command": "echo x > t.py; pytest t.py"}, tier: keep-ask, expect_after: ask, today: gray}  # written, then run
+- {id: ka-dev-global-python-win, tool: Bash, platform: windows, input: {"command": "C:/Python312/python.exe -m pytest"}, tier: keep-ask, expect_after: ask, today: gray}  # an interpreter outside the project
+- {id: ka-dev-python-script, tool: Bash, input: {"command": "python tests/run_all.py"}, tier: keep-ask, expect_after: ask, today: gray}  # a script is not a dev tool
+- {id: ka-dev-python-m-pip, tool: Bash, input: {"command": "python -m pip install pytest"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ps-ka-dev-pytest-plugin, tool: PowerShell, platform: windows, input: {"command": "pytest -p evil_plugin"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ps-ka-dev-global-python, tool: PowerShell, platform: windows, input: {"command": "& 'C:\\Python312\\python.exe' -m pytest"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ps-ka-dev-env-prefix, tool: PowerShell, platform: windows, input: {"command": "$env:PYTHONPATH='x'; pytest"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: mb-dev-pytest-env, tool: Bash, input: {"command": "pytest .env"}, tier: must-block, expect_after: deny, today: gray}  # an operand that is a secret file
+- {id: mb-dev-ruff-ssh, tool: Bash, input: {"command": "ruff check ~/.ssh"}, tier: must-block, expect_after: deny, today: gray}
+- {id: ps-mb-dev-pytest-env, tool: PowerShell, platform: windows, input: {"command": "pytest .env"}, tier: must-block, expect_after: deny, today: gray}
+- {id: ka-dev-write-mypy-ini, tool: Write, input: {"file_path": "mypy.ini", "content": "[mypy]\n"}, tier: keep-ask, expect_after: ask, today: gray}  # mypy plugins= run code
+- {id: ka-dev-write-pytest-ini, tool: Write, input: {"file_path": "pytest.ini", "content": "[pytest]\n"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ka-dev-write-flake8, tool: Edit, input: {"file_path": ".flake8", "old_string": "a", "new_string": "b"}, tier: keep-ask, expect_after: ask, today: gray}
+
+# PowerShell data shaping (allow-ps-data-shaping): the upstream command is judged on its own
+- {id: ps-t1-select-name, tool: PowerShell, platform: windows, input: {"command": "Get-ChildItem | Select-Object Name"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: ps-t1-sort-name, tool: PowerShell, platform: windows, input: {"command": "Get-ChildItem | Sort-Object Name"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: ps-t1-where-like, tool: PowerShell, platform: windows, input: {"command": "Get-ChildItem | Where-Object Name -like 'a*'"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: ps-t1-format-table, tool: PowerShell, platform: windows, input: {"command": "Get-ChildItem | Format-Table"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: ps-t1-json-in, tool: PowerShell, platform: windows, input: {"command": "Get-Content package.json | ConvertFrom-Json"}, tier: t1-read, expect_after: allow, today: gray}
+- {id: ps-mb-env-into-select, tool: PowerShell, platform: windows, input: {"command": "$env:SECRET_TOKEN | Select-Object"}, tier: must-block, expect_after: ask, today: gray}  # a variable heading the pipeline is gray: an environment value must not reach the agent
+- {id: ps-mb-select-inputobject, tool: PowerShell, platform: windows, input: {"command": "Select-Object -InputObject $env:SECRET_TOKEN"}, tier: must-block, expect_after: ask, today: gray}
+- {id: ps-ka-foreach-object, tool: PowerShell, platform: windows, input: {"command": "Get-ChildItem | ForEach-Object { $_.Name }"}, tier: keep-ask, expect_after: ask, today: gray}  # runs a script block
+- {id: ps-ka-pipe-out-file, tool: PowerShell, platform: windows, input: {"command": "Get-ChildItem | Out-File x.txt"}, tier: keep-ask, expect_after: ask, today: gray}

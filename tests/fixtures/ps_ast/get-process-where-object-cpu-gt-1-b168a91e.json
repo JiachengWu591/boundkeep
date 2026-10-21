@@ -1,0 +1,55 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    11
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Process"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    14,
+    43
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Where-Object"
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "ScriptBlockExpressionAst",
+     "text": "{ $_.CPU -gt 1 }"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "ScriptBlockExpressionAst",
+  "BinaryExpressionAst",
+  "MemberExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

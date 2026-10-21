@@ -72,7 +72,9 @@ rules:
     # boundkeep's own command line changes the gate from inside: `mode audit-only` records
     # decisions and stops enforcing them, `uninstall` removes the hook entries, `init` rewrites
     # them (and, with --python or --hook-style, names the interpreter they run), `serve` starts a
-    # second daemon, and `--reset-policy`, `--purge`, `--rotate-endpoint` and `--home` replace the
+    # second daemon, `trust` edits trusted_projects (every `trust` form is refused, `trust list`
+    # too: the rule language sees the subcommand only; the user runs it in a terminal, and
+    # `boundkeep doctor` shows the list), and `--reset-policy`, `--purge`, `--rotate-endpoint` and `--home` replace the
     # policy, delete the audit log, change the endpoint or point it all somewhere else. The
     # path rules above cannot see any of that because boundkeep itself writes the files. These
     # are for the user's own terminal, never for the agent. The subcommand rule needs the
@@ -80,9 +82,9 @@ rules:
     tool: [Bash, PowerShell]
     match:
       program: [boundkeep, boundkeep-hook]
-      subcommand: [mode, uninstall, init, serve]
+      subcommand: [mode, uninstall, init, serve, trust]
     action: deny
-    reason: "boundkeep's own mode, uninstall, init and serve commands change the gate and are not allowed for the agent"
+    reason: "boundkeep's own mode, uninstall, init, serve and trust commands change the gate and are not allowed for the agent"
   - id: deny-boundkeep-state-flags
     # The flag half of deny-boundkeep-state-commands: these options only exist on commands that
     # replace the policy, delete the audit log, rewrite the hook registration or relocate the
@@ -326,6 +328,30 @@ rules:
       access: write
     action: ask
     reason: "this file makes a build, CI run, editor, container or tool run code later"
+  - id: ask-python-tool-config-write
+    # The configuration files of the dev tools that load code named in them: mypy `plugins =`, pylint
+    # `init-hook` and `load-plugins`, flake8 local plugins, coverage plugins, and pytest.ini (the
+    # `addopts = -p ...` plugin list, the rootdir that decides which conftest.py is imported). A line
+    # added there is code that runs the next time the tool does, which is why the dev-tool allow
+    # rule for trusted projects must never be able to run behind a config the agent just wrote:
+    # writing one asks. Same reasoning as the autorun rule above, in a rule of its own because a
+    # rule's path_glob list holds at most 64 entries. No `tool:` filter: Write, Edit, MultiEdit and
+    # every shell write carry the same path with access write.
+    match:
+      path_glob:
+        - "**/mypy.ini"
+        - "**/.mypy.ini"
+        - "**/pylintrc"
+        - "**/.pylintrc"
+        - "**/pylintrc.toml"
+        - "**/.pylintrc.toml"
+        - "**/.flake8"
+        - "**/.coveragerc"
+        - "**/pytest.ini"
+        - "**/.pytest.ini"
+      access: write
+    action: ask
+    reason: "this file configures a dev tool that loads code named in it"
   - id: ask-secret-file-write
     # The write side of no-secret-read, with the same globs word for word (a test keeps the two
     # lists equal). Their content is a secret, so reading them is refused; creating or changing one
@@ -1099,6 +1125,23 @@ rules:
       path_outside_project: true
     action: ask
     reason: "a path that is not inside the project directory"
+  - id: ask-devtools-path-outside-project
+    # The guard of allow-devtools-trusted-project, in the pattern of ask-shell-read-outside-project: a
+    # dev-tool command may carry no path at all (`pytest`, `ruff check`), so the allow rule cannot
+    # demand `path_inside_project`; instead a path that is not shown to be inside the project
+    # (an operand, a `-c` file, the executable of a path-qualified python or tool) asks, and the
+    # strictest rule beats the allow rule. Same program list as the allow rule (a test checks it).
+    # `project_trusted` keeps it out of untrusted projects, where there is no allow rule and the
+    # command is gray anyway; where the project cannot be judged the rule counts as a match. No
+    # path_glob and no `access`, on purpose: a "**" glob of a read rule would also become a protected
+    # name for the subtree scan of recursive reads (see ask-shell-read-outside-project).
+    tool: [Bash, PowerShell]
+    match:
+      program: [pytest, ruff, mypy, black, isort, flake8, pylint]
+      project_trusted: true
+      path_outside_project: true
+    action: ask
+    reason: "a path that is not inside the project directory"
   # ---- allow rules for everyday use ----------------------------------------------------------
   # With defaults.emit_allow false an `allow` verdict is "no decision": Claude Code's own permission
   # flow still decides, so these rules only stop boundkeep from asking about actions that are well
@@ -1379,6 +1422,111 @@ rules:
       path_glob: ["**"]
       access: write
       path_inside_project: true
+    action: allow
+  - id: allow-ps-data-shaping
+    # PowerShell cmdlets that only reshape or filter what is piped into them and never take a path:
+    # Select-Object, Where-Object, Sort-Object, Group-Object, Format-Table, Format-List, Out-String,
+    # Out-Null, ConvertTo-Json, ConvertFrom-Json. They need their input from a command, and the
+    # upstream command of the line is judged on its own (the whole line is allow only if every
+    # command is); a variable or expression that starts the pipeline marks the line gray
+    # (`ps-pipeline-head-dynamic`), so `$env:SECRET_TOKEN | Select-Object` is never allow. A script
+    # block argument (`Where-Object { ... }`, calculated properties) is gray already and stays so.
+    # -InputObject is left out: `Select-Object -InputObject $env:SECRET_TOKEN` prints the value it
+    # is given, with no pipeline head for the normalizer to mark.
+    # Not here: ForEach-Object (runs a script block), Out-File, Set-Content, Tee-Object, Export-*
+    # (write files) and Invoke-* (run code). A redirect gives the line a written path, which
+    # paths_read_only refuses.
+    tool: [PowerShell]
+    match:
+      program:
+        - Select-Object
+        - Out-String
+        - Out-Null
+        - Format-Table
+        - Format-List
+        - Sort-Object
+        - Group-Object
+        - ConvertTo-Json
+        - ConvertFrom-Json
+        - Where-Object
+      flags_none: ["-InputObject"]
+      paths_read_only: true
+    action: allow
+  - id: allow-devtools-trusted-project
+    # pytest, ruff, mypy, black, isort, flake8 and pylint (also `python -m TOOL`, a `.exe`, or the
+    # project's own virtual environment by path) are allowed ONLY in a project the user listed in
+    # trusted_projects (`boundkeep trust add`, run in a terminal): with the list empty, which is the
+    # default, no project is trusted and these stay gray (ask). A trusted project is one whose own
+    # code you let tools run without asking: together with allow-project-file-writes this is a
+    # write-then-run chain (an injected test file, then pytest), see docs/policy-reference.md.
+    # The normalizer gives these commands no gray reason and no wrapper marker, so `sudo pytest`,
+    # `uv run pytest`, `timeout 5 pytest`, an env prefix that carries code, `python -c` and
+    # `python script.py` never reach this rule; a file written and run on the same line stays gray.
+    # `flags_none` is programs.DEVTOOL_RISKY_FLAGS (every tool's list, merged; a test keeps the two
+    # equal): the options that load or run a file or code the command line names (-p, -c, --rootdir,
+    # --config, --config-file, --rcfile, --load-plugins, --init-hook, --python-executable,
+    # --install-types ...) or write somewhere else (--junitxml, --output-file, --cache-dir, reports).
+    # Operands are paths with unknown access (these tools may write: --fix, black, isort, the
+    # cache), so the secret, guard, autorun and outside-project rules judge them and win;
+    # ask-devtools-path-outside-project asks for any path not inside the project. Strict has no
+    # allow rule for dev tools.
+    tool: [Bash, PowerShell]
+    match:
+      program: [pytest, ruff, mypy, black, isort, flake8, pylint]
+      project_trusted: true
+      flags_none:
+        - "-p"
+        - "-c"
+        - "--rootdir"
+        - "--confcutdir"
+        - "--basetemp"
+        - "--junitxml"
+        - "--cov-report"
+        - "-o"
+        - "--override-ini"
+        - "--pdbcls"
+        - "--cov-config"
+        - "--log-file"
+        - "--report-log"
+        - "--html"
+        - "--tx"
+        - "--rsyncdir"
+        - "--pastebin"
+        - "--config"
+        - "--output-file"
+        - "--cache-dir"
+        - "--config-file"
+        - "--python-executable"
+        - "--install-types"
+        - "--non-interactive"
+        - "--junit-xml"
+        - "--custom-typeshed-dir"
+        - "--shadow-file"
+        - "--report-dir"
+        - "--linecount-report"
+        - "--any-exprs-report"
+        - "--html-report"
+        - "--xml-report"
+        - "--txt-report"
+        - "--cobertura-xml-report"
+        - "--lineprecision-report"
+        - "--xslt-html-report"
+        - "--xslt-txt-report"
+        - "--stdin-filename"
+        - "--settings-path"
+        - "--settings-file"
+        - "--sp"
+        - "--virtual-env"
+        - "--conda-env"
+        - "--src"
+        - "--append-config"
+        - "--rcfile"
+        - "--load-plugins"
+        - "--init-hook"
+        - "--output"
+        - "--source-roots"
+        - "--extension-pkg-allow-list"
+        - "--extension-pkg-whitelist"
     action: allow
 
 # Regression tests, run by `boundkeep test` through the whole pipeline (normalizer included).
@@ -1733,7 +1881,7 @@ tests:
   - { tool: PowerShell, platform: [windows], input: { command: "Write-Output $env:SECRET_TOKEN" }, expect: gray }
   - { tool: PowerShell, platform: [windows], input: { command: "echo $env:SECRET_TOKEN" }, expect: gray }
   - { tool: PowerShell, platform: [windows], input: { command: "$env:SECRET_TOKEN | Select-Object" }, expect: gray }
-  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content src\\app.py | Select-Object -First 20" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content src\\app.py | Select-Object -First 20" }, expect: allow }
   - { tool: PowerShell, platform: [windows], input: { command: "Get-Date -Format $env:SECRET_TOKEN" }, expect: gray }
   - { tool: PowerShell, platform: [windows], input: { command: "Get-Date -UFormat %Y" }, expect: gray }
   - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem src | Measure-Object" }, expect: allow }
@@ -1751,7 +1899,7 @@ tests:
   - { tool: PowerShell, platform: [windows], input: { command: "Write-Output hi > Makefile" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "Write-Output $(Get-Content .env)" }, expect: deny }
   - { tool: PowerShell, platform: [windows], input: { command: "Select-Object -Property @{n='a';e={1}}" }, expect: gray }   # a script block
-  - { tool: PowerShell, platform: [windows], input: { command: "Select-Object -First 3" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Select-Object -First 3" }, expect: allow }
   - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Measure-Object" }, expect: allow }
   - { tool: PowerShell, platform: [windows], input: { command: "Measure-Object -InputObject x > Makefile" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem .." }, expect: ask }   # outside: ask-shell-read-outside-project
@@ -1764,3 +1912,56 @@ tests:
   - { tool: PowerShell, platform: [windows], input: { command: "mkdir build" }, expect: gray }   # New-Item underneath: stays as it was
   - { tool: PowerShell, platform: [windows], input: { command: "New-Item -ItemType Directory build" }, expect: gray }
   - { tool: PowerShell, platform: [windows], input: { command: "python --version" }, expect: gray }
+
+  # ---- M1c-2: trust is refused for the agent, dev tools are gray until a project is trusted, data-shaping cmdlets.
+  # `trust` (every form, `list` included) changes or reveals the trust list: the user runs it in a terminal.
+  - { tool: Bash, input: { command: "boundkeep trust add" }, expect: deny }
+  - { tool: Bash, input: { command: "boundkeep trust list" }, expect: deny }
+  - { tool: Bash, input: { command: "boundkeep trust remove --project-dir x" }, expect: deny }
+  - { tool: Bash, input: { command: "uv run boundkeep trust add" }, expect: deny }
+  - { tool: Bash, input: { command: "python -m boundkeep trust add --project-dir X" }, expect: deny }
+  - { tool: Bash, input: { command: "sudo boundkeep trust add" }, expect: deny }
+  - { tool: Bash, input: { command: "boundkeep doctor" }, expect: ask }   # the other read-only forms still ask
+  - { tool: PowerShell, platform: [windows], input: { command: "boundkeep.exe trust add" }, expect: deny }
+  # The dev-tool allow rule needs trusted_projects, which is empty here: the tools stay gray (ask), and
+  # the deny rules still see their operands. tests/corpus/pipeline_m1c2_trusted.yaml runs them trusted.
+  - { tool: Bash, input: { command: "pytest -q tests" }, expect: gray }
+  - { tool: Bash, input: { command: "python -m pytest -q" }, expect: gray }
+  - { tool: Bash, input: { command: "ruff check ." }, expect: gray }
+  - { tool: Bash, input: { command: "mypy src" }, expect: gray }
+  - { tool: Bash, input: { command: "pytest ../other" }, expect: gray }
+  - { tool: Bash, input: { command: "pytest .env" }, expect: deny }
+  - { tool: Bash, input: { command: "ruff check ~/.ssh" }, expect: deny }
+  - { tool: Bash, input: { command: "ruff check --fix Makefile" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "pytest -q" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "pytest .env" }, expect: deny }
+  # Configuration files of the dev tools that load code named in them.
+  - { tool: Write, input: { file_path: "mypy.ini", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".mypy.ini", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "pylintrc", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".pylintrc.toml", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "sub/.flake8", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".coveragerc", content: "x" }, expect: ask }
+  - { tool: Edit, input: { file_path: "pytest.ini", old_string: a, new_string: b }, expect: ask }
+  - { tool: Write, input: { file_path: ".pytest.ini", content: "x" }, expect: ask }
+  - { tool: Bash, input: { command: "echo x > mypy.ini" }, expect: ask }
+  - { tool: Bash, input: { command: "touch .flake8" }, expect: ask }
+  - { tool: Write, input: { file_path: "ruff.toml", content: "x" }, expect: allow }   # ruff runs no code named in its configuration
+  # PowerShell cmdlets that only reshape the pipeline: the upstream command is judged on its own.
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Select-Object Name" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Sort-Object Name" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Where-Object Name -like 'a*'" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Group-Object Extension" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Format-Table" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Out-String" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content package.json | ConvertFrom-Json" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | ConvertTo-Json" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "$env:SECRET_TOKEN | Select-Object" }, expect: gray }   # a variable heads the pipeline
+  - { tool: PowerShell, platform: [windows], input: { command: "$x | Out-String" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "(Get-Content f) | Select-Object -First 3" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Select-Object -InputObject $env:SECRET_TOKEN" }, expect: gray }   # prints the value it is given
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Where-Object { $_.Length -gt 1 }" }, expect: gray }   # a script block
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | ForEach-Object { $_.Name }" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Out-File x.txt" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Select-Object Name > Makefile" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem C:\\Windows | Select-Object Name" }, expect: ask }

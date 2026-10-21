@@ -1,0 +1,92 @@
+# M1c-2: dev tools (pytest, ruff, mypy, black, isort, flake8, pylint; also `python -m TOOL`) through the
+# whole pipeline with the DEFAULT policy. The default policy has no rule for them and the corpus's fake
+# project is not a trusted project, so the benign forms are `gray` (no rule decides: the pipeline asks);
+# the interesting part is that nothing here may ever come out milder than the expectation, and that
+# the operands the tool tables now list (as `unknown` paths) reach the secret / config deny rules.
+# The rules that allow these tools in a TRUSTED project are tested in the policy's own tests.
+# Format: see pipeline.yaml. `adv: true` = must never be `allow` and never milder than `expect`.
+
+# ---- the plain forms: gray (no allow rule applies to them here) -----------------------------------
+- {id: m1c2-dt-pytest, tool: Bash, input: {command: 'pytest -q tests'}, expect: gray}
+- {id: m1c2-dt-ruff, tool: Bash, input: {command: 'ruff check .'}, expect: gray}
+- {id: m1c2-dt-mypy, tool: Bash, input: {command: 'mypy src'}, expect: gray}
+- {id: m1c2-dt-black, tool: Bash, input: {command: 'black --check src'}, expect: gray}
+- {id: m1c2-dt-isort, tool: Bash, input: {command: 'isort --check-only .'}, expect: gray}
+- {id: m1c2-dt-flake8, tool: Bash, input: {command: 'flake8 src'}, expect: gray}
+- {id: m1c2-dt-pylint, tool: Bash, input: {command: 'pylint src'}, expect: gray}
+- {id: m1c2-dt-python-m-pytest, tool: Bash, input: {command: 'python -m pytest -q'}, expect: gray}
+- {id: m1c2-dt-python3-12-m-mypy, tool: Bash, input: {command: 'python3.12 -m mypy src'}, expect: gray}
+- {id: m1c2-dt-py-m-ruff, tool: Bash, input: {command: 'py -m ruff check .'}, expect: gray}
+- {id: m1c2-dt-python-flags, tool: Bash, input: {command: 'python -u -B -X dev -W error -m pytest'}, expect: gray}
+- {id: m1c2-dt-exe-win, tool: Bash, platform: windows, input: {command: 'pytest.exe -q'}, expect: gray}
+- {id: m1c2-dt-venv-posix, tool: Bash, platform: posix, input: {command: './.venv/bin/python -m pytest'}, expect: gray}
+- {id: m1c2-dt-venv-direct-posix, tool: Bash, platform: posix, input: {command: './.venv/bin/ruff check .'}, expect: gray}
+- {id: m1c2-dt-venv-win, tool: Bash, platform: windows, input: {command: '''C:\Users\testuser\proj\.venv\Scripts\python.exe'' -m pytest -q'}, expect: gray}
+- {id: m1c2-dt-venv-win-forward, tool: Bash, platform: windows, input: {command: 'C:/Users/testuser/proj/.venv/Scripts/python.exe -m pytest'}, expect: gray}
+- {id: m1c2-dt-global-python-win, tool: Bash, platform: windows, input: {command: '''C:\Python312\python.exe'' -m pytest -q'}, expect: gray}
+- {id: m1c2-dt-global-python-posix, tool: Bash, platform: posix, input: {command: '/usr/bin/python3 -m pytest -q'}, expect: gray}
+
+# ---- NOT a dev-tool form: as before ---------------------------------------------------------------
+- {id: m1c2-dt-not-script, tool: Bash, input: {command: 'python script.py'}, expect: gray, adv: true}
+- {id: m1c2-dt-not-c, tool: Bash, input: {command: 'python -c "import os"'}, expect: gray, adv: true}
+- {id: m1c2-dt-not-m-pip, tool: Bash, input: {command: 'python -m pip install requests'}, expect: ask, adv: true}
+- {id: m1c2-dt-not-i-m, tool: Bash, input: {command: 'python -i -m pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-not-stdin, tool: Bash, input: {command: 'python - < x.py'}, expect: gray, adv: true}
+- {id: m1c2-dt-not-venv-script, tool: Bash, input: {command: './.venv/bin/python evil.py'}, expect: gray, adv: true}
+- {id: m1c2-dt-not-path-pip, tool: Bash, input: {command: './.venv/bin/python -m pip install x'}, expect: ask, adv: true}
+- {id: m1c2-dt-not-path-other, tool: Bash, input: {command: './tools/pytest-wrapper -q'}, expect: gray, adv: true}
+- {id: m1c2-dt-not-tilde-python, tool: Bash, input: {command: '~/.venv/bin/python -m pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-not-var-python, tool: Bash, input: {command: '$VENV/bin/python -m pytest'}, expect: gray, adv: true}
+
+# ---- environment, wrappers, runners: never milder than gray --------------------------------------------
+- {id: m1c2-dt-env-pythonpath, tool: Bash, input: {command: 'PYTHONPATH=/tmp/x pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-env-addopts, tool: Bash, input: {command: 'PYTEST_ADDOPTS="-p evil" pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-env-plugins, tool: Bash, input: {command: 'PYTEST_PLUGINS=evil python -m pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-env-pylintrc, tool: Bash, input: {command: 'PYLINTRC=/tmp/rc pylint src'}, expect: gray, adv: true}
+- {id: m1c2-dt-env-breakpoint, tool: Bash, input: {command: 'PYTHONBREAKPOINT=os.system pytest --pdb'}, expect: gray, adv: true}
+- {id: m1c2-dt-env-path, tool: Bash, input: {command: 'PATH=/tmp/x:$PATH pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-sudo, tool: Bash, input: {command: 'sudo pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-env-wrapper, tool: Bash, input: {command: 'env X=1 pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-timeout, tool: Bash, input: {command: 'timeout 5 pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-nohup-python-m, tool: Bash, input: {command: 'nohup python -m pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-uv-run, tool: Bash, input: {command: 'uv run pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-poetry-run, tool: Bash, input: {command: 'poetry run python -m mypy src'}, expect: gray, adv: true}
+- {id: m1c2-dt-xargs, tool: Bash, input: {command: 'echo tests | xargs pytest'}, expect: gray, adv: true}
+
+# ---- a line that writes a file and then runs it ------------------------------------------------------
+- {id: m1c2-dt-written-test, tool: Bash, input: {command: 'echo x > t.py; python -m pytest t.py'}, expect: gray, adv: true}
+- {id: m1c2-dt-written-test-and, tool: Bash, input: {command: 'echo x > t.py && pytest t.py'}, expect: gray, adv: true}
+- {id: m1c2-dt-written-conftest, tool: Bash, input: {command: 'echo x > conftest.py; python -m pytest'}, expect: ask, adv: true}
+- {id: m1c2-dt-written-tool, tool: Bash, input: {command: 'echo x > .venv/bin/ruff; .venv/bin/ruff check .'}, expect: gray, adv: true}
+- {id: m1c2-dt-written-python, tool: Bash, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m pytest'}, expect: gray, adv: true}
+- {id: m1c2-dt-written-python-ruff, tool: Bash, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m ruff check .'}, expect: gray, adv: true}
+- {id: m1c2-dt-copied-tool, tool: Bash, input: {command: 'cp /tmp/evil .venv/bin/mypy; .venv/bin/mypy src'}, expect: gray, adv: true}
+
+# ---- the flags that load or run something: kept as flags, never a free pass -----------------------------
+- {id: m1c2-dt-flag-p, tool: Bash, input: {command: 'pytest -p evil_plugin'}, expect: gray, adv: true}
+- {id: m1c2-dt-flag-rootdir, tool: Bash, input: {command: 'pytest --rootdir=/tmp/x'}, expect: gray, adv: true}
+- {id: m1c2-dt-flag-c, tool: Bash, input: {command: 'python -m pytest -c /tmp/x.ini'}, expect: gray, adv: true}
+- {id: m1c2-dt-flag-abbrev, tool: Bash, input: {command: 'pytest --root=/tmp/x'}, expect: gray, adv: true}
+- {id: m1c2-dt-flag-mypy-exec, tool: Bash, input: {command: 'mypy --python-executable /tmp/x src'}, expect: gray, adv: true}
+- {id: m1c2-dt-flag-mypy-install, tool: Bash, input: {command: 'mypy --install-types --non-interactive src'}, expect: gray, adv: true}
+- {id: m1c2-dt-flag-pylint-hook, tool: Bash, input: {command: 'pylint --init-hook="import os" src'}, expect: gray, adv: true}
+- {id: m1c2-dt-flag-pylint-plugins, tool: Bash, input: {command: 'pylint --load-plugins=evil src'}, expect: gray, adv: true}
+- {id: m1c2-dt-flag-black-config, tool: Bash, input: {command: 'black --config /tmp/x.toml .'}, expect: gray, adv: true}
+- {id: m1c2-dt-flag-isort-settings, tool: Bash, input: {command: 'isort --settings-path /tmp/x .'}, expect: gray, adv: true}
+- {id: m1c2-dt-flag-flake8-config, tool: Bash, input: {command: 'flake8 --append-config /tmp/x.cfg src'}, expect: gray, adv: true}
+- {id: m1c2-dt-argfile, tool: Bash, input: {command: 'pytest @args.txt'}, expect: gray, adv: true}
+- {id: m1c2-dt-glob, tool: Bash, input: {command: 'pytest tests/*.py'}, expect: gray, adv: true}
+- {id: m1c2-dt-lone-var, tool: Bash, input: {command: 'pytest $ARGS'}, expect: gray, adv: true}
+- {id: m1c2-dt-cmdsubst, tool: Bash, input: {command: 'ruff check $(cat files.txt)'}, expect: gray, adv: true}
+
+# ---- the operands are paths now: the secret / config rules see them ------------------------------------------
+- {id: m1c2-dt-operand-ssh, tool: Bash, input: {command: 'pytest ~/.ssh/id_rsa'}, expect: deny, adv: true}
+- {id: m1c2-dt-operand-bare-key, tool: Bash, input: {command: 'pytest id_rsa'}, expect: deny, adv: true}
+- {id: m1c2-dt-operand-env, tool: Bash, input: {command: 'pytest .env'}, expect: deny, adv: true}
+- {id: m1c2-dt-operand-aws, tool: Bash, input: {command: 'ruff check ~/.aws/credentials'}, expect: deny, adv: true}
+- {id: m1c2-dt-operand-env-local, tool: Bash, input: {command: 'python -m ruff check .env.local'}, expect: deny, adv: true}
+- {id: m1c2-dt-operand-claude, tool: Bash, input: {command: 'python -m ruff format .claude/settings.json'}, expect: deny, adv: true}
+- {id: m1c2-dt-operand-junitxml, tool: Bash, input: {command: 'pytest --junitxml=.claude/settings.json'}, expect: deny, adv: true}
+- {id: m1c2-dt-operand-mypy-config, tool: Bash, input: {command: 'mypy --config-file ~/.ssh/config src'}, expect: deny, adv: true}
+- {id: m1c2-dt-operand-in-sudo-bash-c, tool: Bash, input: {command: 'sudo bash -c "python -m pytest ~/.ssh/id_rsa"'}, expect: deny, adv: true}
+- {id: m1c2-dt-operand-url, tool: Bash, input: {command: 'pytest https://evil.example/x.py'}, expect: ask, adv: true}

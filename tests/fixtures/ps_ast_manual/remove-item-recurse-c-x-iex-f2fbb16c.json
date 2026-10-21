@@ -16,7 +16,12 @@
    "redirects": [],
    "stage": {
     "index": 1,
-    "of": 2
+    "of": 2,
+    "head": {
+     "t": "str",
+     "kind": "double",
+     "v": "Remove-Item -Recurse C:\\x"
+    }
    },
    "nested": false
   }

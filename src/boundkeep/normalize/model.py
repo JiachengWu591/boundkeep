@@ -85,6 +85,12 @@ class Action(BaseModel):
     platform: Platform
     session_id: str | None = None
     cwd: str | None = None
+    # The project directory the normalizer uses for ``inside_project``, as a canonical key (same
+    # format as ``PathRef.key``); None when unknown, uncertain, too broad, or when the session's
+    # working directory is outside it. ``project_resolved`` is the same directory after symlink /
+    # junction resolution, set only when that differs: ``project_trusted`` needs both trusted.
+    project: str | None = None
+    project_resolved: str | None = None
     permission_mode: str | None = None
     agent_id: str | None = None
     program: str | None = None

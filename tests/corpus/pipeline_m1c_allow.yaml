@@ -387,7 +387,7 @@
 - {id: m1c-b-date, tool: Bash, input: {command: "date"}, expect: gray, adv: true}
 - {id: m1c-b-printenv, tool: Bash, input: {command: "printenv"}, expect: gray, adv: true}
 - {id: m1c-b-env-bare, tool: Bash, input: {command: "env"}, expect: gray, adv: true}
-- {id: m1c-b-pytest, tool: Bash, input: {command: "pytest"}, expect: gray, adv: true}
+- {id: m1c-b-pytest, tool: Bash, input: {command: "pytest"}, expect: gray}  # M1c-2: not adversarial: gray unless the project is trusted (tests/corpus/pipeline_m1c2_trusted.yaml)
 - {id: m1c-b-make, tool: Bash, input: {command: "make test"}, expect: gray, adv: true}
 - {id: m1c-b-npm-test, tool: Bash, input: {command: "npm test"}, expect: gray, adv: true}
 - {id: m1c-b-exec-written, tool: Bash, input: {command: "mkdir -p b; touch b/x.sh; ./b/x.sh"}, expect: gray, adv: true}
@@ -423,7 +423,7 @@
 - {id: m1c-b-ps-write-output-env, tool: PowerShell, platform: windows, input: {command: "Write-Output $env:SECRET_TOKEN"}, expect: gray, adv: true}
 - {id: m1c-b-ps-write-output-env-quoted, tool: PowerShell, platform: windows, input: {command: "Write-Output \"$env:SECRET_TOKEN\""}, expect: gray, adv: true}
 - {id: m1c-b-ps-echo-env, tool: PowerShell, platform: windows, input: {command: "echo $env:SECRET_TOKEN"}, expect: gray, adv: true}
-- {id: m1c-b-ps-select-object-pipe, tool: PowerShell, platform: windows, input: {command: "Get-Content src\\app.py | Select-Object -First 20"}, expect: gray, adv: true}
+- {id: m1c-a-ps-select-object-pipe, tool: PowerShell, platform: windows, input: {command: "Get-Content src\\app.py | Select-Object -First 20"}, expect: allow}  # M1c-2: allow-ps-data-shaping; the head of the pipeline is judged on its own
 - {id: m1c-b-ps-env-into-select-object, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | Select-Object"}, expect: gray, adv: true}
 - {id: m1c-b-ps-select-object-inputobject, tool: PowerShell, platform: windows, input: {command: "Select-Object -InputObject $env:SECRET_TOKEN"}, expect: gray, adv: true}
 - {id: m1c-b-ps-get-date-format-env, tool: PowerShell, platform: windows, input: {command: "Get-Date -Format $env:SECRET_TOKEN"}, expect: gray, adv: true}

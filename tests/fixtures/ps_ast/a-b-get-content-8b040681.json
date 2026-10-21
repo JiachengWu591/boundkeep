@@ -1,0 +1,42 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    10,
+    21
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Content"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2,
+    "head": {
+     "t": "array",
+     "items": [
+      {
+       "t": "str",
+       "kind": "single",
+       "v": "a"
+      },
+      {
+       "t": "str",
+       "kind": "single",
+       "v": "b"
+      }
+     ]
+    }
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -13,6 +13,8 @@ coercion). Top-level keys:
 * ``taint.sources``: tool names (or ``prefix*`` patterns) whose results taint the session. They
   decide the PostToolUse matcher.
 * ``llm_audit`` (M1: structure only, no backend is implemented): see ``LlmAudit``.
+* ``trusted_projects``: directories whose own code the user lets tools run (see
+  ``Policy.trusted_projects``); the ``project_trusted`` match field refers to them.
 * ``rules``: ``Rule`` entries (see ``policy/matcher.py`` for the exact semantics).
 * ``tests``: ``PolicyTest`` regression cases run by ``boundkeep test``.
 
@@ -50,7 +52,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
-from boundkeep.normalize.paths import key_of_home
+from boundkeep.normalize.paths import NormPath, inside_project, key_of_home, normalize_path
 from boundkeep.policy.glob import GlobError, compile_glob
 from boundkeep.policy.secretscan import find_secret, skip_policy_test_inputs
 
@@ -550,6 +552,174 @@ def _check_globs(values: tuple[str, ...], info: ValidationInfo) -> tuple[str, ..
     return tuple(out)
 
 
+# --- trusted projects -------------------------------------------------------------------------
+
+MAX_TRUSTED_PROJECTS: Final = 64
+MAX_TRUSTED_PROJECT_CHARS: Final = 1024
+_TRUSTED_FORBIDDEN_CHARS: Final = "*?[$%"
+
+# Directories that hold many projects (or the whole system): trusting one means trusting everything
+# below it. Compared on the casefolded key, whatever the flavor (macOS and Windows are
+# case-insensitive, and over-matching is the safe direction here).
+_BROAD_POSIX_EXACT: Final = frozenset(
+    {
+        "/home", "/users", "/root", "/tmp", "/var", "/var/tmp", "/usr", "/usr/local", "/opt",  # noqa: S108
+        "/srv", "/mnt", "/media", "/volumes", "/private", "/private/tmp",
+    }
+)  # fmt: skip
+_BROAD_POSIX_TREES: Final = ("/bin", "/sbin", "/lib", "/etc", "/boot", "/proc", "/sys", "/dev")
+_BROAD_WINDOWS_EXACT: Final = frozenset(
+    {"users", "temp", "tmp", "programdata", "users/public", "users/default", "users/all users"}
+)
+_BROAD_HOME_CHILDREN: Final = ("documents", "desktop", "downloads")
+
+
+def is_anchor_key(key: str) -> bool:
+    """A filesystem root, a drive root or a UNC share root (a path key with nothing below)."""
+    if key == "/" or (len(key) == 3 and key[1:] == ":/"):
+        return True
+    return key.startswith("//") and len([p for p in key[2:].split("/") if p]) <= 2
+
+
+def too_broad(root: NormPath, home: NormPath | None) -> bool:
+    """A root that is a filesystem or drive root, or holds the home directory (or is it).
+
+    Shared by the normalizer (a project root like this is refused: every file under the home
+    directory would be "inside the project") and by the ``trusted_projects`` check below.
+    """
+    if is_anchor_key(root.key):
+        return True
+    return home is not None and inside_project(home, root) is True
+
+
+def _broad_reason(key: str, home_key: str) -> str | None:
+    """Why a trusted-project key is too broad, or None. Keys are canonical (``/`` separators)."""
+    folded = key.casefold()
+    if len(folded) >= 3 and folded[1] == ":" and folded[2] == "/":
+        rest = folded[3:]
+        if rest in _BROAD_WINDOWS_EXACT:
+            return "it holds the profiles or shared folders of the machine"
+        first = rest.split("/", 1)[0]
+        if first == "windows" or first == "program files" or first.startswith("program files "):
+            return "it is a Windows system or program directory"  # incl. "program files (x86)"
+    else:
+        if folded in _BROAD_POSIX_EXACT:
+            return "it holds the home directories or shared folders of the machine"
+        if any(folded == tree or folded.startswith(tree + "/") for tree in _BROAD_POSIX_TREES):
+            return "it is a system directory"
+    home = home_key.casefold().rstrip("/")
+    if any(folded == f"{home}/{child}" for child in _BROAD_HOME_CHILDREN):
+        return "it is one of your Documents, Desktop or Downloads folders (it holds many things)"
+    return None
+
+
+def _is_absolute_entry(raw: str) -> bool:
+    if raw.startswith("/"):
+        return True
+    return (
+        len(raw) >= 3
+        and raw[0].isascii()
+        and raw[0].isalpha()
+        and raw[1] == ":"
+        and raw[2] in "/\\"
+    )
+
+
+def _canonical_trusted_project(raw: str, context: object) -> str:
+    """The canonical key of one ``trusted_projects`` entry. Raises ``ValueError`` (clear text).
+
+    An entry means "this directory and everything under it". It is validated like a path the
+    gate relies on: anything ambiguous (relative, UNC, ``..``, a variable, a wildcard, an NTFS
+    stream, a translated MSYS / WSL form) is refused, and so is a directory that is too broad to
+    be called a project (the home directory and its ancestors, a drive or filesystem root, the
+    folders that hold other people's or many projects' files, system directories).
+    """
+    if not raw.strip():
+        raise ValueError("is empty")
+    if len(raw) > MAX_TRUSTED_PROJECT_CHARS:
+        raise ValueError(f"is longer than {MAX_TRUSTED_PROJECT_CHARS} characters")
+    if not raw.isprintable():
+        raise ValueError("contains a control or other non-printable character")
+    if raw != raw.strip():
+        raise ValueError("has leading or trailing whitespace")
+    bad = next((ch for ch in raw if ch in _TRUSTED_FORBIDDEN_CHARS), None)
+    if bad is not None:
+        raise ValueError(
+            f"contains '{bad}': an entry is a plain directory, not a pattern or a variable "
+            "(it already means 'this directory and everything under it')"
+        )
+    if ".." in re.split(r"[\\/]", raw):
+        raise ValueError("has a '..' segment: write the final path")
+    if raw.startswith(("\\\\", "//")):
+        raise ValueError("is a UNC (network) path: a network share cannot be a trusted project")
+    home_key = _resolve_home_key(context)
+    home_windows = len(home_key) >= 3 and home_key[1] == ":"
+    if raw.startswith("~"):
+        if raw == "~":
+            raise ValueError("is your home directory itself: far too broad for a trusted project")
+        if raw[1] not in "/\\":
+            raise ValueError("only '~/...' (or '~\\...') is supported, not '~user'")
+        rest = raw[2:]
+        if not rest.strip("/\\"):
+            raise ValueError("is your home directory itself: far too broad for a trusted project")
+        if home_windows:
+            rest = rest.replace("\\", "/")
+        elif "\\" in rest:
+            raise ValueError("uses a backslash below '~' on a POSIX home: write it with '/'")
+        text = home_key.rstrip("/") + "/" + rest
+    elif _is_absolute_entry(raw):
+        text = raw
+    else:
+        raise ValueError(
+            "is not an absolute path: write 'C:\\...', 'C:/...', '/...' or '~/...' (a relative "
+            "path has no fixed meaning)"
+        )
+    norm = normalize_path(text, cwd=None, home=None, dialect="tool", literal=True)
+    if (
+        not norm.absolute
+        or norm.uncertain
+        or norm.is_device
+        or norm.reasons
+        or not norm.key
+        or "\x00" in norm.key
+    ):
+        why = f" ({', '.join(norm.reasons)})" if norm.reasons else ""
+        hint = (
+            "; a path whose first directory is one letter reads as a drive here, "
+            "write the drive form (C:\\...) instead"
+            if "msys-translated" in norm.reasons
+            else ""
+        )
+        raise ValueError(f"is not a plain absolute directory path{why}{hint}")
+    if norm.flavor == "posix" and "\\" in norm.key:
+        raise ValueError(
+            "has a backslash in a POSIX path: ambiguous, rename or write it another way"
+        )
+    home_norm = normalize_path(home_key, cwd=None, home=None, dialect="tool", literal=True)
+    if too_broad(norm, home_norm):
+        raise ValueError(
+            "is too broad: it is a drive or filesystem root, your home directory, or a "
+            "directory that contains your home directory"
+        )
+    reason = _broad_reason(norm.key, home_key)
+    if reason is not None:
+        raise ValueError(f"is too broad: {reason}")
+    return norm.key
+
+
+def _check_trusted_projects(values: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
+    """Canonical keys of the entries, duplicates removed (first occurrence wins, order kept)."""
+    if len(values) > MAX_TRUSTED_PROJECTS:
+        raise ValueError(f"at most {MAX_TRUSTED_PROJECTS} trusted projects are allowed")
+    out: dict[str, None] = {}
+    for index, raw in enumerate(values):
+        try:
+            out.setdefault(_canonical_trusted_project(raw, info.context), None)
+        except ValueError as exc:
+            raise _at_error(f"{_shorten(raw)} {exc}", index) from None
+    return tuple(out)
+
+
 _Words = Annotated[
     tuple[str, ...],
     BeforeValidator(_one_or_list_to_tuple),
@@ -736,6 +906,7 @@ class Match(BaseModel):
     path_outside_project: _TrueOnly | None = None
     path_inside_project: _TrueOnly | None = None
     paths_read_only: _TrueOnly | None = None  # every path is read-only (no paths: vacuously true)
+    project_trusted: _TrueOnly | None = None  # the project directory is in trusted_projects
     network: _TrueOnly | None = None
     domain_not_in: _Hosts | None = None
     domain_in: _Hosts | None = None
@@ -870,6 +1041,14 @@ class Policy(BaseModel):
     defaults: Defaults = Field(default_factory=Defaults)
     taint: Taint = Field(default_factory=Taint)
     llm_audit: LlmAudit = Field(default_factory=LlmAudit)
+    # Directories whose own code the user lets tools run without asking (``project_trusted``).
+    # Stored as canonical path keys (``normalize.paths``: ``/`` separators, casefolded for the
+    # Windows flavor, ``~`` expanded); an entry of the other platform's flavor never matches.
+    trusted_projects: Annotated[
+        tuple[str, ...],
+        BeforeValidator(_list_to_tuple),
+        AfterValidator(_check_trusted_projects),
+    ] = ()
     rules: Annotated[tuple[Rule, ...], BeforeValidator(_list_to_tuple)] = ()
     tests: Annotated[tuple[PolicyTest, ...], BeforeValidator(_list_to_tuple)] = ()
 

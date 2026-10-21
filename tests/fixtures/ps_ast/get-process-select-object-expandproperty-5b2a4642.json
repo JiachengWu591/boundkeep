@@ -1,0 +1,56 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    11
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Process"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    14,
+    48
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Select-Object"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "ExpandProperty",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Name"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

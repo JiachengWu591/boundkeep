@@ -1,0 +1,61 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    11
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Process"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    14,
+    37
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Where-Object"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Name"
+    },
+    {
+     "t": "param",
+     "name": "eq",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

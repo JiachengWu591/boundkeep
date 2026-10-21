@@ -304,8 +304,10 @@ def parse_policy_text(text: str, *, home: str | None = None) -> Policy:
     """Parse and validate a policy. Raises only ``PolicyError`` for any input.
 
     ``home`` is the user's home directory (any native spelling); a leading ``~`` in a ``path_glob``
-    is replaced by its key while loading. ``None`` means the current user's home directory
-    (``os.path.expanduser``); a policy with no ``~`` glob never needs it. Errors name the line
+    or a ``trusted_projects`` entry is replaced by its key while loading (``trusted_projects``
+    entries are validated and stored as canonical path keys, once, here). ``None`` means the
+    current user's home directory (``os.path.expanduser``); a policy with neither a ``~`` glob nor
+    ``trusted_projects`` never needs it. Errors name the line
     and the field path (``rules[2].match.path_glob[0]``); a string that looks like a secret is
     reported by location only, never echoed.
     """

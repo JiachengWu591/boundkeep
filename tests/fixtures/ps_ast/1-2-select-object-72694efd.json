@@ -1,0 +1,34 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    9,
+    22
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Select-Object"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2,
+    "head": {
+     "t": "other",
+     "ast": "ArrayExpressionAst",
+     "text": "@(1,2)"
+    }
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "ArrayExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

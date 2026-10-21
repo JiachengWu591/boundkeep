@@ -19,6 +19,7 @@ Design rules (docs/m1-design.md "底线"):
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
@@ -26,7 +27,17 @@ from urllib.parse import unquote
 
 from boundkeep.normalize.model import Access, Redirect, RiskTag, Shell, Word
 
-__all__ = ["CmdInfo", "classify", "derive_risk_tags", "is_code_env", "peel_runner"]
+__all__ = [
+    "DEVTOOLS",
+    "DEVTOOL_RISKY_FLAGS",
+    "CmdInfo",
+    "DevToolForm",
+    "classify",
+    "derive_risk_tags",
+    "devtool_form",
+    "is_code_env",
+    "peel_runner",
+]
 
 _ALL_TAGS: tuple[RiskTag, ...] = (
     "network_egress",
@@ -3592,6 +3603,247 @@ def _h_unknown(a: _Acc, args: Sequence[Word], *, single_dash_long: bool = False)
 
 
 # ---------------------------------------------------------------------------------------------
+# Developer tools (M1c-2): pytest, ruff, mypy, black, isort, flake8, pylint
+# ---------------------------------------------------------------------------------------------
+#
+# CONTRACT (the PowerShell classifier implements the same one; policy rules rely on it):
+#
+# * A command is a dev-tool invocation when the program is one of ``DEVTOOLS`` (bare, ``.exe`` or
+#   path-qualified) or a python launcher (``python`` / ``python3`` / ``python3.N`` / ``py``) run as
+#   ``python [harmless flags] -m TOOL args``. The harmless interpreter flags are ``-I -u -B -E -s -S
+#   -q -O -OO`` (also glued together), ``-X opt`` and ``-W arg``: nothing that could start something
+#   else (``-c``, a script, ``-``, ``-i``, ``-x``, ``--check-hash-based-pycs``, a second ``-m``).
+# * The Action then has ``program == TOOL`` in BOTH forms, no subcommand, ``known=True``, the
+#   ``exec`` tag (the tools run repository code), no gray reason and no wrapper marker. The tool's
+#   own flags are listed as typed; path operands are listed with access ``unknown`` (these tools
+#   may read and write: ``ruff --fix``, ``black``, ``isort``, the pytest cache).
+# * ``bash.py`` does the program rewrite (``python -m pytest -q`` is handed to ``classify`` as
+#   ``pytest -q``) and, for a path-qualified executable, adds the executable's own path as a read
+#   operand (a synthetic ``<`` redirect), so that a rule can demand ``path_inside_project`` for the
+#   interpreter or tool. A path-qualified form is only recognised when no earlier command of the
+#   line may have written that executable; otherwise it stays gray (``program-path-qualified``).
+# * Flags that name a file or code the tool will load or run (``--config``, ``--rootdir``,
+#   ``-p``, ``--python-executable``, ``--init-hook``, ...) stay in ``flags``:
+#   ``DEVTOOL_RISKY_FLAGS`` lists them per tool, for a rule's ``flags_none``. Their path values are
+#   also listed as ``unknown`` paths (so path rules see them) but never resolved or interpreted.
+
+DEVTOOLS: frozenset[str] = _fs("pytest ruff mypy black isort flake8 pylint")
+
+# per tool: options that load or run something the command line names, or write somewhere else
+# (the contract's list first, then the ones found while writing the tables: marked in the docs)
+DEVTOOL_RISKY_FLAGS: dict[str, tuple[str, ...]] = {
+    "pytest": (
+        "-p", "-c", "--rootdir", "--confcutdir", "--basetemp", "--junitxml", "--cov-report",
+        "-o", "--override-ini", "--pdbcls", "--cov-config", "--log-file", "--report-log",
+        "--html", "--tx", "--rsyncdir", "--pastebin",
+    ),
+    "ruff": ("--config", "--output-file", "--cache-dir"),
+    "mypy": (
+        "--config-file", "--python-executable", "--install-types", "--non-interactive",
+        "--cache-dir", "--junit-xml", "--custom-typeshed-dir", "--shadow-file", "--report-dir",
+        "--linecount-report", "--any-exprs-report", "--html-report", "--xml-report",
+        "--txt-report", "--cobertura-xml-report", "--lineprecision-report",
+        "--xslt-html-report", "--xslt-txt-report",
+    ),
+    "black": ("--config", "--stdin-filename"),
+    "isort": (
+        "--settings-path", "--settings-file", "--sp", "--virtual-env", "--conda-env", "--src",
+    ),
+    "flake8": ("--config", "--append-config", "--output-file"),
+    "pylint": (
+        "--rcfile", "--load-plugins", "--init-hook", "--output", "--source-roots",
+        "--extension-pkg-allow-list", "--extension-pkg-whitelist",
+    ),
+}  # fmt: skip
+
+
+@dataclass(frozen=True, slots=True)
+class _DevSpec:
+    opts: Opts
+    subcommands: frozenset[str] = frozenset()  # first positional that is a subcommand, not a path
+    node_ids: bool = False  # pytest: ``FILE::TEST`` names a file
+    arg_file: bool = False  # ``@FILE`` reads more arguments from FILE
+
+
+_DEVSPECS: dict[str, _DevSpec] = {
+    "pytest": _DevSpec(
+        _opts(
+            short="k=x m=x n=x p=x c=u o=x W=x r=x",
+            long="rootdir=u confcutdir=u basetemp=u junitxml=u resultlog=u log-file=u "
+            "report-log=u html=u cov-config=u cov-report=x override-ini=x pdbcls=x tx=x "
+            "rsyncdir=u ignore=u ignore-glob=x deselect=x maxfail=x tb=x durations=x "
+            "durations-min=x capture=x color=x import-mode=x log-level=x log-format=x "
+            "log-date-format=x log-cli-level=x doctest-glob=x pastebin=x dist=x numprocesses=x "
+            "maxprocesses=x timeout=x",
+            flags="pyargs collect-only co lf ff sw doctest-modules cov cov-append",
+        ),
+        node_ids=True,
+        arg_file=True,
+    ),
+    "ruff": _DevSpec(
+        _opts(
+            long="config=u output-file=u cache-dir=u stdin-filename=u select=x extend-select=x "
+            "ignore=x extend-ignore=x fixable=x extend-fixable=x unfixable=x extend-unfixable=x "
+            "exclude=x extend-exclude=x per-file-ignores=x extend-per-file-ignores=x "
+            "line-length=x target-version=x output-format=x",
+            flags="fix fix-only diff watch statistics exit-zero isolated preview unsafe-fixes "
+            "no-cache check",
+        ),
+        subcommands=_fs("check format rule config linter clean server version help analyze"),
+    ),
+    "mypy": _DevSpec(
+        _opts(
+            short="c=x p=x m=x",
+            long="config-file=u python-executable=u cache-dir=u junit-xml=u custom-typeshed-dir=u "
+            "linecount-report=u any-exprs-report=u html-report=u xml-report=u txt-report=u "
+            "cobertura-xml-report=u lineprecision-report=u xslt-html-report=u "
+            "xslt-txt-report=u report-dir=u shadow-file=u+u python-version=x platform=x "
+            "always-true=x always-false=x exclude=x enable-error-code=x disable-error-code=x "
+            "follow-imports=x package=x module=x command=x find-occurrences=x "
+            "enable-incomplete-feature=x",
+            flags="install-types non-interactive strict",
+        ),
+        arg_file=True,
+    ),
+    "black": _DevSpec(
+        _opts(
+            short="c=x l=x t=x W=x",
+            long="config=u code=x line-length=x target-version=x include=x exclude=x "
+            "extend-exclude=x force-exclude=x stdin-filename=u required-version=x workers=x "
+            "python-cell-magics=x line-ranges=x enable-unstable-feature=x",
+            flags="check diff fast safe quiet verbose",
+        )
+    ),
+    "isort": _DevSpec(
+        _opts(
+            short="l=x w=x s=x p=x t=x o=x m=x a=x",
+            long="settings-path=u settings-file=u sp=u src=u virtual-env=u conda-env=u "
+            "profile=x skip=x extend-skip=x skip-glob=x extend-skip-glob=x line-length=x "
+            "line-width=x project=x multi-line=x top=x add-import=x remove-import=x",
+            flags="check-only check diff filter-files atomic float-to-top gitignore",
+        )
+    ),
+    "flake8": _DevSpec(
+        _opts(
+            short="j=x",
+            long="config=u append-config=u output-file=u max-line-length=x max-doc-length=x "
+            "select=x extend-select=x ignore=x extend-ignore=x exclude=x extend-exclude=x "
+            "per-file-ignores=x format=x max-complexity=x jobs=x enable-extensions=x "
+            "filename=x stdin-display-name=x builtins=x indent-size=x color=x",
+            flags="isolated doctests count tee exit-zero statistics show-source",
+        )
+    ),
+    "pylint": _DevSpec(
+        _opts(
+            short="j=x d=x e=x f=x r=x",
+            long="rcfile=u load-plugins=x init-hook=x output=u source-roots=u "
+            "extension-pkg-allow-list=x extension-pkg-whitelist=x jobs=x disable=x enable=x "
+            "max-line-length=x msg-template=x output-format=x py-version=x ignore=x "
+            "ignore-paths=x ignore-patterns=x persistent=x score=x recursive=x fail-under=x "
+            "fail-on=x reports=x evaluation=x generated-members=x good-names=x bad-names=x "
+            "confidence=x",
+            flags="errors-only from-stdin list-msgs generate-rcfile",
+        )
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class DevToolForm:
+    """A dev-tool invocation recognised at the head of an argv (see the contract above).
+
+    ``tool``: the canonical tool name; ``start``: the index in the argv of the tool's own first
+    argument (1 for ``pytest -q``, after ``-m TOOL`` for ``python -m pytest -q``); ``path``: the
+    program word when it was written with a directory part (``./.venv/bin/python``), else None.
+    """
+
+    tool: str
+    start: int
+    path: Word | None
+
+
+_PY_LAUNCHER = re.compile(r"python(?:3(?:\.[0-9]+)?)?|py", re.IGNORECASE)
+_PY_HARMLESS = re.compile(r"-[IuBEsSqO]+")
+
+
+def devtool_form(argv: Sequence[Word]) -> DevToolForm | None:
+    """Recognise ``TOOL args`` or ``python [harmless flags] -m TOOL args`` at the head of ``argv``.
+
+    Only literal words qualify (an expansion or glob in the program word, a flag or the tool name
+    means "the normal word rules apply"). Everything else returns None and is classified exactly as
+    before: ``python script.py``, ``python -c``, ``python -m pip``, ``python -m boundkeep`` ...
+    """
+    if not argv:
+        return None
+    head = argv[0]
+    text = head.text
+    if not text or not _literal(head) or any(c in _DYNAMIC_PROGRAM_CHARS for c in text):
+        return None
+    cut = max(text.rfind("/"), text.rfind("\\"))
+    base = text[cut + 1 :]
+    if base.lower().endswith(".exe") and len(base) > 4:
+        base = base[:-4]
+    path = head if cut >= 0 else None
+    if base in DEVTOOLS:
+        return DevToolForm(base, 1, path)
+    if not _PY_LAUNCHER.fullmatch(base):
+        return None
+    n = len(argv)
+    i = 1
+    while i < n:
+        w = argv[i]
+        t = w.text
+        if not _literal(w):
+            return None
+        if t == "-m":
+            tool = argv[i + 1] if i + 1 < n else None
+            if tool is not None and _literal(tool) and tool.text in DEVTOOLS:
+                return DevToolForm(tool.text, i + 2, path)
+            return None
+        if t in ("-X", "-W"):  # the next word is the option's value, whatever it looks like
+            if i + 1 >= n or not _literal(argv[i + 1]):
+                return None
+            i += 2
+        elif (t[:2] in ("-X", "-W") and len(t) > 2) or _PY_HARMLESS.fullmatch(t):
+            i += 1
+        else:
+            return None
+    return None
+
+
+def _h_devtool(a: _Acc, args: Sequence[Word], name: str) -> None:
+    """``pytest|ruff|mypy|black|isort|flake8|pylint [options] [operands]``: see the contract above.
+
+    Operands are files or directories (or module names): every one is listed as a path with access
+    ``unknown``. Option values that are not paths are consumed so they do not become operands.
+    """
+    spec = _DEVSPECS[name]
+    a.exec_hint = True  # they import and run the repository's code
+    sc = _scan(args, spec.opts)
+    a.flags.extend(sc.flags)
+    _apply_values(a, sc.values)
+    a.note_dynamic(sc)
+    operands = list(sc.pos)
+    if (
+        operands
+        and spec.subcommands
+        and _literal(operands[0])
+        and operands[0].text in spec.subcommands
+    ):
+        operands = operands[1:]
+    for w in operands:
+        t = w.text
+        if spec.arg_file and t.startswith("@") and len(t) > 1:
+            a.path(_sub(w, t[1:]), "read")
+            a.gray.append("devtool-argument-file")  # options hidden in a file: not understood
+        elif t[:5].lower() == "file:" or "://" in t or _scp_like(t):
+            _generic_arg(a, w)
+        else:
+            head = t.partition("::")[0] if spec.node_ids else t
+            a.path(_sub(w, head) if head and head != t else w, "unknown")
+
+
+# ---------------------------------------------------------------------------------------------
 # Redirects, environment, dispatch
 # ---------------------------------------------------------------------------------------------
 
@@ -3657,6 +3909,15 @@ _ENV_CODE = frozenset(
         "less",
         "lesskey",
         "manpager",
+        # M1c-2: the dev tools (pytest, pylint, python -m ...) are allowed in trusted projects;
+        # these variables make them load a named plugin, config (an init hook), site directory
+        # or breakpoint handler, or filter-class module
+        "pytest_addopts",
+        "pytest_plugins",
+        "pylintrc",
+        "pythonbreakpoint",
+        "pythonwarnings",
+        "pythonuserbase",
     }
 )
 
@@ -3735,6 +3996,8 @@ _DispatchFn = Callable[[_Acc, Sequence[Word]], None]
 
 
 def _dispatch(name: str) -> _DispatchFn | None:
+    if name in _DEVSPECS:
+        return lambda a, args: _h_devtool(a, args, name)
     if name in _FILES:
         spec = _FILES[name]
         if name in _EDITORS_WITH_COMMANDS:

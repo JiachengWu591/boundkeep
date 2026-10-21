@@ -18,6 +18,12 @@ The contract is docs/m1-design.md ("模块 D"); the short version:
   only if NONE of the action's flags equals a listed one (no flags: matches).
   ``paths_read_only`` matches only if EVERY path has access exactly ``read`` (``write`` and
   ``unknown`` do not count; no paths: matches, since ``pwd`` or ``echo hi`` touch nothing).
+* ``project_trusted`` matches only if the action's project directory (``Action.project``, and
+  ``Action.project_resolved`` when set: both must qualify) is the same as, or inside, one of the
+  policy's ``trusted_projects`` (canonical keys), compared on whole path segments (``/a/proj2`` is
+  not inside ``/a/proj``), casefolded for Windows-flavor keys and exact for POSIX ones; a key of
+  the other flavor never matches. An unknown, unusable or too-broad project directory is "not
+  trusted" for an allow rule and "matches" for a deny / ask rule (the usual direction).
 * ``network`` is ``Action.network``; ``domain_not_in`` needs ``network`` and (no known domain or
   ANY domain outside the list); ``domain_in`` needs ``network`` and at least one domain and ALL
   of them in the list. Host comparison is exact or a true subdomain (``evilgithub.com`` and
@@ -113,6 +119,62 @@ def _host_in(domain: str, allowed: tuple[str, ...]) -> bool:
     return host is not None and host_matches(host, allowed)
 
 
+def _comparison_key(key: str) -> str | None:
+    """A project or trusted-project key in comparison form, or None when it is unusable.
+
+    Usable: an absolute canonical key (``c:/dir`` or ``/dir``) with at least one segment below the
+    anchor (a drive or filesystem root is never a project), no ``.`` / ``..`` / empty segment and
+    no NUL. Trailing separators are dropped; Windows-flavor keys (a drive) are casefolded.
+    """
+    if not key or "\x00" in key or len(key) > MAX_KEY_LENGTH:
+        return None
+    if len(key) >= 3 and key[0].isascii() and key[0].isalpha() and key[1:3] == ":/":
+        anchor = key[:3].casefold()
+        body = key[3:].casefold()
+        if "\\" in body:
+            return None
+    elif key.startswith("/") and not key.startswith("//"):
+        anchor, body = "/", key[1:]
+    else:
+        return None
+    body = body.rstrip("/")
+    if not body or any(segment in ("", ".", "..") for segment in body.split("/")):
+        return None
+    return anchor + body
+
+
+def _within(key: str, root: str) -> bool:
+    return key == root or key.startswith(root + "/")
+
+
+def _project_trust(action: Action, trusted: tuple[str, ...]) -> bool | None:
+    """True: the project is inside a trusted project; False: it is not; None: cannot tell."""
+    if action.project is None:
+        return None
+    keys: list[str] = []
+    for raw in (action.project, action.project_resolved):
+        if raw is None:
+            continue
+        key = _comparison_key(raw)
+        if key is None:
+            return None
+        keys.append(key)
+    roots = [root for root in map(_comparison_key, trusted) if root is not None]
+    return all(any(_within(key, root) for root in roots) for key in keys)
+
+
+def project_trust_line(action: Action, trusted_projects: tuple[str, ...]) -> str:
+    """The ``explain`` line for ``project_trusted``: why the project is or is not trusted."""
+    state = _project_trust(action, trusted_projects)
+    if state is True:
+        return "project_trusted: project is inside a trusted project"
+    if state is None:
+        return (
+            "project_trusted: project is not trusted (the project directory is unknown or unusable)"
+        )
+    return "project_trusted: project is not trusted"
+
+
 def _glob_detail(match: Match, path: PathRef, rule: Rule) -> str | None:
     """Detail text if this one path matches a glob and is access-compatible; else None."""
     assert match.path_glob is not None
@@ -172,8 +234,13 @@ def _path_details(match: Match, action: Action, rule: Rule) -> tuple[str, ...] |
     return None
 
 
-def _match_detail(rule: Rule, action: Action, platform: Platform) -> tuple[str, ...] | None:
-    """Why ``rule`` matches ``action`` (one line per matched field), or None if it does not."""
+def _match_detail(
+    rule: Rule, action: Action, platform: Platform, trusted: tuple[str, ...] = ()
+) -> tuple[str, ...] | None:
+    """Why ``rule`` matches ``action`` (one line per matched field), or None if it does not.
+
+    ``trusted``: the policy's ``trusted_projects`` (canonical keys) for ``project_trusted``.
+    """
     if rule.platform is not None and platform not in rule.platform:
         return None
     if rule.tool is not None and not _tool_matches(rule.tool, action.tool):
@@ -220,6 +287,15 @@ def _match_detail(rule: Rule, action: Action, platform: Platform) -> tuple[str, 
         if any(p.access != "read" for p in action.paths):
             return None
         details.append("paths_read_only: every path is only read")
+    if match.project_trusted is not None:
+        state = _project_trust(action, trusted)
+        if state is True:
+            details.append(project_trust_line(action, trusted))
+        elif state is None and rule.action != "allow":
+            # Cannot tell whether the project is trusted: a deny / ask rule errs toward matching.
+            details.append("project_trusted: project directory unknown or unusable (a match)")
+        else:
+            return None
     if match.network is not None:
         if not action.network:
             return None
@@ -249,27 +325,42 @@ def _match_detail(rule: Rule, action: Action, platform: Platform) -> tuple[str, 
     return tuple(details)
 
 
-def _safe_detail(rule: Rule, action: Action, platform: Platform) -> tuple[str, ...] | None:
+def _safe_detail(
+    rule: Rule, action: Action, platform: Platform, trusted: tuple[str, ...] = ()
+) -> tuple[str, ...] | None:
     try:
-        return _match_detail(rule, action, platform)
+        return _match_detail(rule, action, platform, trusted)
     except Exception:  # noqa: BLE001 - matching must never raise; fail toward deny/ask
         if rule.action == "allow":
             return None
         return ("internal-error: treated as a match",)
 
 
-def match_rule(rule: Rule, action: Action, *, platform: Platform) -> bool:
+def match_rule(
+    rule: Rule,
+    action: Action,
+    *,
+    platform: Platform,
+    trusted_projects: tuple[str, ...] = (),
+) -> bool:
     """True if ``rule`` matches ``action`` on a resident process running on ``platform``.
 
     Pure and total: it never raises. An unexpected internal error counts as a match for deny and
-    ask rules and as no match for allow rules.
+    ask rules and as no match for allow rules. ``trusted_projects`` is ``Policy.trusted_projects``
+    (only ``project_trusted`` looks at it; none given means no project is trusted).
     """
-    return _safe_detail(rule, action, platform) is not None
+    return _safe_detail(rule, action, platform, trusted_projects) is not None
 
 
-def explain_rule(rule: Rule, action: Action, *, platform: Platform) -> tuple[str, ...] | None:
+def explain_rule(
+    rule: Rule,
+    action: Action,
+    *,
+    platform: Platform,
+    trusted_projects: tuple[str, ...] = (),
+) -> tuple[str, ...] | None:
     """Like ``match_rule`` but returns one line per matched field (None: no match)."""
-    return _safe_detail(rule, action, platform)
+    return _safe_detail(rule, action, platform, trusted_projects)
 
 
 # --------------------------------------------------------------------------- evaluation
@@ -291,7 +382,7 @@ def _evaluate_action(
     if canary is not None:
         hits.append(canary)
     for rule in policy.rules:
-        detail = _safe_detail(rule, action, platform)
+        detail = _safe_detail(rule, action, platform, policy.trusted_projects)
         if detail is not None:
             hits.append(RuleHit(rule.id, rule.action, rule.reason, detail))
     decision: VerdictDecision = "gray"

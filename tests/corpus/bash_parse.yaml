@@ -1058,9 +1058,16 @@
   gray: ['exec:interpreter-c:python3']
 
 - id: python-module-is-not-c
+  # M1c-2: `python -m pytest ...` is the dev tool: the parser hands over `pytest -c conf.ini`
+  # (the interpreter and its -m are dropped); the later -c is pytest's, not Python's inline code
   cmd: 'python -m pytest -c conf.ini'
   commands:
-    - {argv: [python, -m, pytest, -c, conf.ini]}
+    - {argv: [pytest, -c, conf.ini]}
+
+- id: python-module-other-is-not-c
+  cmd: 'python -m pip -c conf.ini'
+  commands:
+    - {argv: [python, -m, pip, -c, conf.ini]}
 
 - id: python-script-is-not-exec
   cmd: 'python script.py -c x'

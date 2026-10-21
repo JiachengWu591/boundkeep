@@ -24,6 +24,7 @@ or ``MAX_ELEMENTS`` elements) degrade to gray.
 
 from __future__ import annotations
 
+import fnmatch
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -66,6 +67,11 @@ class _State:
     dynamic_kinds: frozenset[str] = frozenset()
     shadowed: set[str] = field(default_factory=set)  # names the line redefined (Set-Alias, ...)
     shadow_all: bool = False  # a redefinition with an unknowable name: every alias is suspect
+    # what the earlier commands of the line named (file names, lower-cased): a path-qualified dev
+    # tool whose file name an earlier command mentions may be a file the line just wrote
+    mentions: set[str] = field(default_factory=set)
+    mention_globs: list[str] = field(default_factory=list)
+    mention_dynamic: bool = False
 
     def add_gray(self, reason: str) -> None:
         if len(self.gray) < MAX_REASONS:
@@ -432,6 +438,81 @@ def _peel_runners(
     return program, args, tuple(wrappers)
 
 
+def _file_name(text: str) -> str:
+    """The lower-cased last path segment of a word (the part a file name comparison needs)."""
+    text = text.rstrip("/\\")
+    return text[max(text.rfind("/"), text.rfind("\\")) + 1 :].casefold()
+
+
+def _note_mentions(st: _State, args: list[Word], redirects: list[Redirect]) -> None:
+    """Remember the file names this command names (arguments and redirect targets)."""
+    words = [*args, *(r.target for r in redirects if r.target is not None)]
+    for w in words:
+        if w.expands:
+            st.mention_dynamic = True
+            continue
+        name = _file_name(w.text)
+        if w.glob:
+            st.mention_globs.append(name)
+        st.mentions.add(name)
+
+
+def _exe_may_be_written(st: _State, exe: str) -> bool:
+    """May an earlier command of the line have written the program file ``exe``?
+
+    Lexical and deliberately generous: its file name was named (also through a wildcard), or an
+    earlier command used a value we cannot read. ``event`` tracks written files by path for the
+    arguments of a call; the program file of a path-qualified dev tool is only a path operand now
+    (the program word is the tool), so this keeps ``cmd`` writing an exe and then running it gray.
+    """
+    name = _file_name(exe)
+    return (
+        st.mention_dynamic
+        or name in st.mentions
+        or any(fnmatch.fnmatchcase(name, pattern) for pattern in st.mention_globs)
+    )
+
+
+def _plain_constant(e: object) -> bool:
+    """A plain constant string / number (or an array of them): its value is known."""
+    if not isinstance(e, Mapping):
+        return False
+    kind = e.get("t")
+    if kind in ("str", "num"):
+        return isinstance(e.get("v"), str)
+    items = e.get("items")
+    return (
+        kind == "array"
+        and isinstance(items, list)
+        and bool(items)
+        and all(
+            isinstance(i, Mapping) and i.get("t") in ("str", "num") and isinstance(i.get("v"), str)
+            for i in items
+        )
+    )
+
+
+def _with_pipeline_head(
+    head: object, program: Word, cmdlet: str | None, args: list[Word], st: _State
+) -> list[Word]:
+    """Account for the expression that STARTS the pipeline this stage belongs to.
+
+    ``$env:SECRET | Select-Object``, ``(Get-Content f) | ...``, ``$x | Get-ChildItem``: the value
+    flows into this stage although no command stands for it, so a head that is not a plain
+    constant makes the line gray (``ps-pipeline-head-dynamic``). A constant (or the words of a
+    value we cannot read) piped into a cmdlet that reads files is that cmdlet's READ path operand
+    (``'~\\.ssh\\id_rsa' | Get-Content``): it is appended as an explicit ``-Path``.
+    """
+    words = _convert(head, st, sep=True)
+    constant = _plain_constant(head)
+    if not constant:
+        st.add_gray("ps-pipeline-head-dynamic")
+    if cmdlet is None:
+        return args
+    param = psprograms.pipeline_path_param(program.text, constant=constant)
+    return args if param is None else [*args, Word(param), *words]
+
+
 def _command(c: object, st: _State) -> SimpleCmd | None:
     if not isinstance(c, Mapping):
         st.add_gray("ps-internal-error")
@@ -450,9 +531,20 @@ def _command(c: object, st: _State) -> SimpleCmd | None:
         if fixed is not None:
             args = [Word(fixed), *args]
     wrappers: tuple[str, ...] = ()
+    env: tuple[tuple[str, Word], ...] = ()
+    exe_written = False
     if not dynamic and cmdlet is None:
-        program, args, wrappers = _peel_runners(program, args, st)
+        dev = psprograms.dev_tool_invocation(program.text, args)
+        if dev is None:
+            program, args, wrappers = _peel_runners(program, args, st)
+        else:
+            program, args = Word(dev.tool), list(dev.args)
+            if dev.exe is not None:
+                env = ((psprograms.DEV_EXE_ENV, dev.exe),)
+                exe_written = _exe_may_be_written(st, dev.exe.text)
     redirects = _redirects(c, st)
+    if exe_written:
+        st.add_gray("exec-of-written-file")
     if invoke == ".":
         st.add_exec("ps-dot-source")
     if not dynamic:
@@ -467,6 +559,15 @@ def _command(c: object, st: _State) -> SimpleCmd | None:
     of = stage.get("of") if isinstance(stage, Mapping) else None
     index = stage.get("index") if isinstance(stage, Mapping) else None
     in_pipeline = type(of) is int and of > 1
+    if (
+        in_pipeline
+        and type(index) is int
+        and index > 0
+        and isinstance(stage, Mapping)
+        and "head" in stage
+    ):
+        args = _with_pipeline_head(stage["head"], program, None if dynamic else cmdlet, args, st)
+    _note_mentions(st, args, redirects)
     if (
         in_pipeline
         and type(index) is int
@@ -486,6 +587,7 @@ def _command(c: object, st: _State) -> SimpleCmd | None:
         )
     return SimpleCmd(
         argv=(program, *args),
+        env=env,
         redirects=tuple(redirects),
         wrappers=wrappers,
         origin=origin,

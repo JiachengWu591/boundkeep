@@ -32,30 +32,39 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from typing import NamedTuple
 
 from boundkeep.normalize import programs, psaliases
 from boundkeep.normalize.model import Access, Redirect, RiskTag, Word
 from boundkeep.normalize.programs import (
     _ALL_TAGS,
     CmdInfo,
+    Opts,
     _Acc,
     _copy_into,
     _generic_arg,
     _is_dirlike,
     _join_child,
+    _opts,
     _pathlike,
+    _scan,
     derive_risk_tags,
 )
 
 __all__ = [
+    "DEV_EXE_ENV",
+    "DEV_TOOLS",
     "EXEC_CMDLETS",
     "NESTED_SHELLS",
     "STDIN_INTERPRETERS",
+    "DevInvocation",
     "classify_ps",
+    "dev_tool_invocation",
     "dynamic_name",
     "exec_reasons_of",
     "is_cmdlet_name",
     "param_takes_value",
+    "pipeline_path_param",
     "reads_stdin_as_code",
     "strip_module",
 ]
@@ -1484,6 +1493,315 @@ def _nopath(
     return _finish(ctx, name, redirects, env)
 
 
+# ---------------------------------------------------------------------------------------------
+# Dev tools (M1c-2): pytest ruff mypy black isort flake8 pylint
+# ---------------------------------------------------------------------------------------------
+# ``pscmd`` asks ``dev_tool_invocation`` whether a call is one of these tools (bare, ``.exe``,
+# path-qualified ``.exe``, or ``python [harmless flags] -m TOOL ...``) and, if so, hands the rest of
+# the pipeline the TOOL as program, the tool's own arguments, and (for a path-qualified program) the
+# executable path in the pseudo environment variable ``DEV_EXE_ENV``: ``classify_ps`` lists it as a
+# READ path operand, so a rule can require ``path_inside_project`` for it. The Action of such a call
+# is known, tagged ``exec`` and carries NO gray reason of its own. Flags that point at arbitrary
+# code or configuration, or that run something, stay FLAGS (a rule excludes them with
+# ``flags_none``) and their values are never resolved; file operands are ``unknown`` paths.
+
+DEV_TOOLS = frozenset({"pytest", "ruff", "mypy", "black", "isort", "flake8", "pylint"})
+DEV_EXE_ENV = "boundkeep-exe-path"  # not a valid variable name: no command line can spell it
+_PY_NAME = re.compile(r"(?:py|python|python3|python3\.[0-9]+)\Z")
+_PY_FLAGS = frozenset({"-I", "-u", "-B", "-E", "-s", "-S", "-q", "-O", "-OO"})
+_PY_VALUE_FLAGS = frozenset({"-X", "-W"})
+
+
+class DevInvocation(NamedTuple):
+    """A dev-tool call: the tool, its own arguments and the path of the executable (or None)."""
+
+    tool: str
+    args: tuple[Word, ...]
+    exe: Word | None
+
+
+def _literal(w: Word) -> bool:
+    return not (w.expands or w.glob)
+
+
+def _exe_base(text: str) -> tuple[str, bool] | None:
+    """(lower-case file name without ``.exe``, path-qualified) of a plain program name, else None.
+
+    A bare name may or may not carry ``.exe``; a path-qualified one must (a script or any other
+    extension is not a program we can name). Names with shell syntax are not names.
+    """
+    if not text or text != text.strip() or dynamic_name(text):
+        return None
+    qualified = _has_sep(text)
+    name = text[max(text.rfind("/"), text.rfind("\\")) + 1 :].lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    elif qualified:
+        return None
+    return (name, qualified) if name else None
+
+
+def _python_dash_m(args: Sequence[Word]) -> tuple[str, int] | None:
+    """(tool, index of its first argument) for ``[harmless flags] -m TOOL ...`` else None."""
+    i = 0
+    n = len(args)
+    while i < n:
+        w = args[i]
+        if not _literal(w):
+            return None
+        if w.text == "-m":
+            if i + 1 < n and _literal(args[i + 1]) and args[i + 1].text in DEV_TOOLS:
+                return args[i + 1].text, i + 2
+            return None
+        if w.text in _PY_FLAGS:
+            i += 1
+        elif w.text in _PY_VALUE_FLAGS and i + 1 < n and _literal(args[i + 1]):
+            i += 2
+        else:
+            return None
+    return None
+
+
+def dev_tool_invocation(program: str, args: Sequence[Word]) -> DevInvocation | None:
+    """Is ``program args`` a dev-tool call? (``pytest ...``, ``python -I -m pytest ...``, ...)
+
+    ``python`` / ``python3`` / ``python3.N`` / ``py`` (with or without ``.exe``, bare or
+    path-qualified) must be invoked as ``python [-I -u -B -E -s -S -q -O -OO | -X OPT | -W ARG]
+    -m TOOL args``: any other interpreter option, a script, ``-c``, a second ``-m``, a dynamic word
+    before ``-m TOOL`` makes it an ordinary interpreter call (None). Never raises.
+    """
+    try:
+        base = _exe_base(program)
+        if base is None:
+            return None
+        name, qualified = base
+        exe = Word(program) if qualified else None
+        if name in DEV_TOOLS:
+            return DevInvocation(name, tuple(args), exe)
+        if _PY_NAME.fullmatch(name) is None:
+            return None
+        found = _python_dash_m(args)
+        if found is None:
+            return None
+        tool, start = found
+        return DevInvocation(tool, tuple(args[start:]), exe)
+    except Exception:  # noqa: BLE001 - a recogniser that raises must degrade to "not a dev tool"
+        return None
+
+
+# Option tables (role ``x``: the value is not resolved, ``w`` / ``r``: a written / read path). The
+# values of the options a rule excludes (plugins, configuration, output locations) are never
+# resolved; the unique-prefix resolution of ``_scan`` reports the full spelling of an abbreviation
+# too (``--rootd=x`` also reports ``--rootdir``).
+_DEV_OPTS: dict[str, Opts] = {
+    "pytest": _opts(
+        short="p=x c=x k=x m=x n=x o=x r=x W=x",
+        long="rootdir=x confcutdir=x basetemp=x junitxml=x junit-xml=x junit-prefix=x "
+        "cov-report=x cov-config=x cov-fail-under=x cov-precision=x cov-context=x config-file=x "
+        "override-ini=x maxfail=x tb=x durations=x durations-min=x deselect=x ignore=x "
+        "ignore-glob=x import-mode=x capture=x color=x code-highlight=x show-capture=x lfnf=x "
+        "last-failed-no-failures=x verbosity=x report-chars=x pythonwarnings=x max-warnings=x "
+        "doctest-report=x doctest-glob=x assert=x log-level=x log-format=x log-date-format=x "
+        "log-cli-level=x log-cli-format=x log-cli-date-format=x log-auto-indent=x log-disable=x "
+        "log-file-mode=x log-file-level=x log-file-format=x log-file-date-format=x "
+        "hypothesis-profile=x hypothesis-verbosity=x hypothesis-seed=x numprocesses=x dist=x "
+        "pastebin=x pdbcls=x log-file=w",
+        flags="exitfirst strict-config strict-markers strict fixtures funcargs fixtures-per-test "
+        "pdb trace runxfail lf last-failed ff failed-first nf new-first cache-clear sw stepwise "
+        "sw-skip stepwise-skip sw-reset stepwise-reset verbose quiet no-header no-summary "
+        "no-fold-skipped force-short-summary disable-warnings disable-pytest-warnings showlocals "
+        "no-showlocals xfail-tb full-trace collect-only co pyargs noconftest keep-duplicates "
+        "collect-in-virtualenv continue-on-collection-errors doctest-modules "
+        "doctest-ignore-import-errors doctest-continue-on-failure version help "
+        "disable-plugin-autoload trace-config setup-only setup-show setup-plan "
+        "hypothesis-show-statistics hypothesis-explain cov cov-reset no-cov-on-fail no-cov "
+        "cov-append cov-branch live markers debug cache-show",
+    ),
+    "ruff": _opts(
+        short="o=w",
+        long="output-format=x target-version=x extension=x select=x ignore=x extend-select=x "
+        "per-file-ignores=x extend-per-file-ignores=x fixable=x unfixable=x extend-fixable=x "
+        "exclude=x extend-exclude=x config=x color=x stdin-filename=x line-length=x range=x "
+        "output-file=w cache-dir=w",
+        flags="fix unsafe-fixes show-fixes diff watch fix-only ignore-noqa preview statistics "
+        "add-noqa add-ignore show-files show-settings help respect-gitignore force-exclude "
+        "no-cache exit-zero exit-non-zero-on-fix exit-non-zero-on-format verbose quiet silent "
+        "isolated no-fix no-unsafe-fixes no-show-fixes no-fix-only no-preview "
+        "no-respect-gitignore no-force-exclude version check",
+    ),
+    "mypy": _opts(
+        short="O=x n=x m=x p=x c=x",
+        long="output=x config-file=x python-executable=x follow-imports=x python-version=x "
+        "platform=x always-true=x always-false=x untyped-calls-exclude=x "
+        "deprecated-calls-exclude=x disable-error-code=x enable-error-code=x cache-dir=x "
+        "custom-typing-module=x custom-typeshed-dir=r shadow-file=r+r num-workers=x "
+        "any-exprs-report=w cobertura-xml-report=w html-report=w linecount-report=w "
+        "linecoverage-report=w lineprecision-report=w txt-report=w xml-report=w "
+        "xslt-html-report=w xslt-txt-report=w junit-xml=x junit-format=x find-occurrences=x "
+        "exclude=x module=x package=x command=x enable-incomplete-feature=x",
+        flags="no-native-parser help verbose version warn-unused-configs no-namespace-packages "
+        "ignore-missing-imports follow-untyped-imports no-site-packages no-silence-site-packages "
+        "disallow-any-expr disallow-any-decorated disallow-any-explicit disallow-any-generics "
+        "disallow-any-unimported disallow-subclassing-any disallow-untyped-calls "
+        "disallow-untyped-defs disallow-incomplete-defs check-untyped-defs "
+        "disallow-untyped-decorators implicit-optional no-strict-optional warn-redundant-casts "
+        "warn-unused-ignores no-warn-no-return warn-return-any warn-unreachable "
+        "report-deprecated-as-note allow-untyped-globals allow-redefinition "
+        "allow-redefinition-old allow-redefinition-new no-implicit-reexport strict-equality "
+        "strict-equality-for-none no-strict-bytes extra-checks strict show-error-context "
+        "show-column-numbers show-error-end hide-error-codes show-error-code-links pretty "
+        "no-color-output no-error-summary show-absolute-path no-incremental sqlite-cache "
+        "cache-fine-grained no-fixed-format-cache skip-version-check skip-cache-mtime-checks pdb "
+        "show-traceback tb raise-exceptions warn-incomplete-stub scripts-are-modules "
+        "install-types non-interactive explicit-package-bases exclude-gitignore",
+    ),
+    "black": _opts(
+        short="l=x t=x c=x W=x",
+        long="line-length=x target-version=x config=x workers=x exclude=x extend-exclude=x "
+        "force-exclude=x include=x stdin-filename=x code=x required-version=x "
+        "python-cell-magics=x enable-unstable-feature=x settings-path=x settings-file=x",
+        flags="check diff fast safe skip-source-first-line skip-string-normalization "
+        "skip-magic-trailing-comma preview unstable pyi ipynb verbose quiet color no-color "
+        "version help",
+    ),
+    "isort": _opts(
+        short="p=x l=x w=x s=x m=x o=x b=x f=x a=x r=x",
+        long="settings-path=x settings-file=x settings=x sp=x config=x profile=x line-length=x "
+        "skip=x skip-glob=x extend-skip=x extend-skip-glob=x src=x src-path=x project=x "
+        "multi-line=x python-version=x virtual-env=x conda-env=x filename=x",
+        flags="check-only check diff only-modified float-to-top force-single-line "
+        "combine-as ensure-newline-before-comments verbose quiet version help",
+    ),
+    "flake8": _opts(
+        short="j=x",
+        long="config=x append-config=x enable-extensions=x exclude=x extend-exclude=x filename=x "
+        "format=x ignore=x extend-ignore=x per-file-ignores=x max-line-length=x max-doc-length=x "
+        "indent-size=x select=x extend-select=x output-file=w jobs=x stdin-display-name=x "
+        "builtins=x include-in-doctest=x exclude-from-doctest=x color=x require-plugins=x "
+        "max-complexity=x",
+        flags="verbose quiet version help isolated hang-closing disable-noqa doctests statistics "
+        "count show-source no-show-source tee benchmark bug-report",
+    ),
+    "pylint": _opts(
+        short="j=x d=x e=x f=x r=x s=x",
+        long="rcfile=x load-plugins=x init-hook=x output=w output-format=x msg-template=x "
+        "disable=x enable=x ignore=x ignore-patterns=x ignore-paths=x jobs=x py-version=x "
+        "persistent=x max-line-length=x score=x reports=x fail-under=x fail-on=x source-roots=x "
+        "recursive=x evaluation=x",
+        flags="help version verbose errors-only generate-rcfile generate-toml-config "
+        "from-stdin list-msgs list-groups list-conf-levels full-documentation",
+    ),
+}
+_RUFF_SUBCOMMANDS = frozenset(
+    {
+        "check", "format", "rule", "config", "linter", "clean", "server", "analyze", "version",
+        "help", "generate-shell-completion",
+    }
+)  # fmt: skip
+# aliases of the flags a rule excludes: the canonical spelling is reported too
+_DEV_FLAG_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
+    "isort": {
+        "--sp": ("--settings-path", "--settings-file"),
+        "--settings": ("--settings-path", "--settings-file"),
+    }
+}
+
+
+def _glob_chars(text: str) -> bool:
+    return "*" in text or "?" in text or "[" in text
+
+
+def _node_file(w: Word) -> Word:
+    """``tests/t.py::Class::test[param]`` -> ``tests/t.py`` (a pytest node id names a file)."""
+    if w.expands or "::" not in w.text:
+        return w
+    cut = w.text.split("::", 1)[0]
+    if not cut:
+        return w
+    return Word(cut, w.expands, _glob_chars(cut), w.quoted)
+
+
+def _dev_tool(
+    tool: str,
+    args: Sequence[Word],
+    redirects: Sequence[Redirect],
+    env: Sequence[tuple[str, Word]],
+    exe_paths: Sequence[Word],
+) -> CmdInfo:
+    ctx = _Ctx(tool)
+    a = ctx.a
+    a.known = True
+    a.exec_hint = True  # they run the project's own code (tests, plugins, configuration)
+    for exe in exe_paths:
+        ctx.put(exe, "read")  # the program itself is a file the rules can place
+    sc = _scan(args, _DEV_OPTS[tool])
+    a.flags.extend(sc.flags)
+    aliases = _DEV_FLAG_ALIASES.get(tool, {})
+    for flag in sc.flags:
+        a.flags.extend(aliases.get(flag, ()))
+    a.note_dynamic(sc)
+    for _opt, role, w in sc.values:
+        ctx.value(role, w)
+    pos = list(sc.pos)
+    if (
+        tool == "ruff"
+        and pos
+        and sc.dd_at != 0
+        and _literal(pos[0])
+        and pos[0].text in _RUFF_SUBCOMMANDS
+    ):
+        pos.pop(0)  # `ruff check src`: the verb is not a path
+    for w in pos:
+        ctx.put(_node_file(w) if tool == "pytest" else w, "unknown")
+    kept = [(name, value) for name, value in env if name != DEV_EXE_ENV]
+    return _finish(ctx, tool, redirects, kept)
+
+
+# ---------------------------------------------------------------------------------------------
+# A constant at the head of a pipeline (M1c-2)
+# ---------------------------------------------------------------------------------------------
+# ``'~\.ssh\id_rsa' | Get-Content``: the string arrives as the PATH of the next stage. pscmd hands
+# it over as an explicit path parameter for the cmdlets below (value: the canonical parameter,
+# whether it may only be added for a plain constant). Writers that take their path from the
+# pipeline (``Remove-Item``, ``Move-Item``, ...) are NOT listed: they stay gray
+# (``arguments-from-pipeline``) as before. ``Copy-Item`` is: with an explicit source its gray
+# ``arguments-from-pipeline`` goes away, which is only right when the source is a known constant.
+
+_PIPE_READERS: Mapping[str, tuple[str, bool]] = {
+    "get-content": ("-Path", False),
+    "get-childitem": ("-Path", False),
+    "get-item": ("-Path", False),
+    "get-itemproperty": ("-Path", False),
+    "get-itempropertyvalue": ("-Path", False),
+    "test-path": ("-Path", False),
+    "get-filehash": ("-Path", False),
+    "import-csv": ("-Path", False),
+    "import-clixml": ("-Path", False),
+    "get-acl": ("-Path", False),
+    "resolve-path": ("-Path", False),
+    "convert-path": ("-Path", False),
+    "select-string": ("-Path", False),
+    "get-authenticodesignature": ("-FilePath", False),
+    "format-hex": ("-Path", False),
+    "set-location": ("-Path", False),
+    "push-location": ("-Path", False),
+    "expand-archive": ("-Path", False),
+    "compress-archive": ("-Path", False),
+    "copy-item": ("-Path", True),
+}
+
+
+def pipeline_path_param(cmdlet: str, *, constant: bool) -> str | None:
+    """The canonical parameter that receives a pipeline head as a READ path, else None.
+
+    ``constant``: the head is a plain constant (string / number). Never raises.
+    """
+    entry = _PIPE_READERS.get(cmdlet.lower()) if isinstance(cmdlet, str) else None
+    if entry is None or (entry[1] and not constant):
+        return None
+    return entry[0]
+
+
 _FALLBACK_ALIASES = {"?": "where-object", "%": "foreach-object"}
 
 
@@ -1511,7 +1829,12 @@ def _classify_ps(
     else:
         name = strip_module(program)
         low = _base(name)
-        if not _has_sep(name) and low in _CMDLETS:
+        if low in DEV_TOOLS and (not _has_sep(name) or name.lower().endswith(".exe")):
+            exe_paths = [w for key, w in env if key == DEV_EXE_ENV]
+            if _has_sep(name):
+                exe_paths.append(Word(name))
+            info = _dev_tool(low, words, redirects, env, exe_paths)
+        elif not _has_sep(name) and low in _CMDLETS:
             info = _cmdlet(_CMDLETS[low], words, redirects, env)
         elif not _has_sep(name) and low in _NOPATH:
             info = _nopath(low, words, redirects, env)

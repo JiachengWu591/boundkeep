@@ -1,0 +1,79 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    11
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-Process"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 3
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    14,
+    31
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "?"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "Name"
+    },
+    {
+     "t": "param",
+     "name": "like",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "single",
+     "v": "a*"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 3
+   },
+   "nested": false
+  },
+  {
+   "pos": [
+    34,
+    48
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Measure-Object"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 2,
+    "of": 3
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

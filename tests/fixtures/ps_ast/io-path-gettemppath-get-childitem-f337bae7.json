@@ -1,0 +1,35 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    27,
+    40
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Get-ChildItem"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2,
+    "head": {
+     "t": "other",
+     "ast": "InvokeMemberExpressionAst",
+     "text": "[IO.Path]::GetTempPath()"
+    }
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [
+  "InvokeMemberExpressionAst",
+  "TypeExpressionAst"
+ ],
+ "mode": "FullLanguage"
+}

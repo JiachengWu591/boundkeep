@@ -61,21 +61,30 @@ def test_the_corpus_is_big_and_has_enough_adversarial_entries() -> None:
 def test_corpus_entry(entry: dict[str, Any], platform: str) -> None:
     if entry["tool"] == "PowerShell" and sys.platform != "win32":
         pytest.skip("PowerShell entries need the real parser helper (Windows only)")
+    expect = entry["expect"]
+    if entry.get("trusted"):
+        # tests/corpus/pipeline_m1c2_trusted.yaml: `expect` is the verdict when the fake project is
+        # in trusted_projects (tests/unit/test_m1c2_trusted_policy.py runs that); here the policy is
+        # the one as shipped, no trusted project, which is `expect_untrusted` (and `expect` itself
+        # for the entries that run with an EMPTY trusted list)
+        expect = entry.get("expect_untrusted", expect if entry.get("trust") == "empty" else None)
+        if expect is None:
+            pytest.skip("an entry for the trusted policy only")
     policy = _policy(platform)
     result = policycli._run_one(
         policy,
         platform,
         entry["tool"],
         entry["input"],
-        None,
-        None,  # type: ignore[arg-type]
+        entry.get("cwd"),
+        entry.get("project_dir"),  # type: ignore[arg-type]
     )
     got = result.verdict.decision
-    assert got == entry["expect"], (
-        f"{entry['id']} on {platform}: expected {entry['expect']}, got {got}; "
+    assert got == expect, (
+        f"{entry['id']} on {platform}: expected {expect}, got {got}; "
         f"reasons: {result.verdict.reasons}"
     )
     if entry.get("adv"):
-        assert _STRICTNESS[got] >= _STRICTNESS[entry["expect"]]
+        assert _STRICTNESS[got] >= _STRICTNESS[expect]
         if entry["tool"] in ("Bash", "PowerShell"):
             assert got != "allow"

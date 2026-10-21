@@ -58,6 +58,8 @@ EXPECTED_ALLOW_IDS = {
     "allow-ps-no-path-commands",
     "allow-mkdir-touch-inside-project",
     "allow-project-file-writes",
+    "allow-ps-data-shaping",
+    "allow-devtools-trusted-project",
 }
 NEW_ASK_IDS = {"ask-secret-file-write", "ask-credential-file-write", "ask-git-internals-write"}
 GUARD_IDS = {"ask-shell-read-outside-project", "ask-git-read-outside-project"}
@@ -179,6 +181,7 @@ def test_strict_allow_rules_are_a_subset_of_defaults() -> None:
 
 
 _TWIN_EXCEPTIONS = {
+    "ask-devtools-path-outside-project": "ask-read-outside-project",
     "net-allowlist": "net-always-ask",
     # strict reads outside the project with one rule for every program
     "ask-shell-read-outside-project": "ask-read-outside-project",
@@ -285,7 +288,7 @@ def _programs(rule: dict[str, Any]) -> set[str]:
     return {p.casefold() for p in rule["match"].get("program", ())}
 
 
-NO_PATH_RULES = ("allow-no-path-commands", "allow-ps-no-path-commands")
+NO_PATH_RULES = ("allow-no-path-commands", "allow-ps-no-path-commands", "allow-ps-data-shaping")
 
 
 def test_every_allow_rule_without_path_inside_project_is_covered_by_a_guard_rule() -> None:
@@ -296,6 +299,10 @@ def test_every_allow_rule_without_path_inside_project_is_covered_by_a_guard_rule
         if "program" not in rule["match"] or rule["match"].get("path_inside_project"):
             continue
         if rule["match"]["program"] == ["git"] or rule_id in NO_PATH_RULES:
+            continue
+        if (
+            rule_id == "allow-devtools-trusted-project"
+        ):  # its guard is ask-devtools-path-outside-project
             continue
         assert _programs(rule) <= guard_programs, (rule_id, _programs(rule) - guard_programs)
     # the guard is not wider than the rules it guards
@@ -319,6 +326,7 @@ def test_the_no_path_rules_only_name_programs_the_normalizer_knows_take_no_path(
     rules = _allow_rules("default")
     assert _programs(rules["allow-no-path-commands"]) <= bash_no_path
     assert _programs(rules["allow-ps-no-path-commands"]) <= ps_no_path
+    assert _programs(rules["allow-ps-data-shaping"]) <= ps_no_path
 
 
 @pytest.mark.parametrize("guard_id", sorted(GUARD_IDS))
@@ -463,8 +471,10 @@ def test_no_allow_rule_covers_version_probes_or_interpreters() -> None:
     # echo / Write-Output / Select-Object print what the shell expands into them (secrets)
     for printing in ("echo", "printf", "printenv", "env", "write-output", "write-host"):
         assert printing not in programs
-    assert "select-object" not in programs
-    for exec_program in ("python", "python3", "node", "npm", "cargo", "go", "make", "pytest", "uv"):
+    # Select-Object is back, but only with -InputObject excluded and behind the pipeline-head check
+    assert "-InputObject" in _flags(_allow_rules("default")["allow-ps-data-shaping"], "flags_none")
+    # pytest, ruff, ... are in allow-devtools-trusted-project only, which needs a trusted project
+    for exec_program in ("python", "python3", "node", "npm", "cargo", "go", "make", "uv"):
         assert exec_program not in programs
     for write_program in ("cp", "mv", "rm", "sed", "tee", "chmod", "ln", "new-item", "set-content"):
         assert write_program not in programs
@@ -1257,7 +1267,6 @@ SECRET_PRINTING_PS = [
     "echo $env:SECRET_TOKEN",
     "$env:SECRET_TOKEN | Select-Object",
     "Select-Object -InputObject $env:SECRET_TOKEN",
-    "Get-Content src\\app.py | Select-Object -First 20",
     "Get-Date -Format $env:SECRET_TOKEN",
     "Get-Date -UFormat %Y",
     "Get-Date -Date $env:SECRET_TOKEN",
@@ -1498,6 +1507,10 @@ def _embedded_reviews() -> tuple[tuple[int, Any, Any], ...]:
 
 @pytest.mark.parametrize("rule_id", sorted(EXPECTED_ALLOW_IDS - {"read-inside-project"}))
 def test_every_allow_rule_has_embedded_positive_and_negative_tests(rule_id: str) -> None:
+    if rule_id == "allow-devtools-trusted-project":
+        # the shipped policy trusts no project, so no embedded test can reach this rule; its
+        # positives and negatives are tests/corpus/pipeline_m1c2_trusted.yaml
+        pytest.skip("needs a trusted project: see test_m1c2_trusted_policy.py")
     rule = _rule("default", rule_id)
     if rule.tool == ("PowerShell",) and not _ps_ready():
         pytest.skip("PowerShell embedded tests need the real parser helper (Windows only)")

@@ -44,6 +44,7 @@ $script:MaxOutChars = 4000000       # < 4 MiB: the reply is ASCII, so characters
 $script:MaxNodes = 200000
 $script:MaxCommands = 5000
 $script:MaxString = 32768
+$script:MaxHeadString = 4096        # a pipeline head string is repeated per later stage
 $script:MaxOtherText = 2000
 $script:MaxDepth = 12
 $script:MaxErrors = 50
@@ -164,6 +165,13 @@ function Add-Elem($e, [int]$depth) {
     }
 }
 
+# The head of a pipeline is repeated in every later stage: a long string is cut short (it becomes
+# an "other" element, which the consumer treats as dynamic).
+function Add-Head($e) {
+    if (($e -is [StringConstantExpressionAst]) -and ($e.Value.Length -gt $script:MaxHeadString)) { Add-TooLong $e; return }
+    Add-Elem $e 1
+}
+
 function Add-Name($e) {
     $sb = $script:Sb
     if ($e -is [StringConstantExpressionAst]) {
@@ -226,7 +234,19 @@ function Add-Command($c, $root) {
     $p = $c.Parent
     $nested = 'true'
     if ($p -is [PipelineAst]) {
-        [void]$sb.Append('{"index":' + $p.PipelineElements.IndexOf($c) + ',"of":' + $p.PipelineElements.Count + '}')
+        $idx = $p.PipelineElements.IndexOf($c)
+        [void]$sb.Append('{"index":' + $idx + ',"of":' + $p.PipelineElements.Count)
+        # An expression that STARTS the pipeline ('x' | Get-Content, $env:A | Select-Object,
+        # (Get-Content f) | ...) is no CommandAst, but its value flows into every later stage: it
+        # goes into the stage object of the later stages as "head" (an ordinary element).
+        if ($idx -gt 0) {
+            $headNode = $p.PipelineElements[0]
+            if ($headNode -is [CommandExpressionAst]) {
+                [void]$sb.Append(',"head":')
+                Add-Head $headNode.Expression
+            }
+        }
+        [void]$sb.Append('}')
         # Top level = the pipeline sits directly in the end block of the root script block
         # (PowerShell 7 may wrap it in a pipeline chain first).
         $cont = $p.Parent

@@ -1,0 +1,207 @@
+# End-to-end corpus for milestone M1c-2 on the PowerShell side: command -> verdict under the DEFAULT
+# policy, through the real parser helper (Windows hosts only, like pipeline_ps.yaml). Three topics:
+#   * pipeline heads: an expression that STARTS a pipeline ('x' | Get-Content, $env:A | Select-Object,
+#     (Get-Content f) | ...) used to be dropped from the digest. A constant string piped into a reader
+#     is now that reader's READ path (so secrets are denied); any other head makes the line gray
+#     (ps-pipeline-head-dynamic).
+#   * dev tools (pytest ruff mypy black isort flake8 pylint, also `python -m TOOL`): the Action is
+#     the TOOL, exec-tagged, without a gray reason of its own. The default policy has no allow rule
+#     for them (Tier 3), so the benign forms are `gray` ("no rule matched") TODAY; the lead's M1c-2
+#     allow rules turn the benign entries marked `# becomes allow` into allow.
+#   * data-shaping cmdlets (Select-Object Out-String ... Where-Object Name -eq x).
+# `adv: true` entries must never come out milder than `expect` and are never allow.
+
+- {id: m1c2-ps-head-ssh-single, tool: PowerShell, platform: windows, input: {command: "'~\\.ssh\\id_rsa' | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-ssh-double, tool: PowerShell, platform: windows, input: {command: "\"~\\.ssh\\id_rsa\" | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-ssh-abs, tool: PowerShell, platform: windows, input: {command: "'C:\\Users\\testuser\\.ssh\\id_rsa' | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-ssh-gc, tool: PowerShell, platform: windows, input: {command: "'~\\.ssh\\id_rsa' | gc"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-ssh-cat, tool: PowerShell, platform: windows, input: {command: "'~\\.ssh\\id_rsa' | cat"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-ssh-type, tool: PowerShell, platform: windows, input: {command: "'~\\.ssh\\id_rsa' | type"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-ssh-home-var, tool: PowerShell, platform: windows, input: {command: "\"$HOME\\.ssh\\id_rsa\" | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-ssh-userprofile, tool: PowerShell, platform: windows, input: {command: "\"$env:USERPROFILE\\.ssh\\id_rsa\" | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env, tool: PowerShell, platform: windows, input: {command: "'.env' | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-dotslash, tool: PowerShell, platform: windows, input: {command: "'.\\.env' | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-local, tool: PowerShell, platform: windows, input: {command: "'.env.local' | gc"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-select-string, tool: PowerShell, platform: windows, input: {command: "'.env' | Select-String KEY"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-get-item, tool: PowerShell, platform: windows, input: {command: "'.env' | Get-Item"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-test-path, tool: PowerShell, platform: windows, input: {command: "'.env' | Test-Path"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-resolve-path, tool: PowerShell, platform: windows, input: {command: "'.env' | Resolve-Path"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-get-filehash, tool: PowerShell, platform: windows, input: {command: "'.env' | Get-FileHash"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-get-acl, tool: PowerShell, platform: windows, input: {command: "'.env' | Get-Acl"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-format-hex, tool: PowerShell, platform: windows, input: {command: "'.env' | Format-Hex"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-import-csv, tool: PowerShell, platform: windows, input: {command: "'.env' | Import-Csv"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-import-clixml, tool: PowerShell, platform: windows, input: {command: "'.env' | Import-Clixml"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-get-itemproperty, tool: PowerShell, platform: windows, input: {command: "'.env' | Get-ItemProperty"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-env-copy-item, tool: PowerShell, platform: windows, input: {command: "'.env' | Copy-Item -Destination out.txt"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-aws-get-childitem, tool: PowerShell, platform: windows, input: {command: "'~\\.aws\\credentials' | Get-ChildItem"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-array, tool: PowerShell, platform: windows, input: {command: "'a','.env' | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-here-string-single, tool: PowerShell, platform: windows, input: {command: "@'\n.env\n'@ | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-here-string-double, tool: PowerShell, platform: windows, input: {command: "@\"\n.env\n\"@ | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-through-select-object, tool: PowerShell, platform: windows, input: {command: "'.env' | Select-Object | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-through-scriptblock-where, tool: PowerShell, platform: windows, input: {command: "'.env' | Where-Object { $_ } | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-then-more-stages, tool: PowerShell, platform: windows, input: {command: "'~\\.ssh\\id_rsa' | Get-Content | Select-Object -First 1"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-after-semicolon, tool: PowerShell, platform: windows, input: {command: "Get-Date; '~\\.ssh\\id_rsa' | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-after-cd, tool: PowerShell, platform: windows, input: {command: "cd ~\\.ssh; 'id_rsa' | Get-Content"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-dynamic-cwd-then-secret, tool: PowerShell, platform: windows, input: {command: "$d | Set-Location; Get-Content id_rsa"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-dynamic-cd-then-env, tool: PowerShell, platform: windows, input: {command: "$d | cd; gc .env"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-var-into-remove-recurse, tool: PowerShell, platform: windows, input: {command: "$x | Remove-Item -Recurse"}, expect: deny, adv: true}
+- {id: m1c2-ps-head-writer-ssh-remove, tool: PowerShell, platform: windows, input: {command: "'~\\.ssh\\id_rsa' | Remove-Item"}, expect: ask, adv: true}
+- {id: m1c2-ps-head-writer-ssh-move, tool: PowerShell, platform: windows, input: {command: "'~\\.ssh\\id_rsa' | Move-Item -Destination x"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-content-into-ssh-file, tool: PowerShell, platform: windows, input: {command: "'a' | Set-Content ~\\.ssh\\authorized_keys"}, expect: ask, adv: true}
+- {id: m1c2-ps-head-content-into-ssh-out-file, tool: PowerShell, platform: windows, input: {command: "'a' | Out-File ~\\.ssh\\x"}, expect: ask, adv: true}
+- {id: m1c2-ps-head-inside-project-read, tool: PowerShell, platform: windows, input: {command: "'README.md' | Get-Content"}, expect: allow}  # the in-project read is the same call as `Get-Content README.md`
+- {id: m1c2-ps-head-inside-project-list, tool: PowerShell, platform: windows, input: {command: "'x' | Get-ChildItem"}, expect: allow}  # same as `Get-ChildItem x`
+- {id: m1c2-ps-head-dynamic-00, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-01, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | Out-String"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-02, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | ConvertTo-Json"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-03, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | Sort-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-04, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | Format-List"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-05, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | Measure-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-06, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | Out-Null"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-07, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | Out-File notes.txt"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-08, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | Set-Content notes.txt"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-09, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | iex"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-10, tool: PowerShell, platform: windows, input: {command: "$x | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-11, tool: PowerShell, platform: windows, input: {command: "$x | Out-String"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-12, tool: PowerShell, platform: windows, input: {command: "$x | Get-ChildItem"}, expect: ask, adv: true}
+- {id: m1c2-ps-head-dynamic-13, tool: PowerShell, platform: windows, input: {command: "$x | Copy-Item -Destination y"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-14, tool: PowerShell, platform: windows, input: {command: "$null | Out-String"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-15, tool: PowerShell, platform: windows, input: {command: "$true | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-16, tool: PowerShell, platform: windows, input: {command: "(Get-Content f) | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-17, tool: PowerShell, platform: windows, input: {command: "(Get-Content f) | Get-Content"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-18, tool: PowerShell, platform: windows, input: {command: "(Get-Content f) | Out-File notes.txt"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-19, tool: PowerShell, platform: windows, input: {command: "$(Get-Content f) | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-20, tool: PowerShell, platform: windows, input: {command: "@(1,2) | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-21, tool: PowerShell, platform: windows, input: {command: "@(1) | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-22, tool: PowerShell, platform: windows, input: {command: "$x.Name | Get-Content"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-23, tool: PowerShell, platform: windows, input: {command: "$x.ToString() | Get-Content"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-24, tool: PowerShell, platform: windows, input: {command: "[IO.Path]::GetTempPath() | Get-ChildItem"}, expect: ask, adv: true}
+- {id: m1c2-ps-head-dynamic-25, tool: PowerShell, platform: windows, input: {command: "[string]$x | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-26, tool: PowerShell, platform: windows, input: {command: "$x[0] | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-27, tool: PowerShell, platform: windows, input: {command: "('a' + 'b') | Get-Content"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-28, tool: PowerShell, platform: windows, input: {command: "$x | Select-Object | Get-Content"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-29, tool: PowerShell, platform: windows, input: {command: "@\"\n$env:SECRET_TOKEN\n\"@ | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-30, tool: PowerShell, platform: windows, input: {command: "\"$env:SECRET_TOKEN\" | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-31, tool: PowerShell, platform: windows, input: {command: "\"x $(Get-Date)\" | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-32, tool: PowerShell, platform: windows, input: {command: "Get-Process | ForEach-Object { $env:T | Select-Object }"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-33, tool: PowerShell, platform: windows, input: {command: "if ($x) { $y | Select-Object }"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-34, tool: PowerShell, platform: windows, input: {command: "$x = $env:T | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-35, tool: PowerShell, platform: windows, input: {command: "Write-Output $( $y | Select-Object )"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-36, tool: PowerShell, platform: windows, input: {command: "function f { $x | Select-Object }; f"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-dynamic-37, tool: PowerShell, platform: windows, input: {command: "Get-Content a; $x | Select-Object"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-constant-select-object, tool: PowerShell, platform: windows, input: {command: "'x' | Select-Object"}, expect: allow}  # M1c-2 step 2: allow-ps-data-shaping; a constant head prints only itself
+- {id: m1c2-ps-head-constant-out-string, tool: PowerShell, platform: windows, input: {command: "'x' | Out-String"}, expect: allow}  # M1c-2 step 2: allow-ps-data-shaping
+- {id: m1c2-ps-head-constant-copy-item, tool: PowerShell, platform: windows, input: {command: "'x' | Copy-Item -Destination y"}, expect: gray}
+- {id: m1c2-ps-head-constant-iex, tool: PowerShell, platform: windows, input: {command: "'whoami' | iex"}, expect: gray, adv: true}
+- {id: m1c2-ps-head-command-first-stage, tool: PowerShell, platform: windows, input: {command: "Get-Process | Select-Object -First 3"}, expect: gray}
+- {id: m1c2-ps-dev-benign-00, tool: PowerShell, platform: windows, input: {command: "pytest -q"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-01, tool: PowerShell, platform: windows, input: {command: "pytest -q tests"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-02, tool: PowerShell, platform: windows, input: {command: "pytest tests\\test_a.py::test_x[1]"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-03, tool: PowerShell, platform: windows, input: {command: "PYTEST -q"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-04, tool: PowerShell, platform: windows, input: {command: "pytest.exe -q"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-05, tool: PowerShell, platform: windows, input: {command: "& pytest -q"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-06, tool: PowerShell, platform: windows, input: {command: "ruff check ."}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-07, tool: PowerShell, platform: windows, input: {command: "ruff format --check src"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-08, tool: PowerShell, platform: windows, input: {command: "mypy src"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-09, tool: PowerShell, platform: windows, input: {command: "black --check ."}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-10, tool: PowerShell, platform: windows, input: {command: "isort --check-only ."}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-11, tool: PowerShell, platform: windows, input: {command: "flake8 src"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-12, tool: PowerShell, platform: windows, input: {command: "pylint src"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-13, tool: PowerShell, platform: windows, input: {command: "python -m pytest -q tests"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-14, tool: PowerShell, platform: windows, input: {command: "python3 -m pytest"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-15, tool: PowerShell, platform: windows, input: {command: "py -m pytest"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-16, tool: PowerShell, platform: windows, input: {command: "python -I -m pytest"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-17, tool: PowerShell, platform: windows, input: {command: "python -X utf8 -W error -m mypy src"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-18, tool: PowerShell, platform: windows, input: {command: "python.exe -m ruff check ."}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-19, tool: PowerShell, platform: windows, input: {command: "python -m black ."}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-21, tool: PowerShell, platform: windows, input: {command: ".\\.venv\\Scripts\\ruff.exe check ."}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-22, tool: PowerShell, platform: windows, input: {command: "& '.\\.venv\\Scripts\\python.exe' -m pytest -q"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-benign-23, tool: PowerShell, platform: windows, input: {command: ".\\.venv\\Scripts\\pytest.exe -q"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-redirect-2-1, tool: PowerShell, platform: windows, input: {command: "python -m pytest 2>&1"}, expect: gray}  # becomes allow with the M1c-2 rules
+- {id: m1c2-ps-dev-uv-run-pytest, tool: PowerShell, platform: windows, input: {command: "uv run pytest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-uvx-ruff, tool: PowerShell, platform: windows, input: {command: "uvx ruff check ."}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-pip-network, tool: PowerShell, platform: windows, input: {command: "python -m pip install x"}, expect: ask, adv: true}
+- {id: m1c2-ps-dev-venv, tool: PowerShell, platform: windows, input: {command: "python -m venv .venv"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-python-c, tool: PowerShell, platform: windows, input: {command: "python -c \"print(1)\""}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-python-script, tool: PowerShell, platform: windows, input: {command: "python script.py"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-python-i-m, tool: PowerShell, platform: windows, input: {command: "python -i -m pytest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-python-m-case, tool: PowerShell, platform: windows, input: {command: "python -m PyTest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-python-mpytest, tool: PowerShell, platform: windows, input: {command: "python -mpytest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-python-second-m, tool: PowerShell, platform: windows, input: {command: "python -m foo -m pytest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-python-b-flag, tool: PowerShell, platform: windows, input: {command: "python -b -m pytest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-python-m-dynamic, tool: PowerShell, platform: windows, input: {command: "python -m $tool"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-dynamic-name, tool: PowerShell, platform: windows, input: {command: "& $tool -q"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-splat, tool: PowerShell, platform: windows, input: {command: "pytest @args"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-dynamic-operand, tool: PowerShell, platform: windows, input: {command: "pytest $x"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-script-ext-path, tool: PowerShell, platform: windows, input: {command: ".\\.venv\\Scripts\\ruff check ."}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-cmd-shim, tool: PowerShell, platform: windows, input: {command: ".\\.venv\\Scripts\\ruff.cmd check ."}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-exe-bak, tool: PowerShell, platform: windows, input: {command: ".\\.venv\\Scripts\\pytest.exe.bak"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-env-assignment, tool: PowerShell, platform: windows, input: {command: "$env:PYTHONSTARTUP='x'; pytest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-alias-shadow, tool: PowerShell, platform: windows, input: {command: "Set-Alias pytest Remove-Item; pytest x"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-dot-source, tool: PowerShell, platform: windows, input: {command: ". pytest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-exec-written-test, tool: PowerShell, platform: windows, input: {command: "Set-Content t.py 'x'; python -m pytest t.py"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-exec-written-test-direct, tool: PowerShell, platform: windows, input: {command: "Set-Content t.py 'x'; pytest t.py"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-exec-written-conftest, tool: PowerShell, platform: windows, input: {command: "Set-Content conftest.py 'x'; python -m pytest"}, expect: ask, adv: true}
+- {id: m1c2-ps-dev-exec-written-exe, tool: PowerShell, platform: windows, input: {command: "Set-Content .venv\\Scripts\\ruff.exe 'x'; .\\.venv\\Scripts\\ruff.exe check ."}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-exec-written-exe-after-cd, tool: PowerShell, platform: windows, input: {command: "cd .venv\\Scripts; Set-Content ruff.exe 'x'; .\\ruff.exe check .."}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-exec-written-python-exe, tool: PowerShell, platform: windows, input: {command: "Copy-Item C:\\Temp\\python.exe .venv\\Scripts\\; .\\.venv\\Scripts\\python.exe -m pytest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-exe-outside-project, tool: PowerShell, platform: windows, input: {command: "C:\\Python312\\python.exe -m pytest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-exe-outside-project-call, tool: PowerShell, platform: windows, input: {command: "& 'C:\\Python312\\python.exe' -m pytest"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-exe-other-drive, tool: PowerShell, platform: windows, input: {command: "E:\\proj\\.venv\\Scripts\\ruff.exe check ."}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-flag-plugin, tool: PowerShell, platform: windows, input: {command: "pytest -p evil"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-flag-plugin-python, tool: PowerShell, platform: windows, input: {command: "python -m pytest -p evil"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-flag-config, tool: PowerShell, platform: windows, input: {command: "pytest -c evil.ini"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-flag-rootdir, tool: PowerShell, platform: windows, input: {command: "pytest --rootdir=~\\.ssh"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-flag-rootdir-python, tool: PowerShell, platform: windows, input: {command: "python -m pytest --rootdir=C:\\x"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-flag-mypy-executable, tool: PowerShell, platform: windows, input: {command: "mypy --python-executable C:\\x\\evil.exe src"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-flag-mypy-install, tool: PowerShell, platform: windows, input: {command: "mypy --install-types src"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-flag-pylint-plugin, tool: PowerShell, platform: windows, input: {command: "pylint --load-plugins evil src"}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-flag-ruff-config, tool: PowerShell, platform: windows, input: {command: "ruff check --config evil.toml ."}, expect: gray, adv: true}
+- {id: m1c2-ps-dev-secret-operand, tool: PowerShell, platform: windows, input: {command: "pytest .env"}, expect: deny, adv: true}
+- {id: m1c2-ps-dev-secret-operand-python, tool: PowerShell, platform: windows, input: {command: "python -m pytest .env"}, expect: deny, adv: true}
+- {id: m1c2-ps-dev-secret-ruff, tool: PowerShell, platform: windows, input: {command: "ruff check ~\\.ssh"}, expect: deny, adv: true}
+- {id: m1c2-ps-dev-secret-black, tool: PowerShell, platform: windows, input: {command: "black ~\\.ssh\\id_rsa"}, expect: deny, adv: true}
+- {id: m1c2-ps-dev-secret-aws, tool: PowerShell, platform: windows, input: {command: "python -m ruff check ~\\.aws"}, expect: deny, adv: true}
+- {id: m1c2-ps-dev-secret-venv-python, tool: PowerShell, platform: windows, input: {command: ".\\.venv\\Scripts\\python.exe -m pytest ~\\.ssh"}, expect: deny, adv: true}
+- {id: m1c2-ps-dev-redirect-claude-settings, tool: PowerShell, platform: windows, input: {command: "pytest > .claude\\settings.json"}, expect: deny, adv: true}
+- {id: m1c2-ps-dev-redirect-ssh, tool: PowerShell, platform: windows, input: {command: "pytest > ~\\.ssh\\authorized_keys"}, expect: ask, adv: true}
+- {id: m1c2-ps-dev-outside-operand, tool: PowerShell, platform: windows, input: {command: "mypy C:\\Windows"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-clean-00, tool: PowerShell, platform: windows, input: {command: "Get-Process | Select-Object -ExpandProperty Name"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-01, tool: PowerShell, platform: windows, input: {command: "Get-Process | select -First 3"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-02, tool: PowerShell, platform: windows, input: {command: "Get-Process | Out-String"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-03, tool: PowerShell, platform: windows, input: {command: "Get-Process | Out-Null"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-04, tool: PowerShell, platform: windows, input: {command: "Get-Process | Format-Table Name"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-05, tool: PowerShell, platform: windows, input: {command: "Get-Process | ft Name"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-06, tool: PowerShell, platform: windows, input: {command: "Get-Process | Format-List"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-07, tool: PowerShell, platform: windows, input: {command: "Get-Process | fl"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-08, tool: PowerShell, platform: windows, input: {command: "Get-Process | Sort-Object CPU"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-09, tool: PowerShell, platform: windows, input: {command: "Get-Process | sort CPU -Descending"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-10, tool: PowerShell, platform: windows, input: {command: "Get-Process | Group-Object Name"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-11, tool: PowerShell, platform: windows, input: {command: "Get-Process | group Name"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-12, tool: PowerShell, platform: windows, input: {command: "Get-Process | Measure-Object"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-13, tool: PowerShell, platform: windows, input: {command: "Get-Process | measure -Property CPU -Sum"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-14, tool: PowerShell, platform: windows, input: {command: "Get-Process | ConvertTo-Json"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-15, tool: PowerShell, platform: windows, input: {command: "Get-Process | ConvertTo-Json -Depth 3"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-16, tool: PowerShell, platform: windows, input: {command: "Get-Process | Where-Object Name -eq x"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-17, tool: PowerShell, platform: windows, input: {command: "Get-Process | where Name -like 'a*'"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-18, tool: PowerShell, platform: windows, input: {command: "Get-Process | ? Name -eq x"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-19, tool: PowerShell, platform: windows, input: {command: "Get-Process | ForEach-Object Name"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-20, tool: PowerShell, platform: windows, input: {command: "Get-Process | % Name"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-21, tool: PowerShell, platform: windows, input: {command: "Get-Process | Select-Object -First 3 | Format-Table Name"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-clean-22, tool: PowerShell, platform: windows, input: {command: "Get-Process | SELECT-OBJECT -First 1"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
+- {id: m1c2-ps-shape-scriptblock-00, tool: PowerShell, platform: windows, input: {command: "Get-Process | Where-Object { $_.CPU -gt 1 }"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-scriptblock-01, tool: PowerShell, platform: windows, input: {command: "Get-Process | ? { $_ }"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-scriptblock-02, tool: PowerShell, platform: windows, input: {command: "Get-Process | where { $_.Name -eq 'x' }"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-scriptblock-03, tool: PowerShell, platform: windows, input: {command: "Get-Process | Where-Object -FilterScript { $true }"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-scriptblock-04, tool: PowerShell, platform: windows, input: {command: "Get-Process | Select-Object @{n='x';e={$_.Name}}"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-scriptblock-05, tool: PowerShell, platform: windows, input: {command: "Get-Process | Select-Object -Property @{Name='n';Expression={$_.Name}}"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-scriptblock-06, tool: PowerShell, platform: windows, input: {command: "Get-Process | Sort-Object { $_.CPU }"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-scriptblock-07, tool: PowerShell, platform: windows, input: {command: "Get-Process | Group-Object { $_.Name }"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-scriptblock-08, tool: PowerShell, platform: windows, input: {command: "Get-Process | ForEach-Object { $_.Name }"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-scriptblock-09, tool: PowerShell, platform: windows, input: {command: "Get-Process | % { $_ }"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-where-secret-value, tool: PowerShell, platform: windows, input: {command: "Get-Process | Where-Object Name -eq ~\\.ssh\\id_rsa"}, expect: gray}
+- {id: m1c2-ps-shape-out-file-ssh, tool: PowerShell, platform: windows, input: {command: "Get-Process | Out-File ~\\.ssh\\x"}, expect: ask, adv: true}
+- {id: m1c2-ps-shape-tee-settings, tool: PowerShell, platform: windows, input: {command: "Get-Process | Tee-Object .claude\\settings.json"}, expect: deny, adv: true}
+- {id: m1c2-ps-shape-export-ssh, tool: PowerShell, platform: windows, input: {command: "Get-Process | Export-Csv ~\\.ssh\\authorized_keys"}, expect: ask, adv: true}
+- {id: m1c2-ps-shape-iex-after-shaping, tool: PowerShell, platform: windows, input: {command: "Get-Process | Select-Object | iex"}, expect: gray, adv: true}
+- {id: m1c2-ps-shape-backtick-continuation, tool: PowerShell, platform: windows, input: {command: "Get-Process | Select-Object `\n  -First 1"}, expect: gray}

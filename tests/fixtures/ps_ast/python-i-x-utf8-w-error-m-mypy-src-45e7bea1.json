@@ -1,0 +1,68 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    38
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "python"
+   },
+   "elements": [
+    {
+     "t": "param",
+     "name": "I",
+     "arg": null
+    },
+    {
+     "t": "param",
+     "name": "X",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "utf8"
+    },
+    {
+     "t": "param",
+     "name": "W",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "error"
+    },
+    {
+     "t": "param",
+     "name": "m",
+     "arg": null
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "mypy"
+    },
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "src"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

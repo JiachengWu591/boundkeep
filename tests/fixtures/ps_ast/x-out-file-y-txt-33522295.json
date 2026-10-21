@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    6,
+    20
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Out-File"
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "bare",
+     "v": "y.txt"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2,
+    "head": {
+     "t": "str",
+     "kind": "single",
+     "v": "x"
+    }
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

@@ -1,0 +1,32 @@
+{
+ "ok": true,
+ "parse_errors": [],
+ "commands": [
+  {
+   "pos": [
+    8,
+    18
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "bare",
+    "v": "Out-String"
+   },
+   "elements": [],
+   "redirects": [],
+   "stage": {
+    "index": 1,
+    "of": 2,
+    "head": {
+     "t": "var",
+     "name": "null",
+     "splat": false
+    }
+   },
+   "nested": false
+  }
+ ],
+ "compound": [],
+ "dynamic": [],
+ "mode": "FullLanguage"
+}

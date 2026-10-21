@@ -92,7 +92,7 @@ from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from boundkeep.normalize.model import BashResult, Redirect, SimpleCmd, Word
-from boundkeep.normalize.programs import is_code_env, peel_runner
+from boundkeep.normalize.programs import DEVTOOLS, devtool_form, is_code_env, peel_runner
 
 __all__ = ["parse_bash"]
 
@@ -461,6 +461,30 @@ def _canon(text: str) -> str:
     if low.endswith(".exe"):
         return low[:-4]
     return base
+
+
+# M1c-2: programs that cannot create or change a file unless a redirect says so, and the redirect
+# operators that cannot either. A path-qualified dev tool is only recognised as one when every
+# earlier command of the line is of this kind: a command that may have WRITTEN the executable
+# (``echo x > .venv/bin/ruff; .venv/bin/ruff check``) leaves the line as it always was (gray,
+# ``program-path-qualified``). The dev tools themselves run the repository's code anyway.
+_NO_WRITE_PROGRAMS = frozenset(
+    {
+        "cd", "pushd", "popd", "pwd", "ls", "dir", "echo", "printf", "true", "false", ":", "test",
+        "[", "which", "type", "cat", "head", "tail", "wc", "export", "unset", *DEVTOOLS,
+    }
+)  # fmt: skip
+_READ_REDIRECTS = frozenset({"<", "<<", "<<-", "<<<", "<&"})
+
+
+def _may_write(cmd: SimpleCmd) -> bool:
+    for r in cmd.redirects:
+        if r.op in _READ_REDIRECTS:
+            continue
+        digit = r.target is not None and (r.target.text == "-" or r.target.text.isdigit())
+        if not (r.op == ">&" and digit):
+            return True
+    return bool(cmd.argv) and _canon(cmd.argv[0].text) not in _NO_WRITE_PROGRAMS
 
 
 class _Stripped(NamedTuple):
@@ -1853,6 +1877,20 @@ class _Parser:
             cur = res.rest
         else:
             self._gray("wrapper-layers")
+        # M1c-2 dev tools: ``python -m pytest -q`` and ``./.venv/bin/pytest -q`` are the program
+        # ``pytest`` with the arguments ``-q``. The interpreter flags and ``-m`` are dropped, and a
+        # path-qualified executable keeps its path as an extra READ redirect (a synthetic one,
+        # ``fd="program"``) so the path rules see it without a gray "program-path-qualified".
+        cmd_redirs = tuple(redirs)
+        form = devtool_form([w.word for w in cur])
+        if (
+            form is not None
+            and (form.path is not None or form.start != 1)
+            and (form.path is None or not any(_may_write(c) for c in self.sh.commands))
+        ):
+            cur = [_W(Word(form.tool), False, form.tool), *cur[form.start :]]
+            if form.path is not None:
+                cmd_redirs += (Redirect("<", form.path, "program"),)
         p = cur[0]
         pname: str | None = None
         if p.dyn or p.word.glob:
@@ -1863,7 +1901,7 @@ class _Parser:
             SimpleCmd(
                 tuple(w.word for w in cur),
                 tuple(envl),
-                tuple(redirs),
+                cmd_redirs,
                 tuple(wrappers),
                 org,
                 afs,
