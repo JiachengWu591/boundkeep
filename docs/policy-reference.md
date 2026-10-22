@@ -41,7 +41,7 @@ rules:
 
 **路径规则不要写 `tool:`。** Read、Grep、Glob、Bash、PowerShell 等都会带路径，只列其中几个的读规则等于给其余的留了绕行的路（`Grep` 读 `.env` 曾因此被放行）。内置的所有读类 deny / ask 规则都没有 `tool:`，也没有 `platform:`：Windows 凭据、浏览器、持久化类的 glob 在纯 Linux 上本来就匹配不到任何东西，而 WSL 里看到的 `/mnt/c/Users/x/.ssh/config`（键 `c:/users/x/...`）要靠不依赖主目录的 `**/users/*/...` 写法拦住。
 
-**`tool` 的校验。** 每个名字必须是已知工具（`Bash`、`PowerShell`、`Read`、`Write`、`Edit`、`MultiEdit`、`NotebookEdit`、`Glob`、`Grep`、`WebFetch`、`WebSearch`、`ToolSearch`、`TodoWrite`、`Agent`，以及 `Task`、`BashOutput`、`KillShell`、`ExitPlanMode`、`AskUserQuestion`、`Skill`、`SlashCommand`），或以 `mcp__` 开头，或是这些的前缀星号写法（`mcp__github__*`）。其余一律是加载错误并给出 "did you mean"（`Bsh` → `Bash`；大小写敏感）。只列了不碰路径的工具（`WebSearch`、`Agent` 等）却写了路径条件（`path_glob`、`access`、`path_outside_project`、`path_inside_project`）也是错误：规则永远不会命中。
+**`tool` 的校验。** 每个名字必须是已知工具（`Bash`、`PowerShell`、`Read`、`Write`、`Edit`、`MultiEdit`、`NotebookEdit`、`Glob`、`Grep`、`WebFetch`、`WebSearch`、`ToolSearch`、`TodoWrite`、`Agent`，以及 `Task`、`BashOutput`、`KillShell`、`ExitPlanMode`、`AskUserQuestion`、`Skill`、`SlashCommand`），或以 `mcp__` 开头，或是这些的前缀星号写法（`mcp__github__*`）。其余一律是加载错误并给出 "did you mean"（`Bsh` → `Bash`；大小写敏感）。只列了不碰路径的工具（`WebSearch`、`Agent` 等）却写了路径条件（`path_glob`、`access`、`path_outside_project`、`path_inside_project`、`path_in_scratchpad`）也是错误：规则永远不会命中。
 
 ### match 字段
 
@@ -55,6 +55,7 @@ rules:
 | `flags_none` | 标志列表（条目规则、校验、大小写折叠与 `flags_any` 完全相同，同样不能为空、每项以 `-` 开头），动作的标志里**一个都没有**才匹配；没有任何标志的动作匹配。与其他字段 AND。给日常只读命令的 allow 规则排除危险开关用（例如 `program: find` 配 `flags_none: ["-delete", "-exec"]`）。不能和 `flags_any` 列同一个条目（永远不会命中，加载报错） |
 | `path_outside_project: true` | 任一路径**不能确定**在项目内（`inside_project` 为 false 或 null）即匹配；没有路径时不匹配。与 `path_glob` / `access` 同用时见下面的"同一条路径" |
 | `path_inside_project: true` | 至少一个路径，且**每个**路径都**确定**在项目内。这是 allow 侧用的，不确定不算。不能和 `path_outside_project` 同写（永远不会命中，加载报错） |
+| `path_in_scratchpad: true` | 至少一个路径，且**每个**路径（每个形式：键入的字面形式与符号链接 / junction / 短名字解析后的形式）都**确定**在**当前会话的 scratchpad** 里或就是它（Claude Code 给 agent 放中间文件的目录 `<临时目录>/claude/<项目 slug>/<会话 id>/scratchpad`，见"Session scratchpad"一节）。由归一化层写在 `PathRef.in_scratchpad`，任何不确定都是 false。这是 allow 侧用的，与 `path_inside_project` 一样：不知道就不匹配。与其他字段 AND；**单独写它不满足** allow 规则必须点名工具或程序的加载检查；只列不碰路径的工具时加载报错。`boundkeep explain` 的明细行是 `path_in_scratchpad: every path is inside the session scratchpad` |
 | `paths_read_only: true` | **每个**路径的访问方式都恰好是 `read`。`write` 与 `unknown`（可能写）都不算只读；没有任何路径的动作匹配（`pwd`、`echo hi`，空真）。与其他字段 AND，不要求路径在项目内（要的话再写 `path_inside_project`）。这是 allow 侧用的；写在 deny / ask 规则里时，访问方式为 `unknown` 的路径不会让它命中 |
 | `project_trusted: true` | 该动作的**项目目录**等于或位于顶层 `trusted_projects` 的某一项之内才匹配（见"受信任的项目"）。项目目录未知、不确定、过宽（文件系统根、盘符根、主目录或其祖先），或会话的工作目录不在项目内时，不匹配。**单独写它不满足** allow 规则必须点名工具或程序的加载检查。失败方向：allow 规则里任何问题都算不匹配；deny / ask 规则里"无法判断项目是否受信任"算匹配（已知不受信任才不匹配） |
 | `network: true` | 该动作联网 |
@@ -123,7 +124,7 @@ tests:
   - { tool: Bash, cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "rm -rf build" }, expect: gray }
 ```
 
-`expect` 取 `deny | ask | allow | gray`（`gray` = 规则层不应定案，用来防止规则过宽）。`boundkeep test [--policy 文件] [--platform windows|posix|all]` 用**假机器**（Windows：`C:\Users\testuser`，POSIX：`/home/testuser`）跑真实的管线，所以 Windows 路径的用例在任何平台都能通过；默认两个平台都跑。
+`expect` 取 `deny | ask | allow | gray`（`gray` = 规则层不应定案，用来防止规则过宽）。可选字段 `platform`、`cwd`、`project_dir`，以及 `session_id`（事件的会话 id，默认是一个不是 UUID 的固定值，所以默认没有任何路径在"会话 scratchpad"里；测 `path_in_scratchpad` 要写一个 UUID）。`boundkeep test [--policy 文件] [--platform windows|posix|all]` 用**假机器**（Windows：`C:\Users\testuser`，POSIX：`/home/testuser`）跑真实的管线，所以 Windows 路径的用例在任何平台都能通过；默认两个平台都跑。
 
 `boundkeep explain <事件.json|->` 用**本机的真实环境**（你的主目录与环境变量、事件里的 `cwd` 与 `project_dir`）解释一个事件：每个动作的程序、路径（规范键与 `inside_project`）、域名、风险标签、命中的规则、最终判决和 hook 实际会输出什么。
 
@@ -187,6 +188,7 @@ tests:
 | `ask-python-tool-config-write`（strict：`deny-python-tool-config-write`） | ask（strict：deny） | 写（`access: write`，没有 `tool:` 限制）会让开发工具加载代码的配置文件：`mypy.ini`、`.mypy.ini`（`plugins =`）、`pylintrc`、`.pylintrc`、`pylintrc.toml`、`.pylintrc.toml`（`init-hook`、`load-plugins`）、`.flake8`（本地插件）、`.coveragerc`（插件）、`pytest.ini`、`.pytest.ini`（`addopts = -p ...`、rootdir）。和 `ask-project-autorun-files` 同一个理由，单独成一条规则是因为一条规则的 `path_glob` 最多 64 项（那一条已满）。信任项目里的 dev-tool allow 规则绝不能在 agent 刚写的配置后面运行 |
 | `allow-ps-data-shaping` | allow | **仅 default。** PowerShell 只整理管道内容、不带路径的 cmdlet：`Select-Object`、`Where-Object`、`Sort-Object`、`Group-Object`、`Format-Table`、`Format-List`、`Out-String`、`Out-Null`、`ConvertTo-Json`、`ConvertFrom-Json`（`paths_read_only`；排除 `-InputObject`：`Select-Object -InputObject $env:SECRET_TOKEN` 会原样打印它拿到的值）。上游命令单独判定，整行全是 allow 才 allow；以变量或表达式开头的管道整行灰色（`ps-pipeline-head-dynamic`），所以 `$env:SECRET_TOKEN \| Select-Object` 不是 allow。脚本块参数本来就灰色。**不在其中**：`ForEach-Object`（脚本块）、`Out-File`、`Set-Content`、`Tee-Object`、`Export-*`（写文件）、`Invoke-*`（运行代码）、`Write-Output` |
 | `allow-cd-family` | allow | **仅 default（M1c-3）。** 改工作目录的命令：Bash `cd`、`pushd`，PowerShell `Set-Location`、`Push-Location`（别名 `sl`、`chdir`、`cd`、`pushd` 在归一化层已是这两个规范名；`-Path`、`-LiteralPath`、`-PassThru`、`-StackName` 照常）。`cd` 只改目录：不读、不写、不运行、不联网，之前每一行 `Set-Location 'proj'; <任何命令>` 即使后面全是 allow 也整行灰色（一行要所有命令都是 allow 才 allow）。匹配条件：`paths_read_only` + **`path_inside_project`（目标必须已知在项目内；有意不放宽）**。原因：`git status`、`pwd` 这类**不带路径**的命令的工作目录来自前面的 cd，没有任何路径可供规则判断，若放行出项目的 cd，`cd ../other && git status` 会是 allow，而 `git -C ../other status` 是 ask（`ask-git-read-outside-project`），形成绕过。所以出项目、指向变量或命令替换或通配符（`cd $x`、`cd "$(pwd)"`、`cd *`）、`cd -`、光秃秃的 `cd`（回到主目录）、`popd` / `Pop-Location` / 不带参数的 `pushd`（没有路径可证明）都保持原状（灰色）。**cd 目标由谁判定：** 受保护的位置（`~/.ssh`、`~/.aws`、`.env`、凭据库）由已有的 deny / ask 规则通过 cd 携带的目录路径（read）判定，如 `cd ~/.ssh` 是 deny（`no-secret-read`），allow 规则不会削弱它们（最严者胜）；项目内的 `.git`、`.claude`、`certs` 目录本身没有规则保护（只有里面的文件有），cd 进去是 allow，但**之后的命令按新目录判定**：`cd .git && cat config` 是 deny（`no-credential-store-read`），`cd .. && cat .env` 是 deny（`no-secret-read`），`cd src && cat ../.env` 是 deny。`cd` 可能失败，所以旧目录与新目录同时保持可能：`cd src && cat ../README.md`（从项目根看 `..` 在项目外）灰色。带 `sudo` / `env` / `nohup` / `time` 的 cd、重定向（`cd src > out.txt`）、灰色动作（通配符、`HKLM:`、`-Credential`、未解析的参数）、`if` / `foreach` 等复合语句里的 cd 都不匹配。残余：cd 到项目外或未知目录、后面又是带路径未知的命令，整行仍是灰色或 ask；Bash 的 `cd a b`（两个参数）在 zsh 里是"替换"，归一化层只把第一个词当目标（建议以后在归一化层把多参数的 cd 标灰，见 `docs/reports/M1c3.md`）。strict 没有这条规则 |
+| `allow-session-scratchpad` | allow | **仅 default（M1c-4）。** `tool: [Write, Edit, MultiEdit, NotebookEdit, Read, Grep, Glob]` + `path_in_scratchpad: true`：Claude Code 每个会话的 scratchpad（`<临时目录>/claude/<slug>/<会话 id>/scratchpad`）里的读写与搜索不再问，目录本身也算（`Grep` / `Glob` 的 `path`）。只认**当前会话**、**本机守护进程的临时目录**之下、`session_id` 是 UUID 的情形；其他会话、`scratchpad2`、临时目录及其上级、`..` 走出去的、含变量或通配符的、会话 id 缺失或畸形的、符号链接 / junction 指向别处的，一律不匹配。**Shell 工具（Bash、PowerShell）不在工具清单里**：`python <scratchpad>\x.py`、`cat <scratchpad>\x.py` 与以前完全一样（灰色）。所有 deny / ask 规则仍然最严者胜：`Write <scratchpad>\.env` 是 ask（`ask-secret-file-write`），`Read <scratchpad>\.env`、`Read <scratchpad>\id_rsa` 是 deny，`Write <scratchpad>\Makefile` / `package.json` / `conftest.py` 是 ask；`Grep` 目录时仍会扫描子树里的受保护名字。strict 没有这条规则。见"Session scratchpad"一节 |
 | `ask-devtools-path-outside-project` | ask | **仅 default。** 下一行 allow 规则的搭档（模式同 `ask-shell-read-outside-project`）：dev 工具命令可以没有任何路径，所以 allow 规则不能要求 `path_inside_project`；这条让任何不能证明在项目内的路径（操作数、`-c` 文件、路径限定的 python 或工具本身的可执行文件）都 ask。程序清单与 allow 规则相同（有测试检查）。带 `project_trusted: true`，所以不信任的项目里它不出声（那里本来就没有 allow，命令是灰色）；无法判断项目时算命中。没有 `path_glob` / `access`，原因同上面的守卫规则 |
 | `allow-devtools-trusted-project` | allow | **仅 default，且只在 `trusted_projects` 里的项目生效**（默认列表为空：没有项目被信任，这些命令仍是灰色 ask）。`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`（也包括 `python -m 工具`、`.exe`、项目自己虚拟环境里按路径写的形式）。`flags_none` 就是 `programs.DEVTOOL_RISKY_FLAGS`（各工具的清单合并，有测试保证两边相等）。见"Dev-tools preset"一节 |
 
@@ -250,6 +252,37 @@ default 加了上面这批 allow 规则，strict 没有（它的唯一 allow 规
 
 **settings 文件的读与写保护不对称（有意如此，X1 复审 U-2）**：写保护覆盖所有 settings 文件（`**/.claude/settings*.json`、`~/.claude/settings*.json`，`protect-guard-config`）；读保护只覆盖真正放凭据的文件：`~/.claude/settings.json`、`~/.claude/settings.local.json`（含 WSL 看到的 `/mnt/c/Users/x/.claude/...`）和项目的 `.claude/settings.local.json`，外加 `.mcp.json`。**项目级 `.claude/settings.json` 可以读**：它通常提交进仓库，`init` 默认就把 hook 条目写在这里；如果把它读保护，每个受保护项目里没有 glob 的 `Grep`、`Glob **/*`、`grep -rn TODO .`、`ls -R` 都会被 deny（目录遍历命中受保护文件名）。代价：项目级 settings.json 里若有人写了令牌（`env` 块），agent 能读到；令牌应放 `settings.local.json` 或用户级文件。
 `PowerShell` 工具的命令由辅助进程（Windows PowerShell 5.1 或 pwsh，只调用解析器、不执行任何用户文本）解析，结果和 Bash 一样是 Action 列表，命令类规则与路径规则同样适用。仍然灰色的构造见下一节。
+
+### Session scratchpad（`path_in_scratchpad`，M1c-4，仅 default）
+
+Claude Code 给每个会话一个只属于它的 scratchpad，agent 用它放中间文件：`<临时目录>/claude/<项目 slug>/<会话 id>/scratchpad`（Windows 例：`C:\Users\<用户>\AppData\Local\Temp\claude\e--bk-lab-m1b-proj\19513824-5f23-476c-bd11-f2f49fb38457\scratchpad`；slug 是项目路径把分隔符换成 `-`），hook 事件的 `session_id` 就是那个会话目录的名字。用户 60 天的真实会话里，首个路径在临时目录的 `Write` 544 次、`Read` 127 次、`Edit` 61 次都不是 allow，它们都是这个目录。
+
+**精确地说什么算"在 scratchpad 里"**（归一化层，`PathRef.in_scratchpad`）：
+
+- 事件的 `session_id` 必须存在且是 UUID 形状（`8-4-4-4-12` 个十六进制数字，大小写不限）；缺失、空白、带分隔符、`..`、`*`、过长或任何别的形状一律不标记。
+- 根是 `<守护进程的临时目录>/claude/<恰好一段>/<session_id>/scratchpad`。临时目录取自归一化层拿到的环境（不看真实机器、不用 `tempfile`，所以 `boundkeep test` 的假机器是确定的）：Windows 取 `TEMP`，否则 `TMP`，否则 `%LOCALAPPDATA%\Temp`，否则 `<主目录>\AppData\Local\Temp`（变量名不分大小写；同名不同大小写又取值不同算"有疑问"：不标记）；POSIX 取 `TMPDIR`，否则 `/tmp`。临时目录必须是本机盘符路径或 POSIX 绝对路径（UNC、设备路径、相对路径、含变量的都不行）。假机器：Windows `C:\Users\testuser\AppData\Local\Temp`，POSIX `/tmp`。
+- `claude`、`scratchpad` 两段在 Windows 风格里不分大小写，POSIX 里区分；会话 id 一段始终不分大小写。
+- scratchpad 目录本身也标记（`Grep` / `Glob` 的 `path`）。它的上级（临时目录、`claude`、slug、会话目录）、别的会话、`scratchpad2`、`scratchpad.x`、`..` 折叠后走出去的路径、不确定的路径（变量、通配符、花括号、8.3 短名字、尾随点与空格的歧义写法、设备名）都**不**标记；`\\?\` 前缀与 NTFS 数据流先由已有的路径层规范化。
+- **键入的形式与链接解析后的形式必须都在里面。** 一个路径可能产生两个 `PathRef`（字面的和 `resolve_on_disk` 之后的），匹配器要求每个都标记。scratchpad 里指向别处的符号链接或 junction，scratchpad 目录（或它的上级目录）自己是指向别处的链接，都让解析后的形式落到解析后的临时目录之外：不标记。临时目录本身是链接时，按解析后的临时目录比较。相对路径按事件的 `cwd` 走已有的相对路径逻辑。
+
+**规则文本：**
+
+```yaml
+  - id: allow-session-scratchpad
+    tool: [Write, Edit, MultiEdit, NotebookEdit, Read, Grep, Glob]
+    match:
+      path_in_scratchpad: true
+    action: allow
+```
+
+**不覆盖 shell。** Bash 与 PowerShell 不在工具清单里，所以没有任何 shell 程序因为 scratchpad 而得到 allow；`python <scratchpad>\x.py` 仍是灰色的 exec。最严者胜：每条已有的 deny / ask 规则（密钥、凭据、`.git` 内部、自动运行文件、守护进程配置……）对 scratchpad 里的同名文件照样生效。测试 `tests/unit/test_m1c4_scratchpad.py` 用 m1c3-done 的策略做差分：所有反例的判决与该策略逐条相同，只有正例从灰色变成 allow。策略的 `tests:` 条目可以写 `session_id`（一个 UUID），scratchpad 的用例每个平台各写一份（路径含平台的临时目录）。
+
+**残余风险：**
+
+- agent 可以在 scratchpad 里写一个脚本（不再问），而**运行它仍由 exec 规则判定**（灰色，会问）。这一步没有放宽；但写与运行是两次调用，规则看不到它们的关系（与 `allow-project-file-writes` 同类，M3 的污染标记才是收紧办法）。
+- 守护进程的临时目录可能与 Claude Code 的不同（例如守护进程以不同环境变量启动）。那样路径不在守护进程的临时目录下，规则**不适用**，一切保持原状，不会更宽松。路径本身用 8.3 短名字拼写的也不被认出（只有守护进程自己的 `TEMP` 写成短名字时，才会解析成长名字再比较）。
+- 恶意项目无法用名字伪造：根必须在守护进程的临时目录之下，项目里叫 `claude\x\<id>\scratchpad` 的目录只是普通的项目内路径（有它自己的规则）。同一用户的其他进程能在临时目录下建同名目录，这在"同一用户的进程"信任边界之内。
+- 检查与实际使用之间有时间差：解析在判定时做一次，之后有人把目录换成链接，规则看不到（与项目内规则的磁盘解析同一限制）。
 
 ## PowerShell 命令的规则写法
 

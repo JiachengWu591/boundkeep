@@ -14,6 +14,10 @@ The contract is docs/m1-design.md ("模块 D"); the short version:
   ``path_outside_project`` matches when ANY path is not definitely inside. ``path_inside_project``
   needs at least one path and ALL of them definitely inside (with a glob, one of them must also
   match it).
+* ``path_in_scratchpad`` needs at least one path and ALL of them (every form of a path: the lexical
+  one and the on-disk resolved one) inside the current session's scratchpad
+  (``PathRef.in_scratchpad``, set by the normalizer; False whenever unsure). It combines with the
+  other fields by AND and is checked like ``path_inside_project``: unknown is "no match".
 * ``flags_none`` takes the same entries and the same case folding as ``flags_any`` and matches
   only if NONE of the action's flags equals a listed one (no flags: matches).
   ``paths_read_only`` matches only if EVERY path has access exactly ``read`` (``write`` and
@@ -282,6 +286,13 @@ def _match_detail(
     if path_lines is None:
         return None
     details.extend(path_lines)
+    if match.path_in_scratchpad is not None:
+        # At least one path and every path (each form of it: lexical and on-disk resolved) is
+        # inside the current session's scratchpad. Unknown stays "no": a deny / ask rule with this
+        # field does not match a path that is not shown to be in the scratchpad either.
+        if not action.paths or any(not p.in_scratchpad for p in action.paths):
+            return None
+        details.append("path_in_scratchpad: every path is inside the session scratchpad")
     if match.paths_read_only is not None:
         # Exactly "read": "write" and "unknown" (may write) both fail. No paths: vacuously true.
         if any(p.access != "read" for p in action.paths):

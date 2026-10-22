@@ -40,12 +40,15 @@ _FAKE: dict[str, dict[str, Any]] = {
             "USERPROFILE": "C:\\Users\\testuser",
             "APPDATA": "C:\\Users\\testuser\\AppData\\Roaming",
             "LOCALAPPDATA": "C:\\Users\\testuser\\AppData\\Local",
+            # the fake machine's temp directory: the root of a session scratchpad
+            # (`<TEMP>\claude\<slug>\<session id>\scratchpad`, ``path_in_scratchpad``)
+            "TEMP": "C:\\Users\\testuser\\AppData\\Local\\Temp",
         },
     },
     "posix": {
         "home": "/home/testuser",
         "project": "/home/testuser/proj",
-        "env": {"HOME": "/home/testuser"},
+        "env": {"HOME": "/home/testuser", "TMPDIR": "/tmp"},  # noqa: S108
     },
 }
 
@@ -70,6 +73,7 @@ def _run_one(
     tool_input: Mapping[str, Any],
     cwd: str | None,
     project: str | None,
+    session_id: str | None = None,
 ) -> pipeline.Review:
     fake = _FAKE[platform]
     payload = {
@@ -77,7 +81,8 @@ def _run_one(
         "tool_input": tool_input,
         "cwd": cwd or fake["project"],
         "project_dir": project or fake["project"],
-        "session_id": "policy-test",
+        # not a UUID, so no path is ever in "the session scratchpad" unless a test asks for one
+        "session_id": session_id or "policy-test",
     }
     runtime, _problem = _runtime(policy, fake["env"], fake["home"])
     # The fake machines are not on this disk: a look into real directories would make the verdict
@@ -129,6 +134,7 @@ def cmd_test(args: argparse.Namespace) -> int:
                 case.input.thaw(),
                 case.cwd,
                 case.project_dir,
+                case.session_id,
             )
             got = result.verdict.decision
             label = f"#{index} {case.tool} {json.dumps(case.input.thaw(), ensure_ascii=False)[:90]}"
@@ -257,10 +263,11 @@ def cmd_explain(args: argparse.Namespace) -> int:
             console.out(f"    args: {printable(' '.join(action.args), _ARGS_CHARS)}")
         for ref in action.paths:
             unsure = " uncertain" if ref.uncertain else ""
+            scratch = " in_scratchpad" if ref.in_scratchpad else ""
             console.out(
                 f"    path: {printable(repr(ref.raw), _PATH_CHARS)} -> "
                 f"{printable(ref.key, _PATH_CHARS)} [{ref.access}] "
-                f"inside_project={ref.inside_project}{unsure}"
+                f"inside_project={ref.inside_project}{unsure}{scratch}"
             )
         if action.domains or action.network:
             hosts = ", ".join(action.domains) or "-"

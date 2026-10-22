@@ -754,6 +754,7 @@ def test_no_adversarial_shell_entry_of_any_corpus_is_allow_in_a_trusted_project(
             entry["input"],
             entry.get("cwd"),
             entry.get("project_dir"),
+            entry.get("session_id"),
         )
         if review.verdict.decision == "allow":
             offenders.append(f"{entry['id']} ({platform})")
@@ -782,6 +783,7 @@ def test_the_devtool_adversarial_entries_of_the_m1c2_corpora_are_not_allow_when_
                     entry["input"],
                     entry.get("cwd"),
                     entry.get("project_dir"),
+                    entry.get("session_id"),
                 )
                 assert review.verdict.decision != "allow", (path.name, entry["id"], platform)
     assert count > 100
@@ -808,6 +810,7 @@ def test_nothing_that_must_block_keep_asking_or_run_code_is_allow_when_trusted()
                 entry["input"],
                 None,
                 None,
+                entry.get("session_id"),
             )
             if review.verdict.decision == "allow":
                 offenders.append(f"{entry['id']} ({platform})")
@@ -837,6 +840,7 @@ def test_the_trusted_policy_has_exactly_the_untrusted_verdicts_except_for_dev_to
             entry["input"],
             entry.get("cwd"),
             entry.get("project_dir"),
+            entry.get("session_id"),
         )
         b = policycli._run_one(
             _policy("default", platform, "trusted"),
@@ -845,6 +849,7 @@ def test_the_trusted_policy_has_exactly_the_untrusted_verdicts_except_for_dev_to
             entry["input"],
             entry.get("cwd"),
             entry.get("project_dir"),
+            entry.get("session_id"),
         )
         if a.verdict.decision != b.verdict.decision:
             different.append(f"{entry['id']} ({platform})")

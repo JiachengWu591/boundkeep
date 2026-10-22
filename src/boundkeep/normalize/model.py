@@ -72,6 +72,10 @@ class PathRef(BaseModel):
     access: Access = "unknown"
     inside_project: bool | None = None  # True only when definitely inside; None when unsure
     uncertain: bool = False  # unresolved variable, glob, drive-relative, device name, ...
+    # True only when the path (this form of it) is inside the CURRENT session's scratchpad, the
+    # directory ``<temp dir>/claude/<slug>/<session id>/scratchpad`` Claude Code gives the agent for
+    # its own intermediate files (see ``normalize.paths.Scratchpad``). False whenever unsure.
+    in_scratchpad: bool = False
     reasons: tuple[str, ...] = ()
 
 

@@ -68,6 +68,7 @@ def test_no_adversarial_entry_got_milder(entry: dict[str, Any], policy: Any) -> 
         entry["input"],
         entry.get("cwd"),
         entry.get("project_dir"),  # type: ignore[arg-type]
+        entry.get("session_id"),
     )
     got = result.verdict.decision
     assert got != "allow", f"{entry['id']}: {entry['input']['command']!r} is allowed"

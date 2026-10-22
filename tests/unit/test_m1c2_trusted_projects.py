@@ -482,6 +482,7 @@ MATCH_FIELD_SAMPLES: dict[str, Any] = {
     "flags_none": ["-f"],
     "path_outside_project": True,
     "path_inside_project": True,
+    "path_in_scratchpad": True,
     "paths_read_only": True,
     "project_trusted": True,
     "network": True,

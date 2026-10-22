@@ -1423,6 +1423,27 @@ rules:
       access: write
       path_inside_project: true
     action: allow
+  - id: allow-session-scratchpad
+    # Claude Code gives every session a scratchpad for the agent's own intermediate files:
+    # <temp dir>/claude/<project slug>/<session id>/scratchpad. Writing, editing and reading there is
+    # the agent working on its own notes, not on your project, so the file tools may do it without a
+    # question. `path_in_scratchpad` is true only for a path (every form of it: the typed one and the
+    # one after symlinks / junctions / short names are resolved) inside THE CURRENT SESSION's
+    # scratchpad below THIS machine's temp directory: not another session's, not another temp
+    # directory, not the temp directory or its parents, not `scratchpad2`, never a path with `..`, a
+    # variable or a wildcard, never when the event has no session id that looks like a UUID. A
+    # directory (Grep / Glob of the scratchpad itself) counts too; a Grep of it still scans for
+    # protected names, so a .env or id_rsa inside it denies the call.
+    # Every deny and ask rule above still wins (strictest wins): a secret, credential, git-internals,
+    # autorun (Makefile, package.json, conftest.py ...) or guard-config NAME is protected in the
+    # scratchpad exactly as in the project. SHELL commands are not covered, on purpose: nothing in
+    # the tool list is a shell, so `python <scratchpad>/x.py` stays gray (the agent can write a script
+    # there, and running it is judged by the exec rules like any other script). Strict has no such
+    # rule.
+    tool: [Write, Edit, MultiEdit, NotebookEdit, Read, Grep, Glob]
+    match:
+      path_in_scratchpad: true
+    action: allow
   - id: allow-ps-data-shaping
     # PowerShell cmdlets that only reshape or filter what is piped into them and never take a path:
     # Select-Object, Where-Object, Sort-Object, Group-Object, Format-Table, Format-List, Out-String,
@@ -2028,3 +2049,46 @@ tests:
   - { tool: PowerShell, platform: [windows], input: { command: "Set-Location src -Credential x" }, expect: gray }
   - { tool: PowerShell, platform: [windows], input: { command: "Pop-Location" }, expect: gray }
   - { tool: PowerShell, platform: [windows], input: { command: "if ($true) { cd src }" }, expect: gray }   # a compound statement stays gray
+  # M1c-4 allow-session-scratchpad: Claude Code's per-session scratchpad, <temp>/claude/<slug>/<session id>/scratchpad.
+  # The temp directory of the fake machines is C:\Users\testuser\AppData\Local\Temp and /tmp. A test needs a
+  # UUID session_id (the default test session id is not one, so nothing counts as a scratchpad).
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\x.py", content: "x" }, expect: allow }   # the agent's own file
+  - { tool: Edit, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\x.py", old_string: a, new_string: b }, expect: allow }
+  - { tool: MultiEdit, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\a\\b\\x.py", edits: [{ old_string: a, new_string: b }] }, expect: allow }   # nested directories
+  - { tool: NotebookEdit, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { notebook_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\n.ipynb", new_source: x }, expect: allow }
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\data.json" }, expect: allow }
+  - { tool: Grep, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { pattern: needle, path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad" }, expect: allow }   # the scratchpad directory itself
+  - { tool: Glob, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { pattern: "*.py", path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad" }, expect: allow }
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\USERS\\TESTUSER\\APPDATA\\LOCAL\\TEMP\\CLAUDE\\E--PROJ\\19513824-5F23-476C-BD11-F2F49FB38457\\SCRATCHPAD\\X.PY", content: "x" }, expect: allow }   # Windows names ignore case
+  - { tool: Write, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/x.py", content: "x" }, expect: allow }
+  - { tool: Edit, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/x.py", old_string: a, new_string: b }, expect: allow }
+  - { tool: Read, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/data.json" }, expect: allow }
+  - { tool: Grep, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { pattern: needle, path: "/tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad" }, expect: allow }
+  - { tool: Glob, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { pattern: "*.py", path: "/tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad" }, expect: allow }
+  # ... and what stays as it was: protected names inside the scratchpad, other sessions and places, shell.
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\.env", content: "x" }, expect: ask }   # ask-secret-file-write still wins
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\.env" }, expect: deny }   # no-secret-read still wins
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\id_rsa" }, expect: deny }
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\Makefile", content: "x" }, expect: ask }   # an autorun file
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\package.json", content: "x" }, expect: ask }
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\conftest.py", content: "x" }, expect: ask }
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\.claude\\settings.json", content: "x" }, expect: deny }   # guard config
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\29513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\x.py", content: "x" }, expect: gray }   # another session's scratchpad
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad2\\x.py", content: "x" }, expect: gray }   # scratchpad2
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\..\\x.py", content: "x" }, expect: gray }   # climbs out
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\x.py", content: "x" }, expect: gray }   # the temp directory itself
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "E:\\x\\claude\\foo\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\f", content: "x" }, expect: gray }   # not under this machine's temp directory
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\*.py", content: "x" }, expect: gray }   # a wildcard is uncertain
+  - { tool: Write, platform: [windows], input: { file_path: "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\x.py", content: "x" }, expect: gray }   # no UUID session id: nothing counts
+  - { tool: Bash, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "python C:/Users/testuser/AppData/Local/Temp/claude/e--proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/x.py" }, expect: gray }   # shell is not covered: running a script is judged by the exec rules
+  - { tool: PowerShell, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "python C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\x.py" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "Get-Content C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\scratchpad\\x.py" }, expect: gray }   # the file tools are covered, Get-Content is not
+  - { tool: Write, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/.env", content: "x" }, expect: ask }
+  - { tool: Read, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/.env" }, expect: deny }
+  - { tool: Write, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/Makefile", content: "x" }, expect: ask }
+  - { tool: Write, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/tmp/claude/-home-testuser-proj/29513824-5f23-476c-bd11-f2f49fb38457/scratchpad/x.py", content: "x" }, expect: gray }   # another session
+  - { tool: Write, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/tmp/Claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/x.py", content: "x" }, expect: gray }   # POSIX names are case-sensitive
+  - { tool: Write, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/../x.py", content: "x" }, expect: gray }
+  - { tool: Write, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/var/tmp/claude/foo/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/f", content: "x" }, expect: gray }   # not under this machine's temp directory
+  - { tool: Bash, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "python /tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/x.py" }, expect: gray }   # shell is not covered
+  - { tool: Bash, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "cat /tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/x.py" }, expect: gray }

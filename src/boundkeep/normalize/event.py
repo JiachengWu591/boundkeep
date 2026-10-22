@@ -216,6 +216,7 @@ class _Ctx:
         default_factory=lambda: subtree.matcher_for(subtree.DEFAULT_PROTECTED_GLOBS)
     )  # the read-protection globs a recursive read is checked against
     rule_screen: subtree.RuleScreens | None = None  # path globs of the deny / ask rules, or None
+    scratch: paths.Scratchpad | None = None  # this session's scratchpad (None: no valid session)
 
 
 @dataclass(slots=True)
@@ -633,6 +634,7 @@ def _make_ref(
     resolved: bool = False,
 ) -> PathRef:
     root = (ctx.root_resolved or ctx.root) if resolved else ctx.root
+    scratch = ctx.scratch
     return PathRef(
         raw=raw,
         key=norm.key,
@@ -640,6 +642,9 @@ def _make_ref(
         access=access,
         inside_project=None if uncertain else paths.inside_project(norm, root),
         uncertain=uncertain,
+        in_scratchpad=(
+            not uncertain and scratch is not None and scratch.contains(norm, resolved=resolved)
+        ),
         reasons=tuple(reasons),
     )
 
@@ -1490,6 +1495,22 @@ def _budget_action(ctx: _Ctx, tool: str, exc: _BudgetExceeded, **extra: Any) -> 
 # --------------------------------------------------------------------------------------------
 
 
+def _plain_operands(refs: Sequence[PathRef]) -> list[PathRef]:
+    """``refs`` with ``in_scratchpad`` cleared on every path whose name has a pattern character.
+
+    The operand of a file or search tool is a path, not a pattern: a name with ``* ? [ ] { }`` in
+    it (a Next.js ``[id]`` directory, a brace list) may mean more than it says to some tool, and the
+    scratchpad rule does not guess: such a path is never "in the scratchpad". Only the operands of
+    the tool (not the file name a Grep ``glob`` is probed with, which nothing opens).
+    """
+    return [
+        ref.model_copy(update={"in_scratchpad": False})
+        if ref.in_scratchpad and not paths.scratch_plain(ref.key)
+        else ref
+        for ref in refs
+    ]
+
+
 def _file_action(ctx: _Ctx, tool: str, raw: str | None, access: Access) -> Action:
     if raw is None or not raw.strip():
         return _gray(ctx, tool, "no-file-path")
@@ -1497,7 +1518,9 @@ def _file_action(ctx: _Ctx, tool: str, raw: str | None, access: Access) -> Actio
     # "[", "*" and "?" are ordinary characters of a file name here (Next.js ``app/[id]/page.tsx``);
     # a Windows name cannot hold "*" or "?", so there they can only be a pattern: stay uncertain.
     literal = not (ctx.platform == "windows" and ("*" in raw or "?" in raw))
-    refs = _refs(ctx, notes, raw, access, cwds=(ctx.cwd,), dialect="tool", glob_literal=literal)
+    refs = _plain_operands(
+        _refs(ctx, notes, raw, access, cwds=(ctx.cwd,), dialect="tool", glob_literal=literal)
+    )
     tags: list[RiskTag] = ["file_write"] if access == "write" else []
     names, unknown = _unc_refs(ctx, refs)
     if names or unknown:
@@ -1634,7 +1657,9 @@ def _search_action(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> Actio
     if not directory:
         return _gray(ctx, tool, "no-search-directory")
     notes: list[str] = []
-    refs = _refs(ctx, notes, directory, "read", cwds=(ctx.cwd,), dialect="tool", glob_literal=True)
+    refs = _plain_operands(
+        _refs(ctx, notes, directory, "read", cwds=(ctx.cwd,), dialect="tool", glob_literal=True)
+    )
     pattern = _text(tool_input.get("pattern" if tool == "Glob" else "glob"))
     if tool == "Grep" and not (pattern and _pattern_is_path(pattern)):
         # A directory target reads everything below it that the glob / type lets through: look
@@ -1771,6 +1796,7 @@ def normalize_event(
                 else tuple(protected_globs)
             ),
             rule_screen=None if rule_globs is None else subtree.rule_screens_for(tuple(rule_globs)),
+            scratch=paths.scratchpad_for(base.get("session_id"), platform, env, home),
         )
         tool = payload.get("tool_name")
         if not isinstance(tool, str) or not tool:

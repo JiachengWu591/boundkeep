@@ -78,6 +78,7 @@ def test_corpus_entry(entry: dict[str, Any], platform: str) -> None:
         entry["input"],
         entry.get("cwd"),
         entry.get("project_dir"),  # type: ignore[arg-type]
+        entry.get("session_id"),  # the scratchpad corpus carries the hook event's session id
     )
     got = result.verdict.decision
     assert got == expect, (

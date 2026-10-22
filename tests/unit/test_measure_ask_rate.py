@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "measure_ask_rate.py"
 CORPUS = ROOT / "tests" / "corpus" / "workflow_benign.yaml"
 
-TIERS = {"t1-read", "t2-write", "t3-exec", "t3-dev", "keep-ask", "must-block"}
+TIERS = {"t1-read", "t2-write", "t2-scratch", "t3-exec", "t3-dev", "keep-ask", "must-block"}
 VERDICTS = {"allow", "ask", "deny", "gray"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
 FILE_TOOLS = {"Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"}
@@ -78,6 +78,7 @@ def test_corpus_entries_have_the_required_fields() -> None:
             "expect_after",
             "expect_trusted",
             "today",
+            "session_id",
         }
         assert set(entry) <= allowed
         assert isinstance(entry["input"], dict), entry["id"]
@@ -107,7 +108,7 @@ def test_corpus_design_verdicts_follow_the_tier() -> None:
     for entry in _corpus():
         expect = _verdicts(entry["expect_after"])
         tier = entry["tier"]
-        if tier in ("t1-read", "t2-write"):
+        if tier in ("t1-read", "t2-write", "t2-scratch"):
             assert expect == {"allow"}, entry["id"]
         elif tier in ("t3-exec", "keep-ask", "t3-dev"):
             assert expect <= {"ask", "gray"}, entry["id"]
@@ -192,7 +193,9 @@ def test_today_has_not_drifted_from_the_current_policy() -> None:
             continue
         platforms = [entry["platform"]] if entry.get("platform") else ["windows", "posix"]
         for platform in platforms:
-            got = tool.default_run_one(policies[platform], platform, entry["tool"], entry["input"])
+            got = tool.default_run_one(
+                policies[platform], platform, entry["tool"], entry["input"], entry.get("session_id")
+            )
             today = tool.resolve(entry["today"], platform)
             design = tool.resolve(entry["expect_after"], platform)
             checked += 1

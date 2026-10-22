@@ -60,6 +60,7 @@ EXPECTED_ALLOW_IDS = {
     "allow-project-file-writes",
     "allow-ps-data-shaping",
     "allow-cd-family",  # M1c-3 (tests/unit/test_m1c3_cd_allow.py)
+    "allow-session-scratchpad",  # M1c-4 (tests/unit/test_m1c4_scratchpad.py)
     "allow-devtools-trusted-project",
 }
 NEW_ASK_IDS = {"ask-secret-file-write", "ask-credential-file-write", "ask-git-internals-write"}
@@ -108,13 +109,25 @@ def _needs_ps(tool: str) -> None:
         pytest.skip("PowerShell entries need the real parser helper (Windows only)")
 
 
-def _run(name: str, platform: str, tool: str, tool_input: dict[str, Any]) -> Any:
+def _run(
+    name: str, platform: str, tool: str, tool_input: dict[str, Any], session_id: str | None = None
+) -> Any:
     _needs_ps(tool)
-    return policycli._run_one(_policy(name, platform), platform, tool, tool_input, None, None)  # type: ignore[arg-type]
+    return policycli._run_one(
+        _policy(name, platform),
+        platform,  # type: ignore[arg-type]
+        tool,
+        tool_input,
+        None,
+        None,
+        session_id,
+    )
 
 
-def _decide(name: str, platform: str, tool: str, tool_input: dict[str, Any]) -> str:
-    return str(_run(name, platform, tool, tool_input).verdict.decision)
+def _decide(
+    name: str, platform: str, tool: str, tool_input: dict[str, Any], session_id: str | None = None
+) -> str:
+    return str(_run(name, platform, tool, tool_input, session_id).verdict.decision)
 
 
 def _hit_ids(review: Any) -> set[str]:
@@ -1350,7 +1363,7 @@ def test_no_adversarial_shell_entry_of_any_pipeline_corpus_is_allowed() -> None:
         if entry["tool"] == "PowerShell" and not _ps_ready():
             continue
         checked += 1
-        got = _decide("default", platform, entry["tool"], entry["input"])
+        got = _decide("default", platform, entry["tool"], entry["input"], entry.get("session_id"))
         if got == "allow":
             offenders.append(f"{entry['id']} ({platform})")
     assert checked > 100
@@ -1389,7 +1402,9 @@ def test_nothing_that_must_block_keep_asking_or_run_code_is_allowed() -> None:
             if entry["tool"] == "PowerShell" and not _ps_ready():
                 continue
             checked += 1
-            got = _decide("default", platform, entry["tool"], entry["input"])
+            got = _decide(
+                "default", platform, entry["tool"], entry["input"], entry.get("session_id")
+            )
             if got == "allow":
                 offenders.append(f"{entry['id']} ({platform})")
     assert checked > 200
@@ -1503,6 +1518,7 @@ def _embedded_reviews() -> tuple[tuple[int, Any, Any], ...]:
             case.input.thaw(),
             case.cwd,
             case.project_dir,
+            case.session_id,
         )
         out.append((index, case, review))
     return tuple(out)

@@ -873,6 +873,7 @@ def test_no_adversarial_shell_entry_of_any_corpus_is_allow(trusted: bool) -> Non
             entry["input"],
             entry.get("cwd"),
             entry.get("project_dir"),
+            entry.get("session_id"),
         )
         if review.verdict.decision == "allow":
             offenders.append(f"{entry['id']} ({platform})")
@@ -986,5 +987,6 @@ def test_the_embedded_cd_cases_hold(platform: str) -> None:
             case.input.thaw(),
             case.cwd,
             case.project_dir,
+            case.session_id,
         )
         assert review.verdict.decision == case.expect, (platform, case.input.get("command"))

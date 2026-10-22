@@ -12,6 +12,15 @@
 >
 > **修订 4（2026-10-18）**：采纳 M1+M1b 的 X1 安全审查（`docs/reviews/M1-M1b-security-review.md`）与复审（`docs/reviews/M1-M1b-fixes-rereview.md`）提出的规格变更：§1 核心承诺补"在 `enforce` 下可日常使用"这一前置条件；§3 范围外写明同一用户的进程可以冒充守护进程；§5.1 管道令牌只防其他用户、DACL 收紧只是提高门槛、客户端永不输出 `allow`（除非 `--emit-allow`）；§7 目录目标的读类动作要检查子树、预算耗尽不得使已可见的 deny 变弱、实测 hook 的 `ask` 优先于 `permissions.allow` 与 `bypassPermissions`；§10 增加"hook 配置层与会话目录不匹配"与"settings 被削弱"两行。
 
+> **当前进度（2026-10-21）**
+>
+> - **已完成并有标签**：M0a、M0、M1、M1b；对 M1+M1b 的独立 X1 安全审查及复审（`docs/reviews/`），两轮修复已提交；M1c、M1c-2、M1c-3（让 `enforce` 下的日常使用成为可能的 allow 规则，见 §14）。
+> - **已实现，待你确认提交**：M1c-4（当前会话的 scratchpad 放行；全部自动检查通过，真实会话手工验收未做，报告 `docs/reports/M1c4.md`）。
+> - **等待你做**：M1c 与 M1c-2 的定向 X1 审查（提示词已给出）；审查通过、M1c-4 提交之后，规则冻结。
+> - **下一步**：M2（评测集、评测框架、`rules-only` 基线）。基线必须在规则冻结之后取，否则基线对应的是一份之后又会变的策略。
+> - **还没开始**：会话状态与污染标记（M3a）、LLM 审计层（M3b）、策略编译（M4）、Web 界面（M5、M6）、发布准备（R）。
+> - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
+> - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
 ---
 
 ## 1. 一页摘要
@@ -698,19 +707,23 @@ boundkeep/
 
 ## 14. 里程碑
 
-| 里程碑 | 交付 | 验收 |
-|---|---|---|
-| M0a | 验证 Claude Code hook 的真实行为（§16-A 与 §16-D），在每个可用的平台上分别做；开发机上是 Windows 原生 | `docs/hook-behavior.md`（按平台分节）、`docs/platforms.md` 与真实事件夹具；每项状态为已验证 / 部分验证 / 未验证；不可用的平台写"未验证" |
-| M0 | 仓库骨架；`init`；`boundkeep-hook` + 常驻进程打通（`ipc/` 两个传输）；审计日志；`doctor` | 在真实 Claude Code 里，一次工具调用能被拦截并写日志；常驻进程关闭时降级为 `ask`；hook 路径错误能被 `doctor` 发现；清除 `PYTHON*` 环境变量、输入含中文的 UTF-8 事件时仍输出合法决定；并发触发 hook 时请求不丢；以上在每个声明支持的平台上都要通过 |
-| M1 | normalize（Bash 方言 + 两层路径规范化）+ 规则引擎 + 策略 schema + `boundkeep test` + 判决到 hook 输出的映射 | `default.yaml` 的 `tests` 全部通过；命令解析失败与未知工具进入灰色地带；Windows 路径语义的词法层用例（`\\?\`、大小写、备用数据流、MSYS 形式）在任何平台上通过 |
-| M1b | PowerShell 方言归一化（Windows，§5.1） | `PowerShell` 工具的常见命令（删除、网络、git、文件读写）被归一化为 Action；§5.1 列出的构造一律灰色；解析器的延迟与失败行为有实测记录；Windows 的 `tests` 全部通过 |
-| M2 | 评测集 v1（含 Windows 样本）+ `run_eval.py` + `rules-only` 基线 | 产出第一份 `report.md`（基线数字，按平台分别报告） |
-| M3a | 会话状态、污染标记、后端接口与假后端、OpenAI 兼容适配器（对本地假服务测试）、二次裁决、`rules+taint` 评测、`llm check` | 不需要网络与密钥；一致性测试通过；`rules+taint` 行完整 |
-| M3b | 真实 LLM 后端评测（可推迟） | 你自备密钥并确认费用、在本地运行；`rules+LLM` 与 `rules+LLM+taint` 两行完整，增量如实报告 |
-| M4 | 策略校验 + 自然语言策略编译（含离线模式） | 输入一句话，得到规则 + 测试用例 + 回放影响的 diff，确认后写入并通过 `test`；离线模式不需要任何后端 |
-| M5 (v0.5) | 只读 Web 日志查看器 | 实时事件流 + 会话时间线；安全约束见 §11 |
-| M6 (v1) | Web 控制台：策略编辑器、待确认队列 | 网页审批的超时必须小于 hook 的 `timeout`，超时回落终端确认 |
-| R | 发布准备 | README 数字全部来自实测；CI（矩阵含 windows-latest：单元、一致性、夹具式 e2e；真实 Claude Code 的 e2e 手工执行）、打包、安全审查高危清零；从零环境可复现；仓库元数据与实际能力一致；平台支持表只写有实测记录的平台 |
+| 里程碑 | 交付 | 验收 | 状态 |
+|---|---|---|---|
+| M0a | 验证 Claude Code hook 的真实行为（§16-A 与 §16-D），在每个可用的平台上分别做；开发机上是 Windows 原生 | `docs/hook-behavior.md`（按平台分节）、`docs/platforms.md` 与真实事件夹具；每项状态为已验证 / 部分验证 / 未验证；不可用的平台写"未验证" | 已完成（标签 `m0a-done`） |
+| M0 | 仓库骨架；`init`；`boundkeep-hook` + 常驻进程打通（`ipc/` 两个传输）；审计日志；`doctor` | 在真实 Claude Code 里，一次工具调用能被拦截并写日志；常驻进程关闭时降级为 `ask`；hook 路径错误能被 `doctor` 发现；清除 `PYTHON*` 环境变量、输入含中文的 UTF-8 事件时仍输出合法决定；并发触发 hook 时请求不丢；以上在每个声明支持的平台上都要通过 | 已完成（标签 `m0-done`） |
+| M1 | normalize（Bash 方言 + 两层路径规范化）+ 规则引擎 + 策略 schema + `boundkeep test` + 判决到 hook 输出的映射 | `default.yaml` 的 `tests` 全部通过；命令解析失败与未知工具进入灰色地带；Windows 路径语义的词法层用例（`\\?\`、大小写、备用数据流、MSYS 形式）在任何平台上通过 | 已完成（标签 `m1-done`；手工验收 2026-10-12；独立审查两轮修复已提交） |
+| M1b | PowerShell 方言归一化（Windows，§5.1） | `PowerShell` 工具的常见命令（删除、网络、git、文件读写）被归一化为 Action；§5.1 列出的构造一律灰色；解析器的延迟与失败行为有实测记录；Windows 的 `tests` 全部通过 | 已完成（标签 `m1b-done`；手工验收 2026-10-16；独立审查两轮修复已提交，手工复测 2026-10-19 通过） |
+| M1c | `enforce` 下可日常使用的 allow 规则（X1 审查 M-13）：匹配字段 `flags_none` / `paths_read_only`，先补 L-11 的 ask 规则，再加第 1 档只读检查与第 2 档项目内写入的 allow（只在默认策略；`emit_allow` 保持关闭，目标是与 Claude Code 持平） | 对抗语料对 shell 命令永不 allow；度量语料上"每百动作询问数"如实报告；真实 Claude Code 冒烟；allow 规则的定向 X1 审查 | 已完成（标签 `m1c-done`）；**定向 X1 审查待做** |
+| M1c-2 | 开发工具预设：`trusted_projects` 与 `project_trusted`、`boundkeep trust`、`pytest`/`ruff`/`mypy` 等的识别与 allow、PowerShell 管道头修复、数据整形 allow（§7） | 默认不信任任何项目；信任前后的判决差异有真实冒烟；`trust add` 的真实控制台路径有手工验收 | 已完成（标签 `m1c2-done`；手工验收通过）；**定向 X1 审查待做** |
+| M1c-3 | 放行项目内的 `cd` 族（`allow-cd-family`，必须带 `path_inside_project`） | `cd` 之后的命令仍按新目录判断；项目外与动态目标的 `cd` 仍是灰色 | 已完成（标签 `m1c3-done`；未单独做手工验收） |
+| M1c-4 | 放行当前会话自己的 scratchpad 目录（`path_in_scratchpad`，只对文件工具） | 只认当前会话 id 与守护进程临时目录下的精确结构；现有 deny/ask 仍然优先；shell 命令不受影响 | **已实现，待确认提交**（自动检查全过；真实会话手工验收未做） |
+| M2 | 评测集 v1（含 Windows 样本）+ `run_eval.py` + `rules-only` 基线 | 产出第一份 `report.md`（基线数字，按平台分别报告） | **未开始**（前置：M1c 系列规则冻结，M1c 与 M1c-2 的定向 X1 审查通过） |
+| M3a | 会话状态、污染标记、后端接口与假后端、OpenAI 兼容适配器（对本地假服务测试）、二次裁决、`rules+taint` 评测、`llm check` | 不需要网络与密钥；一致性测试通过；`rules+taint` 行完整 | 未开始 |
+| M3b | 真实 LLM 后端评测（可推迟） | 你自备密钥并确认费用、在本地运行；`rules+LLM` 与 `rules+LLM+taint` 两行完整，增量如实报告 | 未开始 |
+| M4 | 策略校验 + 自然语言策略编译（含离线模式） | 输入一句话，得到规则 + 测试用例 + 回放影响的 diff，确认后写入并通过 `test`；离线模式不需要任何后端 | 未开始 |
+| M5 (v0.5) | 只读 Web 日志查看器 | 实时事件流 + 会话时间线；安全约束见 §11 | 未开始 |
+| M6 (v1) | Web 控制台：策略编辑器、待确认队列 | 网页审批的超时必须小于 hook 的 `timeout`，超时回落终端确认 | 未开始 |
+| R | 发布准备 | README 数字全部来自实测；CI（矩阵含 windows-latest：单元、一致性、夹具式 e2e；真实 Claude Code 的 e2e 手工执行）、打包、安全审查高危清零；从零环境可复现；仓库元数据与实际能力一致；平台支持表只写有实测记录的平台 | 未开始 |
 
 顺序即优先级：先证明"规则 + 会话状态"的价值（M0a 到 M3a），再决定 LLM 层（M3b）和界面（M5、M6）。M3b 与 M4 的 LLM 部分在没有密钥时可以整体推迟，不影响其余里程碑。
 

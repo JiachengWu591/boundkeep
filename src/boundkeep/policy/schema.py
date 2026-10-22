@@ -905,6 +905,9 @@ class Match(BaseModel):
     flags_none: _Flags | None = None  # same entries as flags_any; matches when NONE is present
     path_outside_project: _TrueOnly | None = None
     path_inside_project: _TrueOnly | None = None
+    # at least one path and EVERY path is inside this session's scratchpad (never true for a path
+    # that is uncertain or whose resolved form leaves it); says nothing about tool or program
+    path_in_scratchpad: _TrueOnly | None = None
     paths_read_only: _TrueOnly | None = None  # every path is read-only (no paths: vacuously true)
     project_trusted: _TrueOnly | None = None  # the project directory is in trusted_projects
     network: _TrueOnly | None = None
@@ -994,11 +997,18 @@ class Rule(BaseModel):
             match = self.match
             if any(
                 getattr(match, name) is not None
-                for name in ("path_glob", "access", "path_outside_project", "path_inside_project")
+                for name in (
+                    "path_glob",
+                    "access",
+                    "path_outside_project",
+                    "path_inside_project",
+                    "path_in_scratchpad",
+                )
             ):
                 raise _at_error(
                     "the listed tools never touch file paths, so a path condition (path_glob, "
-                    "access, path_outside_project, path_inside_project) can never match",
+                    "access, path_outside_project, path_inside_project, path_in_scratchpad) can "
+                    "never match",
                     "tool",
                 )
         return self
@@ -1030,6 +1040,9 @@ class PolicyTest(BaseModel):
     platform: _Platforms | None = None
     cwd: Annotated[str, Field(min_length=1, max_length=1024)] | None = None
     project_dir: Annotated[str, Field(min_length=1, max_length=1024)] | None = None
+    # The event's session_id (default: a fixed non-UUID one). A test of ``path_in_scratchpad`` needs
+    # a UUID: the scratchpad is `<fake temp dir>/claude/<slug>/<session id>/scratchpad`.
+    session_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     expect: Expect
 
 

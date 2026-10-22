@@ -12,7 +12,8 @@ platform and per tier:
   * the entries whose verdict differs from ``expect_after``. Comparison is by prompt class: allow,
     deny, and 'prompt' (ask and gray count as the same class, since the user is asked either way).
 
-Corpus entries: ``{id, tool, platform?, input, tier, expect_after, expect_trusted?, today?}``;
+Corpus entries: ``{id, tool, platform?, input, tier, expect_after, expect_trusted?, today?,
+session_id?}`` (``session_id``: the hook event's session id, a UUID for the scratchpad tier);
 ``expect_after`` may be a mapping ``{windows: ..., posix: ...}`` when the two machines are designed
 to differ. ``expect_trusted`` is the verdict designed for a project listed in ``trusted_projects``
 (the dev-tool entries of the ``t3-dev`` tier: ask untrusted, allow trusted); ``--trusted`` runs the
@@ -55,7 +56,7 @@ VERDICTS = ("allow", "gray", "ask", "deny", "error")
 REQUIRED = ("id", "tool", "input", "tier", "expect_after")
 PROMPTING = ("ask", "gray", "error")  # error fails closed: a pipeline failure prompts as well
 
-RunOne = Callable[[Policy, str, str, Mapping[str, Any]], str]
+RunOne = Callable[..., str]  # (policy, platform, tool, input[, session_id=...]) -> verdict
 
 
 class CorpusError(Exception):
@@ -130,8 +131,14 @@ class PlatformResult:
         return out
 
 
-def default_run_one(policy: Policy, platform: str, tool: str, tool_input: Mapping[str, Any]) -> str:
-    result = policycli._run_one(policy, platform, tool, tool_input, None, None)  # type: ignore[arg-type]
+def default_run_one(
+    policy: Policy,
+    platform: str,
+    tool: str,
+    tool_input: Mapping[str, Any],
+    session_id: str | None = None,
+) -> str:
+    result = policycli._run_one(policy, platform, tool, tool_input, None, None, session_id)  # type: ignore[arg-type]
     return str(result.verdict.decision)
 
 
@@ -165,8 +172,11 @@ def measure_platform(
             out.skipped.append(str(entry["id"]))
             continue
         tier = str(entry["tier"])
+        # an entry may carry the hook event's session_id (the scratchpad tier needs a UUID one);
+        # only then is it passed on, so a run_one that takes four arguments keeps working
+        extra = {"session_id": str(entry["session_id"])} if entry.get("session_id") else {}
         try:
-            got = run_one(policy, platform, str(entry["tool"]), entry["input"])
+            got = run_one(policy, platform, str(entry["tool"]), entry["input"], **extra)
         except Exception:  # a broken entry must not stop the measurement
             got = "error"
         out.by_tier.setdefault(tier, Counter())[got] += 1
