@@ -239,6 +239,51 @@ class _DecisionPool:
                         return  # a replacement took this thread's place
 
 
+MAX_TRUST_SESSIONS = 512  # sessions whose trusted_projects snapshot is kept (oldest dropped)
+MAX_SESSION_ID_CHARS = 200
+DECIDED_BY_TRUST_SNAPSHOT = "trust-snapshot"
+
+
+class _TrustSnapshots:
+    """``trusted_projects`` as it was when each session was first seen (X1 review, H-5).
+
+    An injected agent that gets ``boundkeep trust add`` (or a direct write of the policy file)
+    past the user cannot use it in the SAME session: an entry that appeared after the session's
+    first event does not count for that session, only new sessions get it. An entry removed from
+    the policy stops counting at once. A session without a usable id gets no trusted project at
+    all (real events always carry one). The snapshots live in memory: a restarted daemon starts
+    them again, so an entry added shortly before a restart counts for the sessions it meets
+    afterwards (a known limit; the daemon restarts are the user's).
+    """
+
+    def __init__(self, limit: int = MAX_TRUST_SESSIONS) -> None:
+        self._limit = limit
+        self._lock = threading.Lock()
+        # session id -> (entries at the first event, added entries already reported)
+        self._seen: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
+
+    def effective(
+        self, session_id: object, current: tuple[str, ...]
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """(the entries that count for this session, entries added since it began and not yet
+        reported for it)."""
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or len(session_id) > MAX_SESSION_ID_CHARS
+        ):
+            return (), ()
+        with self._lock:
+            first, reported = self._seen.pop(session_id, (current, frozenset()))
+            added = tuple(key for key in current if key not in first)
+            fresh = tuple(key for key in added if key not in reported)
+            # (re-inserted: the most recently used session is the last one)
+            self._seen[session_id] = (first, reported | frozenset(fresh))
+            while len(self._seen) > self._limit:
+                del self._seen[next(iter(self._seen))]
+            return tuple(key for key in current if key in first), fresh
+
+
 @dataclass(frozen=True)
 class _PolicyState:
     """What the daemon currently decides with; replaced as a whole, never edited."""
@@ -276,6 +321,7 @@ class Daemon:
         self._deadline_s = decision_timeout_s
         self._pool = _DecisionPool(pool_size)
         self._policy_lock = threading.Lock()
+        self._trust = _TrustSnapshots()
         self._policy_key: tuple[int, int] | bool | None = False  # False: never loaded
         self._state = _PolicyState()
         self._user_home = os.path.expanduser("~")
@@ -358,6 +404,32 @@ class Daemon:
         self._policy_key = key
         self._report(f"policy loaded: mode={policy.mode}, {len(policy.rules)} rules")
 
+    def _session_policy(self, state: _PolicyState, payload: dict[str, Any]) -> Policy | None:
+        """``state.policy`` with the ``trusted_projects`` that count for this event's session."""
+        policy = state.policy
+        if policy is None:
+            return None
+        counted, added = self._trust.effective(payload.get("session_id"), policy.trusted_projects)
+        if added:
+            self._report(
+                f"trusted_projects grew while a session was running ({len(added)} new): the "
+                "new entries do not apply to that session, only to sessions that start later"
+            )
+            with contextlib.suppress(Exception):  # the trace is best effort
+                self._log.append(
+                    {
+                        "ts": _now(),
+                        "event": "trust-changed",
+                        "decision": "none",
+                        "decided_by": DECIDED_BY_TRUST_SNAPSHOT,
+                        "added": len(added),
+                        "session_id": payload.get("session_id"),
+                    }
+                )
+        if counted == policy.trusted_projects:
+            return policy
+        return policy.model_copy(update={"trusted_projects": counted})
+
     # -- requests ----------------------------------------------------------------------------
 
     async def handle(self, line: bytes) -> bytes:
@@ -376,6 +448,7 @@ class Daemon:
                 # Nothing to review (the pipeline answers "no decision" at once): no pool, so
                 # these never queue behind a stuck review.
                 state = self._refresh_policy()
+                self._session_policy(state, request.payload)  # the session is first seen here
                 decision = pipeline.decide(
                     request.event,
                     request.payload,
@@ -405,7 +478,7 @@ class Daemon:
             request.event,
             request.payload,
             mode=state.mode,
-            policy=state.policy,
+            policy=self._session_policy(state, request.payload),
             policy_error=state.error,
             env=os.environ,
             home=self._user_home,

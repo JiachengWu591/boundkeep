@@ -49,6 +49,10 @@ def env(
     monkeypatch.setenv("USERPROFILE", str(user))
     monkeypatch.setenv("HOME", str(user))
     monkeypatch.delenv("HOMEDRIVE", raising=False)
+    # these tests are a person at a terminal: when the suite itself runs inside Claude Code the
+    # variables that mark an agent's process are inherited, and `trust add` rightly refuses them
+    for name in trust.AGENT_ENV:
+        monkeypatch.delenv(name, raising=False)
     boundkeep_home.mkdir()
     policy = boundkeep_home / "policy.yaml"
     _write_policy(policy, default_policy_text())
@@ -374,6 +378,63 @@ def test_add_refuses_without_a_terminal_but_remove_and_list_work(
     assert env.policy.read_bytes() == before
     assert env.run("trust", "list")[0] == 0
     assert env.run("trust", "remove", "--project-dir", str(proj))[0] == 0
+
+
+# ---------------------------------------------------------------------------- an agent's process
+# X1 review of M1c-2 (H-5): a child the agent starts with Start-Process / `cmd /c start` or
+# `< CON` has a REAL console, so the terminal check cannot tell it from a person. The variables
+# Claude Code sets in every shell it starts (and that a child inherits) can.
+
+
+@pytest.mark.parametrize("name", trust.AGENT_ENV)
+def test_add_refuses_in_a_process_started_by_claude_code_even_at_a_terminal(
+    env: Env, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    proj = _project(env)
+    before = env.policy.read_bytes()
+    monkeypatch.setenv(name, "1")
+    code, out, err = env.run("trust", "add", "--project-dir", str(proj))  # (_stdin_is_tty: True)
+    assert code == 1
+    assert name in err
+    assert "trusted:" not in out
+    assert env.policy.read_bytes() == before  # not a byte changed
+    assert _entries(env) == []
+
+
+def test_add_works_again_when_the_variables_are_gone(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proj = _project(env)
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert env.run("trust", "add", "--project-dir", str(proj))[0] == 1
+    monkeypatch.delenv("CLAUDECODE")
+    assert env.run("trust", "add", "--project-dir", str(proj))[0] == 0
+    assert len(_entries(env)) == 1
+
+
+@pytest.mark.parametrize("value", ["", "0"])
+def test_an_empty_marker_does_not_count_but_zero_does_not_matter(
+    env: Env, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    # (the variable is "set" by Claude Code to 1; an empty one is the user's way to clear it)
+    proj = _project(env)
+    monkeypatch.setenv("CLAUDECODE", value)
+    code = env.run("trust", "add", "--project-dir", str(proj))[0]
+    assert code == (0 if value == "" else 1)
+
+
+def test_remove_and_list_are_not_blocked_inside_claude_code(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proj = _project(env)
+    assert env.run("trust", "add", "--project-dir", str(proj))[0] == 0
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert env.run("trust", "list")[0] == 0
+    assert env.run("trust", "remove", "--project-dir", str(proj))[0] == 0  # (narrowing is safe)
+
+
+def test_the_agent_marker_names_are_the_ones_claude_code_sets() -> None:
+    assert trust.AGENT_ENV == ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 
 
 # ---------------------------------------------------------------------------- file fidelity

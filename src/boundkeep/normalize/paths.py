@@ -37,6 +37,7 @@ import fnmatch
 import functools
 import os
 import re
+import stat
 import sys
 import time
 from collections.abc import Mapping
@@ -91,8 +92,11 @@ _INFO_REASONS = frozenset(
         "variable-expanded",
         "home-expanded",
         "resolved-on-disk",
+        "hard-linked",
     }
 )
+
+HARD_LINKED = "hard-linked"  # the file has more than one name (see ``_hard_linked``)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1321,6 +1325,22 @@ def _expand_glob(
     return GlobResult(found, "ok" if found else "none")
 
 
+def _hard_linked(native: str) -> bool:
+    """Is ``native`` an existing regular file with more than one name (a hard link)?
+
+    A hard link is the same file under another name: a path inside the project can BE the policy
+    file, a settings file or a secret, and no path rule can tell (X1 review of M1c-2, H-6). The
+    answer is used only to stop allow rules from trusting the path. One ``stat`` of a path that
+    ``realpath`` has just visited; False on any error (a file that cannot be examined is not
+    reported as linked: the other layers still judge its name).
+    """
+    try:
+        info = os.stat(native)
+    except (OSError, ValueError):
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_nlink > 1
+
+
 def _resolve_on_disk(path: NormPath) -> NormPath:
     if path.is_device or not path.absolute or not path.key or "\x00" in path.key:
         return path
@@ -1341,6 +1361,8 @@ def _resolve_on_disk(path: NormPath) -> NormPath:
         _add(reasons, r)
     if new.key != path.key:
         _add(reasons, "resolved-on-disk")
+    if _hard_linked(resolved):
+        _add(reasons, HARD_LINKED)
     return dataclasses.replace(
         new, raw=path.raw, reasons=tuple(reasons), uncertain=new.uncertain or bool(blocking)
     )

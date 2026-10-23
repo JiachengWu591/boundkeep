@@ -603,7 +603,8 @@ def test_runtime_policy_is_idempotent_and_never_loses_a_deny(
     assert error is None
     twice, error = pipeline.runtime_policy_checked(once, os.environ, WIN["home"])
     assert (twice, error) == (once, None)
-    assert len(once.rules) == len(win_policy.rules) + 2
+    # protect-guard-code, protect-guard-dirs and the two link rules that twin protect-guard-code
+    assert len(once.rules) == len(win_policy.rules) + 4
     for command in ("rm -rf /", "cat ~/.ssh/id_rsa"):
         assert decide(WIN, once, "Bash", sh(command)) == "deny"
 

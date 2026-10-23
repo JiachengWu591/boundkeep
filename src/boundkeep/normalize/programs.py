@@ -3661,6 +3661,60 @@ DEVTOOL_RISKY_FLAGS: dict[str, tuple[str, ...]] = {
 }  # fmt: skip
 
 
+# X1 review of M1c-2 (H-1): every one of these tools reads more arguments from ``@FILE`` (ruff,
+# pytest and mypy were checked against the real tools), and the options in that file never pass
+# through ``flags_none`` or the path rules. The argument-file prefix is honoured wherever an
+# argument starts with it, an option value included, so ANY word of the tool's arguments that
+# begins with ``@`` makes the call gray, in both dialects.
+DEVTOOL_ARGFILE_GRAY = "devtool-argument-file"
+
+# X1 review of M1c-2 (H-2): pylint's ``--output-format`` takes ``REPORTER`` or ``REPORTER:FILE``
+# (a file to write, any path) or a dotted ``module.Class`` (imported, like ``--load-plugins``).
+# Only the built-in reporter names, plain, are understood; anything else is gray.
+DEVTOOL_OUTPUT_FORMAT_GRAY = "devtool-output-format"
+_PYLINT_REPORTERS = _fs("text parseable colorized json json2 msvs github")
+_PYLINT_FORMAT_OPTIONS = frozenset({"--output-format", "-f"})
+
+# X1 review of M1c-2 (H-3): a ``NAME=value`` prefix in front of a dev tool is not interpreted by
+# name any more (RUFF_OUTPUT_FILE, COVERAGE_FILE, RUFF_CACHE_DIR, PYTHONPYCACHEPREFIX, ... send
+# output or caches to a path no rule sees). Only variables that change how the output looks or
+# how deterministic the run is leave the call understood; everything else makes it gray.
+DEVTOOL_ENV_GRAY = "devtool-env-prefix"
+_DEVTOOL_SAFE_ENV = _fs(
+    "ci no_color force_color clicolor clicolor_force term colorterm columns lines lang language "
+    "tz pythonhashseed pythonutf8 pythonioencoding pythonunbuffered pythondontwritebytecode "
+    "python_colors pytest_disable_plugin_autoload"
+)
+
+
+def devtool_env_is_safe(name: str) -> bool:
+    low = name.lower()
+    return low in _DEVTOOL_SAFE_ENV or low.startswith("lc_")
+
+
+def _reporters_are_plain(value: str) -> bool:
+    return all(p in _PYLINT_REPORTERS for p in value.split(","))  # (no stripping: be exact)
+
+
+def devtool_gray_reasons(
+    tool: str, args: Sequence[Word], values: Sequence[tuple[str, str, Word]]
+) -> list[str]:
+    """The gray reasons that belong to the ARGUMENTS of a dev-tool call (both dialects).
+
+    ``args`` are the tool's own words (after the tool name / ``-m TOOL``); ``values`` are the
+    ``(option, role, word)`` triples ``_scan`` found. Never raises.
+    """
+    out: list[str] = []
+    if any(len(w.text) > 1 and w.text.startswith("@") for w in args):
+        out.append(DEVTOOL_ARGFILE_GRAY)
+    if tool == "pylint" and any(
+        opt in _PYLINT_FORMAT_OPTIONS and not _reporters_are_plain(w.text)
+        for opt, _role, w in values
+    ):
+        out.append(DEVTOOL_OUTPUT_FORMAT_GRAY)
+    return out
+
+
 @dataclass(frozen=True, slots=True)
 class _DevSpec:
     opts: Opts
@@ -3827,6 +3881,7 @@ def _h_devtool(a: _Acc, args: Sequence[Word], name: str) -> None:
     a.flags.extend(sc.flags)
     _apply_values(a, sc.values)
     a.note_dynamic(sc)
+    a.gray.extend(devtool_gray_reasons(name, args, sc.values))
     operands = list(sc.pos)
     if (
         operands
@@ -3837,9 +3892,8 @@ def _h_devtool(a: _Acc, args: Sequence[Word], name: str) -> None:
         operands = operands[1:]
     for w in operands:
         t = w.text
-        if spec.arg_file and t.startswith("@") and len(t) > 1:
-            a.path(_sub(w, t[1:]), "read")
-            a.gray.append("devtool-argument-file")  # options hidden in a file: not understood
+        if t.startswith("@") and len(t) > 1:
+            a.path(_sub(w, t[1:]), "read")  # (the gray reason is added above, for every word)
         elif t[:5].lower() == "file:" or "://" in t or _scp_like(t):
             _generic_arg(a, w)
         else:
@@ -3967,6 +4021,8 @@ def _apply_redirects(a: _Acc, redirects: Sequence[Redirect]) -> None:
 def _apply_env(a: _Acc, env: Sequence[tuple[str, Word]]) -> None:
     for name, w in env:
         low = name.lower()
+        if a.prog in _DEVSPECS and not devtool_env_is_safe(name):
+            a.gray.append(f"{DEVTOOL_ENV_GRAY}:{name}")
         if low in _ENV_PROXY and a.network:
             a.url(w.text)
         elif is_code_env(name):

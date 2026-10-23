@@ -298,3 +298,122 @@
 - {id: m2t-e-pylint, tool: Bash, trust: empty, trusted: true, input: {command: 'pylint src'}, expect: gray, adv: true}
 - {id: m2t-e-ps-pytest, tool: PowerShell, platform: windows, trust: empty, trusted: true, input: {command: pytest}, expect: gray, adv: true}
 - {id: m2t-e-ps-ruff, tool: PowerShell, platform: windows, trust: empty, trusted: true, input: {command: 'ruff check .'}, expect: gray, adv: true}
+
+
+# ============ X1 review of M1c / M1c-2 (docs/reviews/M1c2-security-review.md), H-1 to H-4 =============
+# Argument files (@FILE), pylint --output-format=REPORTER:FILE / module.Class, environment prefixes in
+# front of a dev tool (Bash), and expanding values in the arguments of the PowerShell cmdlets an allow
+# rule covers. Every entry is adversarial: the review's commands (and their siblings for every tool
+# and both dialects) were `allow` in a trusted project (H-4: with or without trust) before the fixes
+# and must never be again. The expectations are the verdicts the rules give now.
+- {id: m2r-h1-ps-pytest-quoted, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pytest ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-002, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'mypy "@args.txt"'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-003, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ruff check ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-004, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ruff check `@args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-005, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'python -m pytest ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-006, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: '.\.venv\Scripts\ruff.exe check ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-007, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pytest --foo ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-008, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ruff check -- ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-009, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pytest -k ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-010, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pytest ''@C:\Users\testuser\x.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-011, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'black ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-012, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'isort ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-013, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'flake8 ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-014, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pylint ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-015, tool: Bash, trusted: true, adv: true, input: {command: 'ruff check @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-016, tool: Bash, trusted: true, adv: true, input: {command: 'ruff check -- @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-017, tool: Bash, trusted: true, adv: true, input: {command: 'ruff check @../../x.txt'}, expect: ask, expect_untrusted: gray}
+- {id: m2r-h1-018, tool: Bash, trusted: true, adv: true, input: {command: 'ruff check @/home/testuser/x.txt'}, expect: ask, expect_untrusted: gray}
+- {id: m2r-h1-019, tool: Bash, trusted: true, adv: true, input: {command: 'ruff @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-020, tool: Bash, trusted: true, adv: true, input: {command: 'python -m ruff check @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-021, tool: Bash, trusted: true, adv: true, input: {command: 'black @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-022, tool: Bash, trusted: true, adv: true, input: {command: 'pytest @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-023, tool: Bash, trusted: true, adv: true, input: {command: 'mypy @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-024, tool: Bash, trusted: true, adv: true, input: {command: 'pytest -k @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-025, tool: Bash, trusted: true, adv: true, input: {command: 'pylint ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-ps-pylint-policy, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pylint --output-format=text:C:\Users\testuser\.boundkeep\policy.yaml src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-002, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pylint --output-format=text:..\..\x src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-003, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pylint --msg-template=''x'' --output-format=text:..\x src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-004, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pylint --output-format ''text:C:\x.txt'' src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-005, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pylint -f text:x src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-006, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pylint --output-format=evil.Reporter src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-007, tool: Bash, trusted: true, adv: true, input: {command: 'pylint --msg-template=''x'' --output-format=text:/home/testuser/.bashrc src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-008, tool: Bash, trusted: true, adv: true, input: {command: 'pylint --output-format=json:out.json src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-009, tool: Bash, trusted: true, adv: true, input: {command: 'pylint --output-format=evil.Reporter src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-010, tool: Bash, trusted: true, adv: true, input: {command: 'python -m pylint --output-format=text:/tmp/x src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h2-011, tool: Bash, trusted: true, adv: true, input: {command: 'pylint -f text:/tmp/x src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-bash-ruff-output, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/.bashrc ruff check .'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-002, tool: Bash, trusted: true, adv: true, input: {command: 'COVERAGE_FILE=/home/testuser/.bashrc pytest --cov'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-003, tool: Bash, trusted: true, adv: true, input: {command: 'PYTHONPYCACHEPREFIX=/home/testuser/x pytest'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-004, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_CACHE_DIR=/home/testuser/.ssh ruff check .'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-005, tool: Bash, trusted: true, adv: true, input: {command: 'MYPY_CACHE_DIR=/home/testuser/x mypy src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-006, tool: Bash, trusted: true, adv: true, input: {command: 'BLACK_CACHE_DIR=/home/testuser/x black .'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-007, tool: Bash, trusted: true, adv: true, input: {command: 'XDG_CACHE_HOME=/tmp/x ruff check .'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-008, tool: Bash, trusted: true, adv: true, input: {command: 'PYTEST_DEBUG_TEMPROOT=/home/testuser/x pytest'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-009, tool: Bash, trusted: true, adv: true, input: {command: 'COVERAGE_PROCESS_START=/home/testuser/x pytest'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-010, tool: Bash, trusted: true, adv: true, input: {command: 'COVERAGE_RCFILE=/home/testuser/x pytest --cov'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-011, tool: Bash, trusted: true, adv: true, input: {command: 'PYTHONEXECUTABLE=/x pytest'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-012, tool: Bash, trusted: true, adv: true, input: {command: 'TMPDIR=/home/testuser/x pytest'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-013, tool: Bash, trusted: true, adv: true, input: {command: 'FOO=1 pytest'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-014, tool: Bash, trusted: true, adv: true, input: {command: 'CI=1 FOO=1 pytest -q'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-015, tool: Bash, trusted: true, adv: true, input: {command: 'CI=1 RUFF_OUTPUT_FILE=/x ruff check .'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-016, tool: Bash, trusted: true, adv: true, input: {command: 'FOO=1 python -m pytest'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-017, tool: Bash, trusted: true, adv: true, input: {command: 'FOO=1 ./.venv/bin/pytest'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-001, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ConvertTo-Json $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-002, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ConvertTo-Json "$env:SECRET_TOKEN"'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-003, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ConvertTo-Json ${env:SECRET_TOKEN}'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-004, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ConvertTo-Json $global:SECRET'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-005, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ConvertTo-Json -Compress $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-006, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ConvertTo-Json $env:SECRET_TOKEN -Depth 1'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-007, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ConvertFrom-Json $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-008, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | ConvertTo-Json $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-009, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Select-Object -Property $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-010, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Select-Object $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-011, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Select-Object -ExpandProperty $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-012, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Select-Object -First $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-013, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Format-Table $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-014, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Format-List -Property $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-015, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Sort-Object $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-016, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Group-Object $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-017, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Where-Object Name -eq $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-018, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Out-String -Width $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-019, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Out-String -Width "$env:SECRET_TOKEN"'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-020, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Out-String $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-021, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Measure-Object -Property $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-022, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem | Measure-Object $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-023, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-Date $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-024, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-Location $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-025, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: '''x'' | Select-Object -Property $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-026, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-Content a.txt -TotalCount $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-027, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-Content a.txt -Tail $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-028, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem -Depth $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-029, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem -Filter $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-030, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Get-ChildItem -Include $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-031, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Select-String -Pattern $env:SECRET_TOKEN a.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-032, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Select-String x a.txt -Context $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h4-033, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'Test-Path a.txt -PathType $env:SECRET_TOKEN'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-026, tool: Bash, trusted: true, adv: true, input: {command: 'python -m black -q @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-027, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'python -m black ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-028, tool: Bash, trusted: true, adv: true, input: {command: 'flake8 @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-029, tool: Bash, trusted: true, adv: true, input: {command: 'python -m flake8 -q @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-030, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'python -m flake8 ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-031, tool: Bash, trusted: true, adv: true, input: {command: 'isort @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-032, tool: Bash, trusted: true, adv: true, input: {command: 'python -m isort -q @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-033, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'python -m isort ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-034, tool: Bash, trusted: true, adv: true, input: {command: 'python -m mypy -q @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-035, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'mypy ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-036, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'python -m mypy ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-037, tool: Bash, trusted: true, adv: true, input: {command: 'pylint @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-038, tool: Bash, trusted: true, adv: true, input: {command: 'python -m pylint -q @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-039, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'python -m pylint ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-040, tool: Bash, trusted: true, adv: true, input: {command: 'python -m pytest -q @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-041, tool: Bash, trusted: true, adv: true, input: {command: 'python -m ruff -q @args.txt'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-042, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ruff ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h1-043, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'python -m ruff ''@args.txt'''}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-018, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/x black'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-019, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/x flake8'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-020, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/x isort'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-021, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/x mypy'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-022, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/x pylint'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-023, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/x pytest'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-h3-024, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/x ruff'}, expect: gray, expect_untrusted: gray}

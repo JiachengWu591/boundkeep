@@ -435,10 +435,20 @@ def test_env_code_prefix_keeps_the_command_gray(command: str, name: str, platfor
 
 @pytest.mark.parametrize("platform", PLATFORMS)
 def test_harmless_env_prefix_is_still_a_dev_tool(platform: str) -> None:
-    for command in ("FOO=1 pytest -q", "CI=true python -m pytest", "NO_COLOR=1 ruff check ."):
+    for command in ("CI=1 pytest -q", "CI=true python -m pytest", "NO_COLOR=1 ruff check ."):
         action = _one(command, platform)
         assert action.program in DEVTOOLS
         assert action.gray_reasons == ()
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_an_unlisted_env_prefix_is_still_a_dev_tool_but_gray(platform: str) -> None:
+    # X1 review of M1c-2 (H-3): the prefix is not interpreted by name any more; only a short list of
+    # harmless names leaves the call understood (docs/reviews/M1c2-security-review.md)
+    for command in ("FOO=1 pytest -q", "RUFF_OUTPUT_FILE=/x ruff check ."):
+        action = _one(command, platform)
+        assert action.program in DEVTOOLS
+        assert any(r.startswith("devtool-env-prefix:") for r in action.gray_reasons)
 
 
 @pytest.mark.parametrize("platform", PLATFORMS)
@@ -679,7 +689,10 @@ def test_c_argument_files_are_gray() -> None:
         action = _one(command)
         assert "devtool-argument-file" in action.gray_reasons
         assert ("args.txt", "read") in _paths(action)
-    assert _one("ruff check @weird").gray_reasons == ()  # not an argument-file tool
+    # X1 review of M1c-2 (H-1): ruff reads argument files too (checked against the real tool), and
+    # so does every other dev tool: an `@` word is gray for all of them
+    for command in ("ruff check @weird", "black @weird", "pylint -k @weird"):
+        assert "devtool-argument-file" in _one(command).gray_reasons
 
 
 def test_c_urls_in_operands_are_still_network() -> None:
@@ -743,7 +756,7 @@ def test_classify_known_tools() -> None:
 
 def test_classify_a_code_env_prefix_is_gray() -> None:
     info = classify("pytest", [], shell="bash", env=[("PYTEST_ADDOPTS", Word("-p x"))])  # noqa: S604
-    assert info.gray == ("env-code-injection:PYTEST_ADDOPTS",)
+    assert info.gray == ("devtool-env-prefix:PYTEST_ADDOPTS", "env-code-injection:PYTEST_ADDOPTS")
 
 
 def test_exports() -> None:

@@ -54,6 +54,7 @@ from boundkeep.normalize.programs import (
 __all__ = [
     "DEV_EXE_ENV",
     "DEV_TOOLS",
+    "DYNAMIC_ARG_GRAY",
     "EXEC_CMDLETS",
     "NESTED_SHELLS",
     "STDIN_INTERPRETERS",
@@ -1473,11 +1474,34 @@ def _cmdlet(
         and _LISTING_RECURSE & {f.lower() for f in bound.flags}
     ):
         ctx.a.path(Word("."), "read")  # no path: the current directory (listing: not scanned)
+    if key in _NO_DYNAMIC_VALUES and any(
+        _non_constant(w) for k, w in bound.named if spec.roles.get(k) not in _PATH_ROLES
+    ):
+        ctx.a.gray.append(DYNAMIC_ARG_GRAY)
     reasons = exec_reasons_of(spec.name, args)
     if reasons:
         ctx.a.exec_hint = True
         ctx.a.gray.extend(reasons)
     return _finish(ctx, spec.name, redirects, env)
+
+
+# X1 review of M1c-2 (H-4): the allow rules for the read cmdlets and the data-shaping / no-path
+# cmdlets rest on "this word is not printed". A value that PowerShell expands (``$env:TOKEN``,
+# ``"x$env:TOKEN"``, ``${env:TOKEN}``) is printed by ``ConvertTo-Json $env:TOKEN`` (its first
+# positional parameter is -InputObject), shown as a column header by ``Select-Object -Property
+# $env:TOKEN`` and echoed by the error of a parameter that cannot convert it. A word that is
+# a path is judged by the path layer; every other expanding word of these cmdlets is gray.
+DYNAMIC_ARG_GRAY = "ps-dynamic-arg"
+_PATH_ROLES = frozenset({"r", "w", "u", "url", "ru"})
+_NO_DYNAMIC_VALUES = _fs(
+    "get-content select-string test-path get-item resolve-path get-childitem set-location "
+    "push-location"
+)
+_BENIGN_EXPANSIONS = frozenset({"$true", "$false", "$null"})
+
+
+def _non_constant(w: Word) -> bool:
+    return w.expands and w.text.lower() not in _BENIGN_EXPANSIONS
 
 
 def _nopath(
@@ -1490,6 +1514,8 @@ def _nopath(
     for w in args:
         if _is_param(w) and w.text != "--":
             ctx.a.flags.append(w.text)
+    if any(_non_constant(w) for w in args):
+        ctx.a.gray.append(DYNAMIC_ARG_GRAY)
     return _finish(ctx, name, redirects, env)
 
 
@@ -1742,6 +1768,7 @@ def _dev_tool(
     a.note_dynamic(sc)
     for _opt, role, w in sc.values:
         ctx.value(role, w)
+    a.gray.extend(programs.devtool_gray_reasons(tool, args, sc.values))
     pos = list(sc.pos)
     if (
         tool == "ruff"
@@ -1754,6 +1781,9 @@ def _dev_tool(
     for w in pos:
         ctx.put(_node_file(w) if tool == "pytest" else w, "unknown")
     kept = [(name, value) for name, value in env if name != DEV_EXE_ENV]
+    for name, _value in kept:
+        if not programs.devtool_env_is_safe(name):
+            a.gray.append(f"{programs.DEVTOOL_ENV_GRAY}:{name}")
     return _finish(ctx, tool, redirects, kept)
 
 

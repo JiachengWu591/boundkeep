@@ -649,6 +649,28 @@ def _make_ref(
     )
 
 
+def _mark_hard_linked(refs: list[PathRef], resolved: paths.NormPath) -> list[PathRef]:
+    """A path that is a hard link is not shown to be where its name says (X1 review, H-6).
+
+    The file has another name somewhere else: inside the project it can be the policy, a settings
+    file or a secret, and every rule that works on the name misses it. No allow rule may rely on
+    ``inside_project`` or the scratchpad for it (the deny / ask rules still see the name, and a
+    ``path_outside_project`` rule sees "not known to be inside").
+    """
+    if paths.HARD_LINKED not in resolved.reasons:
+        return refs
+    return [
+        ref.model_copy(
+            update={
+                "inside_project": None if ref.inside_project is True else ref.inside_project,
+                "in_scratchpad": False,
+                "reasons": _with(ref.reasons, paths.HARD_LINKED),
+            }
+        )
+        for ref in refs
+    ]
+
+
 def _disk_resolve(ctx: _Ctx, norm: paths.NormPath, *, glob: bool = False) -> paths.NormPath:
     """``paths.resolve_on_disk`` with the request's budget and a per-request memo.
 
@@ -737,7 +759,7 @@ def _resolved_forms(
                 resolved=True,
             )
         )
-    return refs
+    return _mark_hard_linked(refs, resolved)
 
 
 def _refs_one(
@@ -798,6 +820,7 @@ def _refs_one(
                     resolved=True,
                 )
             )
+        refs = _mark_hard_linked(refs, resolved)
     if not uncertain and norm.flavor == "posix" and _posix_host() and _has_dotdot(text):
         refs += _dotdot_forms(ctx, text, norm, access, cwd, dialect, refs)
     return refs

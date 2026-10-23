@@ -96,6 +96,43 @@ rules:
       program: [boundkeep-hook]
     action: deny
     reason: "running boundkeep's hook client by hand is not allowed"
+  - id: deny-link-to-guard-files
+    # A hard link is the same file under another name: once `ln ~/.boundkeep/policy.yaml here` exists,
+    # an ordinary Write of `here` rewrites the policy (or the hook settings) and no rule that works
+    # on names sees it. Creating the link is the one moment the target is named, so it is refused
+    # here, with the same globs as protect-guard-config (a test keeps the lists equal). The target
+    # of `ln` and the -Value / -Target of New-Item -ItemType HardLink|SymbolicLink|Junction is a
+    # READ path of the action; New-Item reads nothing else. Reading or copying these files is a
+    # different matter (ask-guard-state-read, protect-guard-config).
+    match:
+      program: [ln, New-Item]
+      path_glob:
+        - "**/.claude/settings*.json"
+        - "**/.boundkeep/**"
+        - "~/.claude/settings*.json"
+        - "**/.claude"
+        - "~/.claude"
+        - "**/managed-settings.json"
+        - "**/managed-settings.d/**"
+      access: read
+    action: deny
+    reason: "a link to boundkeep's files or the hook settings would let a later write change them"
+  - id: deny-link-copy-of-guard-files
+    # cp -l / --link makes a hard link instead of a copy: the same hole as ln (deny-link-to-guard-files).
+    match:
+      program: [cp]
+      flags_any: ["-l", "--link"]
+      path_glob:
+        - "**/.claude/settings*.json"
+        - "**/.boundkeep/**"
+        - "~/.claude/settings*.json"
+        - "**/.claude"
+        - "~/.claude"
+        - "**/managed-settings.json"
+        - "**/managed-settings.d/**"
+      access: read
+    action: deny
+    reason: "a link to boundkeep's files or the hook settings would let a later write change them"
   - id: ask-boundkeep-cli
     # Whatever is left of boundkeep's command line (doctor, test, explain, log --tail, llm) only
     # reads, but those are commands for the user's own terminal and the output can carry command
@@ -1316,3 +1353,11 @@ tests:
   - { tool: Write, input: { file_path: "pytest.ini", content: "x" }, expect: deny }
   - { tool: Bash, input: { command: "echo x > .pytest.ini" }, expect: deny }
   - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem | Select-Object Name" }, expect: gray }
+
+  # X1 review of M1c-2 (H-6): a link to a guard file is the guard file under another name.
+  - { tool: Bash, input: { command: "ln ~/.boundkeep/policy.yaml hard.yaml" }, expect: deny }
+  - { tool: Bash, input: { command: "ln .claude/settings.json hard.json" }, expect: deny }
+  - { tool: Bash, input: { command: "cp -l ~/.boundkeep/policy.yaml hard.yaml" }, expect: deny }
+  - { tool: Bash, input: { command: "cp ~/.boundkeep/policy.yaml copy.yaml" }, expect: ask }   # a copy is only a read
+  - { tool: PowerShell, platform: [windows], input: { command: "New-Item -ItemType HardLink -Path hard.yaml -Value ~\\.boundkeep\\policy.yaml" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "New-Item -ItemType Junction -Path l -Target ~\\.boundkeep" }, expect: deny }

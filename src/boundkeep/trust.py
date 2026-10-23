@@ -354,8 +354,30 @@ def _commit(policy_path: str, bom: str, old_text: str, new_text: str, expected: 
         console.err(f"boundkeep: warning: could not make {policy_path} private ({exc})")
 
 
+# Claude Code sets these in every shell it starts for the agent, and a child process inherits them,
+# including one started with Start-Process / `cmd /c start` (which DOES get a real console: the
+# terminal check below cannot tell a person from an agent's child, X1 review of M1c-2, H-5).
+AGENT_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+
+
+def agent_environment() -> str | None:
+    """The name of the first variable that marks this process as started by Claude Code."""
+    for name in AGENT_ENV:
+        if os.environ.get(name):
+            return name
+    return None
+
+
 def cmd_add(args: argparse.Namespace) -> int:
     policy_path = paths.policy_file()
+    marker = agent_environment()
+    if marker is not None:
+        return _fail(
+            f"trust add refuses to run inside a process Claude Code started ({marker} is set in "
+            "the environment): it widens what runs without asking, so it is a command for you, "
+            "in your own terminal. If this IS your own terminal, start it from outside Claude "
+            f"Code or unset {marker}"
+        )
     if not _stdin_is_tty():
         return _fail(
             "trust add needs an interactive terminal (it widens what runs without asking, so "

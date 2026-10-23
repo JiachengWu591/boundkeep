@@ -80,6 +80,40 @@ class _RuntimeRuleSkipped(Exception):
 _CONFIG_DIR_RULE_ID = "protect-guard-config-dir"
 _CONFIG_DIR_READ_RULE_ID = "no-claude-config-dir-secret-read"
 
+# X1 review of M1c-2 (H-6): a hard link to a protected file is the file under another name, so the
+# rules that work on names miss every later write through it. Creating the link is refused with the
+# protected globs (policies: deny-link-to-guard-files); the machine-dependent protections below get
+# the same twin. Their globs are access-read globs that must NOT become "protected names" of a
+# recursive read (a Grep over a directory that holds a settings file), hence the common prefix.
+LINK_RULE_PREFIX = "deny-link-"
+_LINK_REASON = "a link to a protected file would let a later write change it"
+
+
+def _link_twins(rule: Rule) -> tuple[Rule, ...]:
+    """The two rules (``ln`` / ``New-Item``, ``cp -l``) that refuse to link to ``rule``'s paths."""
+    globs = list(rule.match.path_glob or ())
+    if not globs:
+        return ()
+    base = {"path_glob": globs, "access": "read"}
+    return (
+        Rule.model_validate(
+            {
+                "id": f"{LINK_RULE_PREFIX}{rule.id}",
+                "match": {"program": ["ln", "New-Item"], **base},
+                "action": "deny",
+                "reason": _LINK_REASON,
+            }
+        ),
+        Rule.model_validate(
+            {
+                "id": f"{LINK_RULE_PREFIX}copy-{rule.id}",
+                "match": {"program": ["cp"], "flags_any": ["-l", "--link"], **base},
+                "action": "deny",
+                "reason": _LINK_REASON,
+            }
+        ),
+    )
+
 
 def _config_dir_rules(env: Mapping[str, str], home: str | None) -> tuple[Rule, ...]:
     """The rules for ``CLAUDE_CONFIG_DIR`` (empty: not set). Raises ``_RuntimeRuleSkipped``."""
@@ -305,6 +339,9 @@ def runtime_policy_checked(
             "the runtime rules that protect boundkeep's own code could not be built "
             f"({_clean(type(exc).__name__, 40)})"
         )
+    for rule in tuple(built):
+        if rule.id in (_CONFIG_DIR_RULE_ID, _GUARD_CODE_RULE_ID):
+            built.extend(_link_twins(rule))
     rules = tuple(r for r in built if not any(existing.id == r.id for existing in policy.rules))
     error = _clean("; ".join(problems), 400) if problems else None
     if not rules:
@@ -332,6 +369,8 @@ def protected_read_globs(policy: Policy) -> tuple[str, ...]:
             continue
         if match.access is not None and match.access != "read":
             continue
+        if rule.id.startswith(LINK_RULE_PREFIX):
+            continue  # names the target of a link being CREATED; reading the file is another rule
         out.update(dict.fromkeys(match.path_glob))
     return tuple(out)
 
