@@ -385,9 +385,29 @@ rules:
         - "**/.coveragerc"
         - "**/pytest.ini"
         - "**/.pytest.ini"
+        - "**/pytest.toml"
+        - "**/.pytest.toml"
+        - "**/.pdbrc"
       access: write
     action: deny
     reason: "this file configures a dev tool that loads code named in it"
+  - id: deny-installed-package-dirs-write
+    # Writing into the installed packages of the project's own environment (.venv, site-packages) or the
+    # dependencies it unpacked (node_modules) changes the code that pytest, ruff, mypy, node or python run
+    # next, under the name of a library nobody reads: a prompt-injected agent could rewrite pytest itself
+    # or any imported package. An ordinary edit of the project's source never needs it (a package is
+    # installed or upgraded by the package manager, which is a command, not a file write), so a write
+    # here is refused. The generic allow-project-file-writes would otherwise cover these files (they are
+    # inside the project). No 	ool: filter: Write, Edit, MultiEdit and every shell write carry the same
+    # path with access write. Reading them stays as it was.
+    match:
+      path_glob:
+        - "**/.venv/**"
+        - "**/site-packages/**"
+        - "**/node_modules/**"
+      access: write
+    action: deny
+    reason: "this is installed code (a virtual environment or dependencies), not the project's own source"
   - id: ask-secret-file-write
     # The write side of no-secret-read, with the same globs word for word (a test keeps the two
     # lists equal). Their content is a secret, so reading them is refused; creating or changing one
@@ -1361,3 +1381,10 @@ tests:
   - { tool: Bash, input: { command: "cp ~/.boundkeep/policy.yaml copy.yaml" }, expect: ask }   # a copy is only a read
   - { tool: PowerShell, platform: [windows], input: { command: "New-Item -ItemType HardLink -Path hard.yaml -Value ~\\.boundkeep\\policy.yaml" }, expect: deny }
   - { tool: PowerShell, platform: [windows], input: { command: "New-Item -ItemType Junction -Path l -Target ~\\.boundkeep" }, expect: deny }
+
+  # X1 review of M1c-2 (M-1 and the installed code): tool configuration and installed packages are not the project's source.
+  - { tool: Write, input: { file_path: ".venv/Lib/site-packages/requests/__init__.py", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: "node_modules/x/index.js", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: "pytest.toml", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: ".pdbrc", content: "x" }, expect: deny }
+  - { tool: Bash, input: { command: "echo x > .venv/bin/pytest" }, expect: deny }

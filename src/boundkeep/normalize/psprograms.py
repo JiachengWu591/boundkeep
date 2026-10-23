@@ -1581,7 +1581,12 @@ def _python_dash_m(args: Sequence[Word]) -> tuple[str, int] | None:
             return None
         if w.text in _PY_FLAGS:
             i += 1
-        elif w.text in _PY_VALUE_FLAGS and i + 1 < n and _literal(args[i + 1]):
+        elif (
+            w.text in _PY_VALUE_FLAGS
+            and i + 1 < n
+            and _literal(args[i + 1])
+            and programs.python_option_value_ok(w.text, args[i + 1].text)
+        ):
             i += 2
         else:
             return None

@@ -368,6 +368,66 @@ def agent_environment() -> str | None:
     return None
 
 
+# X1 review of M1c-2 (M-3): an entry means "this directory and everything under it", so trusting
+# `~/dev` also trusts every repository later cloned into it. `trust add` looks for repositories
+# below the directory (bounded) and makes the user say yes to them.
+NESTED_MAX_DEPTH = 3
+NESTED_MAX_ENTRIES = 5000
+NESTED_SHOWN = 5
+_NESTED_SKIP = frozenset({".git", "node_modules", ".venv", "venv", "site-packages", "__pycache__"})
+
+
+def nested_repositories(directory: str) -> tuple[list[str], bool]:
+    """(repositories below ``directory``, whether the search was cut short).
+
+    A repository is a directory that holds ``.git`` (a directory, or the file a worktree or a
+    submodule has). ``directory`` itself is not listed. Looks ``NESTED_MAX_DEPTH`` levels down in at
+    most ``NESTED_MAX_ENTRIES`` entries, never inside ``.git`` or dependency directories, never
+    through a link. Never raises.
+    """
+    found: list[str] = []
+    seen = 0
+    cut = False
+    stack: list[tuple[str, int]] = [(directory, 0)]
+    try:
+        while stack:
+            current, depth = stack.pop()
+            try:
+                with os.scandir(current) as entries:
+                    children = list(entries)
+            except OSError:
+                continue
+            names = {child.name for child in children}
+            if depth > 0 and ".git" in names:
+                found.append(os.path.relpath(current, directory))
+            for child in children:
+                seen += 1
+                if seen > NESTED_MAX_ENTRIES:
+                    return sorted(found), True
+                if child.name in _NESTED_SKIP:
+                    continue
+                try:
+                    if not child.is_dir(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                if depth + 1 > NESTED_MAX_DEPTH:
+                    cut = True
+                    continue
+                stack.append((child.path, depth + 1))
+    except Exception:  # noqa: BLE001 - a warning helper must not stop `trust add`
+        return sorted(found), True
+    return sorted(found), cut
+
+
+def _confirm(question: str) -> bool:
+    """Ask the person at the terminal; only the word ``yes`` counts."""
+    try:
+        return input(f"{question} Type 'yes' to trust it anyway: ").strip().lower() == "yes"
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
 def cmd_add(args: argparse.Namespace) -> int:
     policy_path = paths.policy_file()
     marker = agent_environment()
@@ -393,6 +453,23 @@ def cmd_add(args: argparse.Namespace) -> int:
         if any(_matches(e, canonical, given) for e in entries):
             console.out(f"already trusted: {canonical}")
             return EXIT_OK
+        nested, cut = nested_repositories(canonical)
+        if nested:
+            shown = ", ".join(printable_entry(n, 80) for n in nested[:NESTED_SHOWN])
+            more = f" and {len(nested) - NESTED_SHOWN} more" if len(nested) > NESTED_SHOWN else ""
+            noun = "repository" if len(nested) == 1 else "repositories"
+            partial = " (the search was cut short)" if cut else ""
+            console.out(
+                f"{canonical} contains {len(nested)} other {noun}{partial}: {shown}{more}. "
+                "Trusting it trusts them too, and anything cloned into it later."
+            )
+            if not _confirm("Is that what you want?"):
+                return _fail("not trusted: confirmation not given")
+        elif not os.path.exists(os.path.join(canonical, ".git")):
+            console.out(
+                f"note: {canonical} is not the root of a git repository; everything below it is "
+                "trusted (a repository's own root is the usual choice)"
+            )
         new_text = add_entry_text(text, canonical)
         _commit(policy_path, bom, text, new_text, [*entries, canonical])
     except PolicyError as exc:

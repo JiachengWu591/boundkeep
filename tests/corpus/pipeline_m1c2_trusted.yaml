@@ -167,7 +167,7 @@
 - {id: m2t-n-flag-ruff-output-file, tool: Bash, trusted: true, input: {command: 'ruff check --output-file=out.txt .'}, expect: gray, expect_untrusted: gray, adv: true}
 - {id: m2t-n-flag-ruff-cache-dir, tool: Bash, trusted: true, input: {command: 'ruff check --cache-dir=/tmp/c .'}, expect: ask, expect_untrusted: gray, adv: true}
 - {id: m2t-n-flag-mypy-config, tool: Bash, trusted: true, input: {command: 'mypy --config-file ci.ini src'}, expect: gray, expect_untrusted: gray, adv: true}
-- {id: m2t-n-flag-mypy-python-exec, tool: Bash, trusted: true, input: {command: 'mypy --python-executable .venv/bin/python src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-mypy-python-exec, tool: Bash, trusted: true, input: {command: 'mypy --python-executable .venv/bin/python src'}, expect: ask, expect_untrusted: ask, adv: true}
 - {id: m2t-n-flag-mypy-install-types, tool: Bash, trusted: true, input: {command: 'mypy --install-types --non-interactive src'}, expect: gray, expect_untrusted: gray, adv: true}
 - {id: m2t-n-flag-mypy-install-types-only, tool: Bash, trusted: true, input: {command: 'mypy --install-types src'}, expect: gray, expect_untrusted: gray, adv: true}
 - {id: m2t-n-flag-mypy-cache-dir, tool: Bash, trusted: true, input: {command: 'mypy --cache-dir=.mypy_cache2 src'}, expect: gray, expect_untrusted: gray, adv: true}
@@ -180,7 +180,7 @@
 - {id: m2t-n-flag-isort-settings-path, tool: Bash, trusted: true, input: {command: 'isort --settings-path ci .'}, expect: gray, expect_untrusted: gray, adv: true}
 - {id: m2t-n-flag-isort-settings-file, tool: Bash, trusted: true, input: {command: 'isort --settings-file ci.cfg .'}, expect: gray, expect_untrusted: gray, adv: true}
 - {id: m2t-n-flag-isort-sp, tool: Bash, trusted: true, input: {command: 'isort --sp ci .'}, expect: gray, expect_untrusted: gray, adv: true}
-- {id: m2t-n-flag-isort-virtual-env, tool: Bash, trusted: true, input: {command: 'isort --virtual-env .venv .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-flag-isort-virtual-env, tool: Bash, trusted: true, input: {command: 'isort --virtual-env .venv .'}, expect: ask, expect_untrusted: ask, adv: true}
 - {id: m2t-n-flag-isort-src, tool: Bash, trusted: true, input: {command: 'isort --src lib .'}, expect: gray, expect_untrusted: gray, adv: true}
 - {id: m2t-n-flag-flake8-config, tool: Bash, trusted: true, input: {command: 'flake8 --config ci.cfg src'}, expect: gray, expect_untrusted: gray, adv: true}
 - {id: m2t-n-flag-flake8-append-config, tool: Bash, trusted: true, input: {command: 'flake8 --append-config ci.cfg src'}, expect: gray, expect_untrusted: gray, adv: true}
@@ -215,10 +215,10 @@
 - {id: m2t-n-written-flake8, tool: Bash, trusted: true, input: {command: 'echo x > .flake8; flake8 src'}, expect: ask, expect_untrusted: ask, adv: true}
 - {id: m2t-n-written-pylintrc, tool: Bash, trusted: true, input: {command: 'echo x > pylintrc; pylint src'}, expect: ask, expect_untrusted: ask, adv: true}
 - {id: m2t-n-written-pytest-ini, tool: Bash, trusted: true, input: {command: 'echo x > pytest.ini; pytest'}, expect: ask, expect_untrusted: ask, adv: true}
-- {id: m2t-n-written-tool, tool: Bash, trusted: true, input: {command: 'echo x > .venv/bin/ruff; .venv/bin/ruff check .'}, expect: gray, expect_untrusted: gray, adv: true}
-- {id: m2t-n-written-python, tool: Bash, trusted: true, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m pytest'}, expect: gray, expect_untrusted: gray, adv: true}
-- {id: m2t-n-written-python-ruff, tool: Bash, trusted: true, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m ruff check .'}, expect: gray, expect_untrusted: gray, adv: true}
-- {id: m2t-n-copied-tool, tool: Bash, trusted: true, input: {command: 'cp /tmp/evil .venv/bin/mypy; .venv/bin/mypy src'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-written-tool, tool: Bash, trusted: true, input: {command: 'echo x > .venv/bin/ruff; .venv/bin/ruff check .'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-written-python, tool: Bash, trusted: true, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m pytest'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-written-python-ruff, tool: Bash, trusted: true, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m ruff check .'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-copied-tool, tool: Bash, trusted: true, input: {command: 'cp /tmp/evil .venv/bin/mypy; .venv/bin/mypy src'}, expect: ask, expect_untrusted: ask, adv: true}
 - {id: m2t-n-tee-test, tool: Bash, trusted: true, input: {command: 'echo x | tee t.py; pytest t.py'}, expect: gray, expect_untrusted: gray, adv: true}
 - {id: m2t-n-sed-test, tool: Bash, trusted: true, input: {command: "sed -i 's/a/b/' tests/test_x.py; pytest"}, expect: gray, expect_untrusted: gray, adv: true}
 - {id: m2t-n-cp-test, tool: Bash, trusted: true, input: {command: 'cp /tmp/x tests/test_x.py && pytest'}, expect: gray, expect_untrusted: gray, adv: true}
@@ -226,7 +226,7 @@
 - {id: m2t-n-ps-written-test, tool: PowerShell, platform: windows, trusted: true, input: {command: 'Set-Content tests\test_x.py "x"; pytest tests\test_x.py'}, expect: gray, expect_untrusted: gray, adv: true}
 - {id: m2t-n-ps-written-conftest, tool: PowerShell, platform: windows, trusted: true, input: {command: 'Set-Content conftest.py "x"; pytest'}, expect: ask, expect_untrusted: ask, adv: true}
 - {id: m2t-n-ps-written-mypy-ini, tool: PowerShell, platform: windows, trusted: true, input: {command: '"x" | Out-File mypy.ini; mypy src'}, expect: ask, expect_untrusted: ask, adv: true}
-- {id: m2t-n-ps-written-tool, tool: PowerShell, platform: windows, trusted: true, input: {command: 'Set-Content .venv\Scripts\ruff.exe "x"; & ''.\.venv\Scripts\ruff.exe'' check .'}, expect: gray, expect_untrusted: gray, adv: true}
+- {id: m2t-n-ps-written-tool, tool: PowerShell, platform: windows, trusted: true, input: {command: 'Set-Content .venv\Scripts\ruff.exe "x"; & ''.\.venv\Scripts\ruff.exe'' check .'}, expect: ask, expect_untrusted: ask, adv: true}
 - {id: m2t-n-ps-redirect-test, tool: PowerShell, platform: windows, trusted: true, input: {command: '"x" > t.py; pytest t.py'}, expect: gray, expect_untrusted: gray, adv: true}
 # ---- not a dev tool at all ---------------------------------------------------------------------------------
 - {id: m2t-n-python-script, tool: Bash, trusted: true, input: {command: 'python script.py'}, expect: gray, expect_untrusted: gray, adv: true}
@@ -417,3 +417,23 @@
 - {id: m2r-h3-022, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/x pylint'}, expect: gray, expect_untrusted: gray}
 - {id: m2r-h3-023, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/x pytest'}, expect: gray, expect_untrusted: gray}
 - {id: m2r-h3-024, tool: Bash, trusted: true, adv: true, input: {command: 'RUFF_OUTPUT_FILE=/home/testuser/x ruff'}, expect: gray, expect_untrusted: gray}
+
+# ============ X1 review of M1c / M1c-2: L-1 (the cheap part) and M-1 ====================================
+# `python -X pycache_prefix=...` / `-W error::pkg.Cls` are not a dev-tool call (bytecode written anywhere, a module
+# imported at start-up); a drive-relative path in an option value is gray; pytest.toml and .pdbrc are tool configuration.
+- {id: m2r-l1-001, tool: Bash, trusted: true, adv: true, input: {command: 'python -X pycache_prefix=/home/testuser/out -m pytest -q'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-002, tool: Bash, trusted: true, adv: true, input: {command: 'python -Xpycache_prefix=/home/testuser/out -m pytest -q'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-003, tool: Bash, trusted: true, adv: true, input: {command: 'python -W error::evil.Cls -m pytest -q'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-004, tool: Bash, trusted: true, adv: true, input: {command: 'python -Werror::evil.Cls -m pytest'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-005, tool: Bash, trusted: true, adv: true, input: {command: 'python3 -X dev -X pycache_prefix=/x -m ruff check .'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-006, tool: Bash, trusted: true, adv: true, input: {command: 'pytest --debug=C:x'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-007, tool: Bash, trusted: true, adv: true, input: {command: 'ruff check --output-file=D:out.txt .'}, expect: ask, expect_untrusted: gray}
+- {id: m2r-l1-008, tool: Bash, trusted: true, adv: true, input: {command: 'pytest -oC:x'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-009, tool: Bash, trusted: true, adv: true, input: {command: 'black C:file.py'}, expect: ask, expect_untrusted: gray}
+- {id: m2r-l1-010, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'python -X pycache_prefix=C:\Users\testuser\out -m pytest -q'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-011, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'python -W error::evil.Cls -m pytest -q'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-012, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'py -X pycache_prefix=C:\x -m mypy src'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-013, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pytest --debug=C:x'}, expect: gray, expect_untrusted: gray}
+- {id: m2r-l1-014, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ruff check --output-file=D:out.txt .'}, expect: ask, expect_untrusted: gray}
+- {id: m2r-l1-015, tool: Bash, trusted: true, adv: true, input: {command: 'echo x > pytest.toml; pytest'}, expect: ask, expect_untrusted: ask}
+- {id: m2r-l1-016, tool: Bash, trusted: true, adv: true, input: {command: 'touch .pdbrc && pytest --pdb'}, expect: ask, expect_untrusted: ask}

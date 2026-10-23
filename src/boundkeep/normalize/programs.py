@@ -3687,6 +3687,33 @@ _DEVTOOL_SAFE_ENV = _fs(
 )
 
 
+# X1 review of M1c-2 (L-1), the cheap part (the long-term answer: a per-tool option allowlist):
+# `python -X pycache_prefix=PATH -m pytest` writes bytecode under any directory, and
+# `python -W error::pkg.Cls -m pytest` imports ``pkg`` at start-up. Only the interpreter options
+# that change checks, output or limits leave ``python -m TOOL`` a dev-tool call; anything else
+# makes it the ordinary interpreter call it was before M1c-2.
+_PY_X_OK = re.compile(
+    r"(?:dev|utf8(?:=[01])?|faulthandler|importtime|tracemalloc(?:=[0-9]{1,3})?|"
+    r"frozen_modules=(?:on|off)|int_max_str_digits=[0-9]{1,9}|no_debug_ranges|"
+    r"warn_default_encoding|perf|cpu_count=(?:[0-9]{1,3}|default)|gil=[01])"
+)
+_PY_W_ACTION = re.compile(r"[a-z]{1,10}")
+DEVTOOL_DRIVE_RELATIVE_GRAY = "devtool-drive-relative"
+_DRIVE_RELATIVE = re.compile(r"[A-Za-z]:(?![\\/:])[^\\/]")
+
+
+def python_option_value_ok(flag: str, value: str) -> bool:
+    """Is the value of the interpreter option ``-X`` / ``-W`` one a dev-tool call may carry?"""
+    if flag == "-X":
+        return _PY_X_OK.fullmatch(value) is not None
+    if flag == "-W":
+        parts = value.split(":")
+        if len(parts) > 5 or _PY_W_ACTION.fullmatch(parts[0]) is None:
+            return False
+        return not (len(parts) >= 3 and "." in parts[2])  # a dotted category is imported
+    return False
+
+
 def devtool_env_is_safe(name: str) -> bool:
     low = name.lower()
     return low in _DEVTOOL_SAFE_ENV or low.startswith("lc_")
@@ -3707,6 +3734,18 @@ def devtool_gray_reasons(
     out: list[str] = []
     if any(len(w.text) > 1 and w.text.startswith("@") for w in args):
         out.append(DEVTOOL_ARGFILE_GRAY)
+    # `--debug=C:x`: a drive-relative path (the current directory OF THAT DRIVE) in an option value
+    # is not a path the path layer recognizes; no ordinary dev-tool argument looks like it
+    if any(
+        _DRIVE_RELATIVE.match(candidate)
+        for w in args
+        for candidate in (
+            w.text,
+            w.text.partition("=")[2],  # --opt=D:x
+            w.text[2:] if w.text[:1] == "-" and w.text[1:2] != "-" else "",  # -oD:x
+        )
+    ):
+        out.append(DEVTOOL_DRIVE_RELATIVE_GRAY)
     if tool == "pylint" and any(
         opt in _PYLINT_FORMAT_OPTIONS and not _reporters_are_plain(w.text)
         for opt, _role, w in values
@@ -3861,8 +3900,14 @@ def devtool_form(argv: Sequence[Word]) -> DevToolForm | None:
         if t in ("-X", "-W"):  # the next word is the option's value, whatever it looks like
             if i + 1 >= n or not _literal(argv[i + 1]):
                 return None
+            if not python_option_value_ok(t, argv[i + 1].text):
+                return None
             i += 2
-        elif (t[:2] in ("-X", "-W") and len(t) > 2) or _PY_HARMLESS.fullmatch(t):
+        elif t[:2] in ("-X", "-W") and len(t) > 2:
+            if not python_option_value_ok(t[:2], t[2:]):
+                return None
+            i += 1
+        elif _PY_HARMLESS.fullmatch(t):
             i += 1
         else:
             return None

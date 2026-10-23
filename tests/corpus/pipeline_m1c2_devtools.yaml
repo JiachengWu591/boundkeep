@@ -57,10 +57,10 @@
 - {id: m1c2-dt-written-test, tool: Bash, input: {command: 'echo x > t.py; python -m pytest t.py'}, expect: gray, adv: true}
 - {id: m1c2-dt-written-test-and, tool: Bash, input: {command: 'echo x > t.py && pytest t.py'}, expect: gray, adv: true}
 - {id: m1c2-dt-written-conftest, tool: Bash, input: {command: 'echo x > conftest.py; python -m pytest'}, expect: ask, adv: true}
-- {id: m1c2-dt-written-tool, tool: Bash, input: {command: 'echo x > .venv/bin/ruff; .venv/bin/ruff check .'}, expect: gray, adv: true}
-- {id: m1c2-dt-written-python, tool: Bash, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m pytest'}, expect: gray, adv: true}
-- {id: m1c2-dt-written-python-ruff, tool: Bash, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m ruff check .'}, expect: gray, adv: true}
-- {id: m1c2-dt-copied-tool, tool: Bash, input: {command: 'cp /tmp/evil .venv/bin/mypy; .venv/bin/mypy src'}, expect: gray, adv: true}
+- {id: m1c2-dt-written-tool, tool: Bash, input: {command: 'echo x > .venv/bin/ruff; .venv/bin/ruff check .'}, expect: ask, adv: true}
+- {id: m1c2-dt-written-python, tool: Bash, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m pytest'}, expect: ask, adv: true}
+- {id: m1c2-dt-written-python-ruff, tool: Bash, input: {command: 'echo x > .venv/bin/python; .venv/bin/python -m ruff check .'}, expect: ask, adv: true}
+- {id: m1c2-dt-copied-tool, tool: Bash, input: {command: 'cp /tmp/evil .venv/bin/mypy; .venv/bin/mypy src'}, expect: ask, adv: true}
 
 # ---- the flags that load or run something: kept as flags, never a free pass -----------------------------
 - {id: m1c2-dt-flag-p, tool: Bash, input: {command: 'pytest -p evil_plugin'}, expect: gray, adv: true}

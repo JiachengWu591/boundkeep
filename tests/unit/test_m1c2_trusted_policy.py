@@ -217,6 +217,9 @@ PYTHON_CONFIG_GLOBS = [
     "**/.coveragerc",
     "**/pytest.ini",
     "**/.pytest.ini",
+    "**/pytest.toml",
+    "**/.pytest.toml",
+    "**/.pdbrc",
 ]
 
 
@@ -460,6 +463,9 @@ CONFIG_NAMES = [
     ".coveragerc",
     "pytest.ini",
     ".pytest.ini",
+    "pytest.toml",
+    ".pytest.toml",
+    ".pdbrc",
 ]
 
 

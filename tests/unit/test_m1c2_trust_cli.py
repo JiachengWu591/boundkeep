@@ -433,6 +433,58 @@ def test_remove_and_list_are_not_blocked_inside_claude_code(
     assert env.run("trust", "remove", "--project-dir", str(proj))[0] == 0  # (narrowing is safe)
 
 
+# ---------------------------------------------------------------------------- nested repositories
+# X1 review of M1c-2 (M-3): an entry trusts everything below it, other repositories included.
+
+
+def _repo(path: Path) -> None:
+    path.mkdir(parents=True)
+    (path / ".git").mkdir()
+
+
+def test_add_asks_before_trusting_a_directory_that_holds_other_repositories(
+    env: Env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = env.projects / "dev"
+    _repo(root / "one")
+    _repo(root / "two")
+    before = env.policy.read_bytes()
+    asked: list[str] = []
+    monkeypatch.setattr(trust, "_confirm", lambda q: asked.append(q) or False)
+    code, out, err = env.run("trust", "add", "--project-dir", str(root))
+    assert code == 1
+    assert "confirmation not given" in err
+    assert "2 other repositories" in out
+    assert "one" in out
+    assert "two" in out
+    assert len(asked) == 1
+    assert env.policy.read_bytes() == before  # not a byte changed
+    monkeypatch.setattr(trust, "_confirm", lambda q: True)
+    code, out, _err = env.run("trust", "add", "--project-dir", str(root))
+    assert code == 0
+    assert "trusted:" in out
+    assert len(trust.read_entries(str(env.policy))) == 1
+
+
+def test_add_does_not_ask_for_a_single_repository_or_a_plain_directory(
+    env: Env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def never(_q: str) -> bool:
+        raise AssertionError("no question expected")
+
+    monkeypatch.setattr(trust, "_confirm", never)
+    repo = env.projects / "repo"
+    _repo(repo)
+    assert env.run("trust", "add", "--project-dir", str(repo))[0] == 0
+    plain = env.projects / "plain"
+    plain.mkdir()
+    code, out, _err = env.run("trust", "add", "--project-dir", str(plain))
+    assert code == 0
+    assert "not the root of a git repository" in out  # a note, not a question
+
+
 def test_the_agent_marker_names_are_the_ones_claude_code_sets() -> None:
     assert trust.AGENT_ENV == ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 

@@ -151,10 +151,16 @@ def test_only_ast_class_names_follow_the_three_detail_kinds() -> None:
 
 
 def test_trust_pretends_a_project_is_trusted_without_writing_anything(
-    transcripts: Path, tmp_path: Path
+    transcripts: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # (a project under AppData, where pytest's tmp_path lives on Windows, cannot be trusted any
+    # more: a fake user home keeps the project where a real one would be)
+    user = tmp_path / "user"
+    user.mkdir()
+    monkeypatch.setenv("USERPROFILE", str(user))
+    monkeypatch.setenv("HOME", str(user))
     module = _load()
-    project = tmp_path / "my-trusted-project"
+    project = user / "my-trusted-project"
     project.mkdir()
     out = io.StringIO()
     code = module.main(

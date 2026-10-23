@@ -128,7 +128,16 @@ _BUILD_FILES: dict[str, frozenset[str]] = {
     # M1c-2: dev tools that run repository code; a file written earlier on the same line that they
     # load as code or configuration (plugins, init hooks, conftest) makes the line gray
     "pytest": frozenset(
-        {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml"}
+        {
+            "conftest.py",
+            "pytest.ini",
+            ".pytest.ini",
+            "pytest.toml",
+            ".pytest.toml",
+            "tox.ini",
+            "setup.cfg",
+            "pyproject.toml",
+        }
     ),
     "mypy": frozenset({"mypy.ini", ".mypy.ini", "setup.cfg", "pyproject.toml"}),
     "pylint": frozenset(
