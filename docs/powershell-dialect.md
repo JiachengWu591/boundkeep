@@ -118,6 +118,8 @@ Claude Code 的 PowerShell 工具调用
 **解析与归一化的缺口**
 
 4. **（M1c-2 已关闭）管道开头的字面量**：`"~\.ssh\id_rsa" | Get-Content` 以前灰色且没有 deny；现在辅助进程的摘要在后续各段带 `stage.head`，纯常量开头成为读文件 cmdlet 的读路径（命中 `no-credential-store-read` / `no-secret-read` 就是 deny），非常量开头整行灰色 `ps-pipeline-head-dynamic`。仍然看不清的：开头是 `(Get-Content f)` 这类括号表达式时，括号里的命令按子表达式灰色，不做路径推断。
+4a. **（X1 审查 H-4 已收紧）非路径参数里的展开**：`ConvertTo-Json $env:SECRET_TOKEN`（第一个位置参数就是 `-InputObject`）会把值原样打印，`Select-Object -Property $env:X` 把值当列标题，`Get-Date $env:X`、`Get-Content a.txt -TotalCount $env:X` 在报错里回显。现在 allow 名单上的 cmdlet（数据整形与无路径的那些，以及读类的 `Get-Content`、`Select-String`、`Test-Path`、`Get-Item`、`Resolve-Path`、`Get-ChildItem`、`Set-Location`）的参数里只要有展开（`$true` / `$false` / `$null` 除外），且那不是一个交给路径层判断的路径，就是灰色 `ps-dynamic-arg`。名单之外的 cmdlet 没有变化（它们本来就没有 allow 规则，是灰色或 ask）。
+4b. **（X1 审查 H-1 到 H-3）开发工具**：参数里任何以 `@` 开头的词（带引号的 `'@args.txt'` 在 PowerShell 里是普通字符串，会原样交给 ruff / pytest / mypy 当参数文件）是灰色 `devtool-argument-file`；pylint 的 `--output-format` / `-f` 的值不是内置报告器名是灰色 `devtool-output-format`。PowerShell 没有行内环境变量前缀，`devtool-env-prefix` 只在 Bash 方言出现。
 5. **计算出来的路径**：`$(Join-Path ...)`、`(Join-Path ...)`、成员访问如 `$PROFILE.CurrentUserAllHosts`、`('a' + 'b')` 都是动态值，灰色。
 6. **`$PROFILE` 假定默认的 Documents 位置。** Documents 被 OneDrive 重定向时，`$PROFILE` 指向的真实路径不会被跟随；直接写出真实路径时被 `**/documents/...` 规则覆盖。
 7. **UNC / 网络路径不算联网**：`\\host\share` 被当作普通（项目外）路径，不进 `domains`，`net-allowlist` 看不到。

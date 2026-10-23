@@ -15,8 +15,9 @@
 > **当前进度（2026-10-21）**
 >
 > - **已完成并有标签**：M0a、M0、M1、M1b；对 M1+M1b 的独立 X1 安全审查及复审（`docs/reviews/`），两轮修复已提交；M1c、M1c-2、M1c-3（让 `enforce` 下的日常使用成为可能的 allow 规则，见 §14）。
-> - **已实现，待你确认提交**：M1c-4（当前会话的 scratchpad 放行；全部自动检查通过，真实会话手工验收未做，报告 `docs/reports/M1c4.md`）。
-> - **等待你做**：M1c 与 M1c-2 的定向 X1 审查（提示词已给出）；审查通过、M1c-4 提交之后，规则冻结。
+> - **M1c-4 已提交（`m1c4-done`）**：当前会话的 scratchpad 放行；真实会话手工验收未做，报告 `docs/reports/M1c4.md`。
+> - **M1c / M1c-2 的定向 X1 审查已做，H-1 到 H-6 已修（`m1c2-x1-fixes-done`）**：审查 `docs/reviews/M1c2-security-review.md`，修复报告 `docs/reports/M1c2-review-fixes.md`、`M1c2-review-fixes-2.md`。
+> - **等待你做**：对这一轮修复的复审；冻结规则前建议先做中危 M-1、M-3 与 `.venv` / `node_modules` 写入改 ask，并决定 M-2、L-1 做不做；复审通过之后规则冻结。
 > - **下一步**：M2（评测集、评测框架、`rules-only` 基线）。基线必须在规则冻结之后取，否则基线对应的是一份之后又会变的策略。
 > - **还没开始**：会话状态与污染标记（M3a）、LLM 审计层（M3b）、策略编译（M4）、Web 界面（M5、M6）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
@@ -316,7 +317,7 @@ event(pre) ─> normalize ─> Action
 
 **预算耗尽不得使已可见的 deny 变弱（M1 不变量，X1 审查 M-1）**：归一化预算（动作数、磁盘查询、时间）耗尽后，触发预算的命令与其后的命令仍做纯词法分类（不展开通配符、不查磁盘、不遍历），deny / ask 规则照常匹配词法路径；结果仍带灰色 `budget:*` 标记，所以不会是 `allow`。
 
-**开发工具预设与受信任项目（M1c-2，2026-10-20 批准）**：会运行仓库代码的开发工具（`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`，含 `python -m <工具>` 与项目 `.venv` 里的带路径形式）只有在动作所属的项目目录被列入策略的顶层键 `trusted_projects` 时才有 `allow` 规则（匹配字段 `project_trusted`，默认空列表，所以默认不生效；strict 策略永不放行）。`trusted_projects` 只能由用户在终端里用 `boundkeep trust add|remove|list` 修改（`add` 在 stdin 不是交互终端时拒绝；agent 对 `boundkeep trust` 的调用被策略 deny）；条目是目录而非 glob，拒绝过宽的目录（home、home 的祖先、盘符根、`/`、`C:\Users`、`/tmp`、系统目录等）；项目目录经链接解析后也必须被信任。这个预设与"项目内写入的 allow"合起来构成"先写后运行"的链路：被提示注入的 agent 可以先写一个普通测试文件再运行 `pytest`，仓库代码因此在没有审查的情况下执行；所以只应信任自己写过或审计过的仓库，会话污染标记（M3a）计划用来进一步收紧这条链路。同一行里先写后执行的检测（`exec-of-written-file`）对这些工具的配置文件与测试文件同样生效，但**跨工具调用**的"先写后运行"无法识别。
+**开发工具预设与受信任项目（M1c-2，2026-10-20 批准）**：会运行仓库代码的开发工具（`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`，含 `python -m <工具>` 与项目 `.venv` 里的带路径形式）只有在动作所属的项目目录被列入策略的顶层键 `trusted_projects` 时才有 `allow` 规则（匹配字段 `project_trusted`，默认空列表，所以默认不生效；strict 策略永不放行）。`trusted_projects` 只能由用户在终端里用 `boundkeep trust add|remove|list` 修改（`add` 在 stdin 不是交互终端时拒绝；agent 对 `boundkeep trust` 的调用被策略 deny）；条目是目录而非 glob，拒绝过宽的目录（home、home 的祖先、盘符根、`/`、`C:\Users`、`/tmp`、系统目录等）；项目目录经链接解析后也必须被信任。这个预设与"项目内写入的 allow"合起来构成"先写后运行"的链路：被提示注入的 agent 可以先写一个普通测试文件再运行 `pytest`，仓库代码因此在没有审查的情况下执行；所以只应信任自己写过或审计过的仓库，会话污染标记（M3a）计划用来进一步收紧这条链路。同一行里先写后执行的检测（`exec-of-written-file`）对这些工具的配置文件与测试文件同样生效，但**跨工具调用**的"先写后运行"无法识别。**开发工具契约的补充（M1c/M1c-2 的 X1 审查 H-1 到 H-3，2026-10-22）**：`flags_none` 是危险选项的黑名单，看不见"值里藏路径或模块"的写法，所以归一化层另给三种灰色，规则不用改：工具的任何参数以 `@` 开头（参数文件，ruff / pytest / mypy 都支持，带引号的 PowerShell 字符串也算）；pylint 的 `--output-format` / `-f` 的值不是内置报告器名（`报告器:文件` 写任意路径，`模块.类` 导入代码）；Bash 方言里工具命令前的环境变量前缀不在一份短白名单内（`RUFF_OUTPUT_FILE` 等把输出或缓存送到任意路径）。长期方向是把黑名单换成每个工具的安全选项白名单（未列出的选项一律灰色）。**信任列表按会话快照（H-5，同一批审查）**：`trust add` 的"必须是真实控制台"检查不是边界（`Start-Process`、`cmd /c start`、`< CON` 起的子进程都有真实控制台；间接写法对规则只是灰色），所以守护进程记下每个会话第一个事件时的 `trusted_projects`，会话中途新增的条目对那个会话不生效（删除立即生效；没有可用 `session_id` 就没有受信任的项目）；`trust add` 另外在 `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` 环境下拒绝。用户 `trust add` 之后要新开会话才生效。**硬链接（H-6）**：磁盘解析对 `st_nlink > 1` 的普通文件加原因 `hard-linked`，该路径对 allow 规则"不确定"；创建指向守护文件的链接（`ln`、`New-Item -ItemType HardLink|SymbolicLink|Junction`、`cp -l`）是 deny。**PowerShell（H-4）**：allow 名单上的 cmdlet 的参数里出现非路径的展开（`$env:TOKEN`、`"x$env:TOKEN"`、`${env:TOKEN}`；`$true` / `$false` / `$null` 除外）是灰色 `ps-dynamic-arg`，因为 `ConvertTo-Json $env:TOKEN` 等会把值打印进上下文。
 
 **Action（归一化后的动作）**
 
@@ -716,7 +717,7 @@ boundkeep/
 | M1c | `enforce` 下可日常使用的 allow 规则（X1 审查 M-13）：匹配字段 `flags_none` / `paths_read_only`，先补 L-11 的 ask 规则，再加第 1 档只读检查与第 2 档项目内写入的 allow（只在默认策略；`emit_allow` 保持关闭，目标是与 Claude Code 持平） | 对抗语料对 shell 命令永不 allow；度量语料上"每百动作询问数"如实报告；真实 Claude Code 冒烟；allow 规则的定向 X1 审查 | 已完成（标签 `m1c-done`）；**定向 X1 审查待做** |
 | M1c-2 | 开发工具预设：`trusted_projects` 与 `project_trusted`、`boundkeep trust`、`pytest`/`ruff`/`mypy` 等的识别与 allow、PowerShell 管道头修复、数据整形 allow（§7） | 默认不信任任何项目；信任前后的判决差异有真实冒烟；`trust add` 的真实控制台路径有手工验收 | 已完成（标签 `m1c2-done`；手工验收通过）；**定向 X1 审查待做** |
 | M1c-3 | 放行项目内的 `cd` 族（`allow-cd-family`，必须带 `path_inside_project`） | `cd` 之后的命令仍按新目录判断；项目外与动态目标的 `cd` 仍是灰色 | 已完成（标签 `m1c3-done`；未单独做手工验收） |
-| M1c-4 | 放行当前会话自己的 scratchpad 目录（`path_in_scratchpad`，只对文件工具） | 只认当前会话 id 与守护进程临时目录下的精确结构；现有 deny/ask 仍然优先；shell 命令不受影响 | **已实现，待确认提交**（自动检查全过；真实会话手工验收未做） |
+| M1c-4 | 放行当前会话自己的 scratchpad 目录（`path_in_scratchpad`，只对文件工具） | 只认当前会话 id 与守护进程临时目录下的精确结构；现有 deny/ask 仍然优先；shell 命令不受影响 | **完成**（`m1c4-done`；真实会话手工验收未做） |
 | M2 | 评测集 v1（含 Windows 样本）+ `run_eval.py` + `rules-only` 基线 | 产出第一份 `report.md`（基线数字，按平台分别报告） | **未开始**（前置：M1c 系列规则冻结，M1c 与 M1c-2 的定向 X1 审查通过） |
 | M3a | 会话状态、污染标记、后端接口与假后端、OpenAI 兼容适配器（对本地假服务测试）、二次裁决、`rules+taint` 评测、`llm check` | 不需要网络与密钥；一致性测试通过；`rules+taint` 行完整 | 未开始 |
 | M3b | 真实 LLM 后端评测（可推迟） | 你自备密钥并确认费用、在本地运行；`rules+LLM` 与 `rules+LLM+taint` 两行完整，增量如实报告 | 未开始 |
