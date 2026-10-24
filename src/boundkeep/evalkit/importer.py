@@ -74,7 +74,11 @@ _ENV_SECRET = re.compile(
     r"(?i)\b[A-Z0-9_]*(?:SECRET|TOKEN|PASSW(?:OR)?D|PASSWD|API_?KEY|PRIVATE_?KEY|CREDENTIAL)[A-Z0-9_]*"
     r"\s*[=:]\s*['\"]?[^\s'\"$<{(]{6,}"
 )
-_URL_CREDENTIALS = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@")
+_URL_CREDENTIALS = re.compile(
+    r"(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@\\()\[\]{}*+?|]+:[^/\s@\\()\[\]{}*+?|]+@"
+)
+_UUID = re.compile(r"(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b")
+_CAMEL_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z]+|[a-z]+|\d+")
 _URL_TOKEN_QUERY = re.compile(
     r"(?i)[?&](?:token|key|secret|sig|signature|password|passwd|auth)=[^&\s]{6,}"
 )
@@ -84,6 +88,14 @@ _IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
 _URL_HOST = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://(?:[^/\s@\"']*@)?(\[[0-9a-f:]+\]|[^/\s:?#\"']+)")
 _WIN_ABS = re.compile(r"(?<![\w])[A-Za-z]:[\\/][^\s\"'<>|*?;,)]*")
 _POSIX_ABS = re.compile(r"(?<![\w.:/~$-])/(?:[\w.@+-]+/)*[\w.@+-]+")
+_SCRATCHPAD = re.compile(
+    r"(?i)([\\/])claude([\\/])[^\\/\s\"']+([\\/])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+)
+FAKE_SESSION = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+NO_INTENT = "(任务意图未记录)"
+_CLAUDE_PROJECTS = re.compile(
+    r"(?i)([\\/])\.claude([\\/])projects([\\/])[^\\/\s\"']+([\\/])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+)
 _PROMPT_NOISE = re.compile(r"(?s)<system-reminder>.*?</system-reminder>")
 _REPO_CODE = re.compile(
     r"(?i)\b(?:pytest|ruff|mypy|pylint|flake8|black|isort|tox|nox|make|cmake|gradle|mvn|dotnet\s+(?:build|test|run)|"
@@ -98,6 +110,7 @@ class ImportStats:
     tool_calls: int = 0
     kept: int = 0
     dropped: Counter[str] = field(default_factory=Counter)
+    shapes: Counter[str] = field(default_factory=Counter)  # kept samples per call shape
 
     def drop(self, reason: str) -> None:
         self.dropped[reason] += 1
@@ -183,6 +196,35 @@ def _entropy(token: str) -> float:
     return -sum(c / len(token) * math.log2(c / len(token)) for c in counts.values())
 
 
+def _wordlike(piece: str) -> bool:
+    """Is the piece of a path or identifier made of words (``Loader2``, ``SchemaV3``, ``HTTPServer``)?
+
+    Most of its letters must sit in runs of three or more letters of one word shape; a random
+    string (``xK9mQ2Lp8``) has almost none.
+    """
+    if len(piece) <= 4:  # too short to be a key (``a``, ``V3``, ``py3``)
+        return True
+    words = _CAMEL_WORDS.findall(piece)
+    letters = sum(len(w) for w in words if w.isalpha())
+    if letters == 0:
+        return True
+    return sum(len(w) for w in words if w.isalpha() and len(w) >= 3) >= 0.7 * letters
+
+
+def _looks_random(token: str) -> bool:
+    """A long mixed-case token with digits and high entropy, that is not made of words.
+
+    ``src/boundkeep/policy/Loader2`` and ``test_Case2_FooBar`` are paths and identifiers (every
+    piece between ``/``, ``_`` and ``-`` is a word, possibly with trailing digits); a key or token
+    is not.
+    """
+    mixed = any(c.islower() for c in token) and any(c.isupper() for c in token)
+    if not (mixed and any(c.isdigit() for c in token) and _entropy(token) >= 3.8):
+        return False
+    pieces = [p for p in re.split(r"[_/-]", token) if p]
+    return not all(_wordlike(p) for p in pieces)
+
+
 def secret_reasons(text: str) -> list[str]:
     """Why ``text`` must not be committed even redacted (empty when nothing looks like a secret)."""
     reasons = [
@@ -196,10 +238,8 @@ def secret_reasons(text: str) -> list[str]:
         reasons.append("url-credentials")
     if _URL_TOKEN_QUERY.search(text):
         reasons.append("url-token")
-    for match in _TOKENISH.finditer(text):
-        token = match.group(0)
-        mixed = any(c.islower() for c in token) and any(c.isupper() for c in token)
-        if mixed and any(c.isdigit() for c in token) and _entropy(token) >= 3.8:
+    for match in _TOKENISH.finditer(_UUID.sub("", text)):  # a session id is not a key
+        if _looks_random(match.group(0)):
             reasons.append("high-entropy-token")
             break
     return reasons
@@ -287,6 +327,10 @@ def rewrite(text: str, machine: Machine) -> str:
     text = _replace_root(text, machine.project, machine.fake_project, windows)
     text = _replace_root(text, machine.home, machine.fake_home, windows)
     text = redact.redact(text, extra_names=[machine.user] if machine.user else [])
+    text = _SCRATCHPAD.sub(lambda m: f"{m[1]}claude{m[2]}proj{m[3]}{FAKE_SESSION}", text)
+    text = _CLAUDE_PROJECTS.sub(
+        lambda m: f"{m[1]}.claude{m[2]}projects{m[3]}proj{m[4]}{FAKE_SESSION}", text
+    )
     text = _EMAIL.sub("user@example.invalid", text)
     keep = ("127.0.0.1", "0.0.0.0")  # noqa: S104
     return _IPV4.sub(lambda m: m.group(0) if m.group(0) in keep else "192.0.2.1", text)
@@ -342,6 +386,25 @@ def omit_long_content(value: Any, key: str | None = None) -> Any:
     return value
 
 
+def call_shape(tool: str, tool_input: dict[str, Any]) -> str:
+    """What kind of call this is, coarsely: the same shape over and over is one kind of sample.
+
+    A shell command is its program and subcommand (``git log``, ``npm test``, ``cat``); a file tool
+    is its directory; anything else is the tool.
+    """
+    command = tool_input.get("command")
+    if isinstance(command, str):
+        words = command.split()
+        head = words[:1]
+        if len(words) > 1 and re.fullmatch(r"[a-z][a-z-]*", words[1]):  # a subcommand, not a path
+            head = words[:2]
+        return f"{tool}:" + " ".join(head)
+    path = tool_input.get("file_path") or tool_input.get("path")
+    if isinstance(path, str):
+        return f"{tool}:{path.replace(chr(92), '/').rsplit('/', 1)[0].lower()}"
+    return tool
+
+
 def guess_runs_repo_code(tool: str, tool_input: dict[str, Any]) -> bool:
     """A starting point for the reviewer (who confirms it): does the command run project code?"""
     if tool not in ("Bash", "PowerShell"):
@@ -386,7 +449,7 @@ def _build(
         return None
     new_intent = rewrite(intent, machine)[:MAX_INTENT_CHARS] if keep_intent and intent else ""
     if not new_intent or outside_paths(new_intent, machine):
-        new_intent = "(任务意图未记录)"
+        new_intent = NO_INTENT
     platform = "windows" if (tool == "PowerShell" or machine.platform == "windows") else "posix"
     return {
         "category": "benign",
@@ -414,6 +477,7 @@ def import_session(
     known: set[str] | None = None,
     keep_intent: bool = True,
     limit: int | None = None,
+    shape_limit: int = 3,
 ) -> list[dict[str, Any]]:
     """Candidate benign samples from one session file (also updates ``stats``).
 
@@ -428,15 +492,21 @@ def import_session(
         return []
     machine = guess_machine(cwd, home)
     session = next((str(e["sessionId"]) for e in entries if e.get("sessionId")), path.stem)
-    tag = hashlib.sha1(session.encode("utf-8"), usedforsecurity=False).hexdigest()[:6]
+    # a sub-agent file carries its parent's sessionId: the file name keeps the ids apart
+    tag = hashlib.sha1(f"{session}|{path.name}".encode(), usedforsecurity=False).hexdigest()[:6]
     seen = known if known is not None else set()
     rows: list[dict[str, Any]] = []
-    intent = ""
+    intent_main = ""  # the person's latest prompt in the main thread
+    intent_side = ""  # the latest brief given to a sub-agent (its session file is all sidechain)
     call_index = 0  # position of the call in the session: the id never depends on what was dropped
     for entry in entries:
         prompt = _prompt_text(entry)
-        if prompt is not None and not entry.get("isSidechain"):
-            intent = prompt
+        if prompt is not None:
+            if entry.get("isSidechain"):
+                intent_side = prompt
+            else:
+                intent_main = prompt
+        intent = (intent_side or intent_main) if entry.get("isSidechain") else intent_main
         if entry.get("type") != "assistant":
             continue
         for block in _blocks(entry):
@@ -470,7 +540,12 @@ def import_session(
             if key in seen:
                 stats.drop("duplicate")
                 continue
+            shape = call_shape(name, row["input"])
+            if shape_limit and stats.shapes[shape] >= shape_limit:
+                stats.drop("shape-cap")  # the same kind of call again and again skews the set
+                continue
             seen.add(key)
+            stats.shapes[shape] += 1
             rows.append(row)
             stats.kept += 1
             if limit is not None and len(rows) >= limit:

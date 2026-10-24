@@ -402,3 +402,181 @@ def test_redact_helpers_used_by_the_importer() -> None:
     )
     assert importer.internal_host("http://wiki/page") == "wiki"
     assert redact.find_leaks("C:\\Users\\testuser\\x") == []
+
+
+# ---------------------------------------------------------------------------- real-session findings
+
+
+def test_a_sub_agent_session_keeps_its_brief_as_the_intent(tmp_path: Path) -> None:
+    p = WIN_PROJECT
+    entries = [
+        _user("review the install module", p, isSidechain=True),
+        {**_call("a", "PowerShell", {"command": "git status"}, p), "isSidechain": True},
+    ]
+    rows, _ = _import(_write(tmp_path / "agent.jsonl", entries))
+    assert rows[0]["task_intent"] == "review the install module"
+
+
+def test_a_main_thread_call_ignores_a_sub_agents_brief(tmp_path: Path) -> None:
+    p = WIN_PROJECT
+    entries = [
+        _user("fix the bug", p),
+        _user("go and read the logs", p, isSidechain=True),
+        _call("a", "PowerShell", {"command": "git status"}, p),
+    ]
+    rows, _ = _import(_write(tmp_path / "s.jsonl", entries))
+    assert rows[0]["task_intent"] == "fix the bug"
+
+
+def test_the_scratchpad_slug_and_session_id_are_made_up(tmp_path: Path) -> None:
+    p = WIN_PROJECT
+    base = f"{WIN_HOME}\\AppData\\Local\\Temp\\claude"
+    scratch = f"{base}\\e--secretproj\\3eb417ee-d0b1-48ea-9370-bfe97d863ad8\\scratchpad\\t.py"
+    path = _write(
+        tmp_path / "s.jsonl",
+        [_user("x", p), _call("a", "Write", {"file_path": scratch, "content": "x"}, p)],
+    )
+    rows, _ = _import(path)
+    got = rows[0]["input"]["file_path"]
+    assert (
+        got == "C:\\Users\\testuser\\AppData\\Local\\Temp\\claude\\proj\\"
+        f"{importer.FAKE_SESSION}\\scratchpad\\t.py"
+    )
+    assert "secretproj" not in got
+    assert "3eb417ee" not in got
+
+
+def test_the_same_kind_of_call_is_capped(tmp_path: Path) -> None:
+    p = POSIX_PROJECT
+    calls = [_call(f"c{i}", "Bash", {"command": f"cat {p}/src/f{i}.py"}, p) for i in range(10)]
+    calls += [_call("g", "Bash", {"command": "git status"}, p)]
+    path = _write(tmp_path / "s.jsonl", [_user("x", p), *calls])
+    rows, stats = _import(path)
+    assert [r["input"]["command"] for r in rows].count("git status") == 1
+    assert len(rows) == 4  # three of the ten cats, and the one git call
+    assert stats.dropped["shape-cap"] == 7
+    rows, _ = _import(path, shape_limit=0)
+    assert len(rows) == 11  # 0 means no limit
+
+
+def test_call_shapes() -> None:
+    assert importer.call_shape("Bash", {"command": "git  log --oneline -n 5"}) == "Bash:git log"
+    assert importer.call_shape("Read", {"file_path": "C:\\a\\B\\c.py"}) == "Read:c:/a/b"
+    assert importer.call_shape("Read", {"file_path": "C:/a/B/d.py"}) == "Read:c:/a/b"
+    assert importer.call_shape("mcp__x__y", {"q": 1}) == "mcp__x__y"
+
+
+def test_per_file_cap_spreads_the_candidates(tmp_path: Path) -> None:
+    p = POSIX_PROJECT
+    for name, word in (("a", "alpha"), ("b", "beta")):
+        calls = [_call(f"{name}{i}", "Bash", {"command": f"{word}{i} run"}, p) for i in range(5)]
+        _write(tmp_path / f"{name}.jsonl", [{**_user("x", p), "sessionId": name}, *calls])
+    out = tmp_path / "out.jsonl"
+    code = _run(
+        "eval",
+        "import-session",
+        str(tmp_path),
+        "--out",
+        str(out),
+        "--datasets",
+        str(tmp_path / "none"),
+        "--per-file",
+        "2",
+        "--shape-limit",
+        "0",
+        "--max",
+        "10",
+    )
+    assert code == 0
+    commands = [
+        json.loads(x)["input"]["command"] for x in out.read_text(encoding="utf-8").splitlines()
+    ]
+    assert sorted(c.split()[0][:-1] for c in commands) == ["alpha", "alpha", "beta", "beta"]
+
+
+def test_sub_agent_files_that_share_a_session_id_get_different_ids(tmp_path: Path) -> None:
+    p = WIN_PROJECT
+    ids = []
+    for name in ("agent-1.jsonl", "agent-2.jsonl"):
+        path = _write(
+            tmp_path / name, [_user("x", p), _call("a", "PowerShell", {"command": "git status"}, p)]
+        )
+        stats = importer.ImportStats()
+        rows = importer.import_session(path, stats, shape_limit=0)
+        ids += [r["id"] for r in rows]
+    assert len(ids) == 2
+    assert len(set(ids)) == 2
+
+
+def test_claude_projects_paths_lose_the_project_slug_and_session_id() -> None:
+    machine = importer.guess_machine(WIN_PROJECT, WIN_HOME)
+    uuid = "706a931a-5930-44fc-b89d-8f9af1d0ef48"
+    src = f"{WIN_HOME}\\.claude\\projects\\E--thesis----\\{uuid}\\tool-results\\x.pdf"
+    out = importer.rewrite(src, machine)
+    fake = importer.FAKE_SESSION
+    assert out == f"C:\\Users\\testuser\\.claude\\projects\\proj\\{fake}\\tool-results\\x.pdf"
+
+
+def test_the_review_sheet_flags_non_ascii_samples() -> None:
+    from boundkeep import evalcli
+
+    rows = [
+        {
+            "id": "ben-real-aaaaaa-0001",
+            "platform": "windows",
+            "task_intent": importer.NO_INTENT,
+            "tool": "Read",
+            "input": {"file_path": "C:\\Users\\testuser\\proj\\报告.md"},
+            "runs_repo_code": False,
+        },
+        {
+            "id": "ben-real-aaaaaa-0002",
+            "platform": "windows",
+            "task_intent": importer.NO_INTENT,
+            "tool": "Read",
+            "input": {"file_path": "C:\\Users\\testuser\\proj\\a.md"},
+            "runs_repo_code": False,
+        },
+    ]
+    lines = evalcli.review_sheet(rows).splitlines()
+    first = next(x for x in lines if "0001" in x)
+    second = next(x for x in lines if "0002" in x)
+    assert "| 是 |" in first
+    assert "| 是 |" not in second
+
+
+# ------------------------------------------------- fewer false positives, the secrets still dropped
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "C:/Users/testuser/AppData/Local/Temp/claude/proj/3eb417ee-d0b1-48ea-9370-bfe97d863ad8/scratchpad/x.py",
+        "src/boundkeep/policy/Loader2/SchemaV3",
+        "test_Case2_FooBar_Baz9_HTTPServer3",
+        'python -c "import sys; print(sys.version)"',
+        "git show 4f2a9c1e8b7d6a5c4b3a2f1e0d9c8b7a6f5e4d3c",
+    ],
+)
+def test_paths_identifiers_and_session_ids_are_not_secrets(text: str) -> None:
+    assert importer.secret_reasons(text) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "token xK9mQ2Lp8Rt4Vb7Nc1Kd5Hs3Jf6Gh0Zz",
+        "key wJalrXUtnFEMIK7MDENGbPxRfiCYzQ4Ab9",
+        "x=Zx9Qm2Lp8Rt4Vb7Nc1Kd5Hs3Jf6",
+        "curl -H 'X-Auth: aB3dE5gH7jK9mN1pQ3sT5vX7zC9bD2fG4'",
+    ],
+)
+def test_random_looking_tokens_are_still_secrets(text: str) -> None:
+    assert "high-entropy-token" in importer.secret_reasons(text)
+
+
+def test_regex_like_text_is_not_url_credentials_but_real_ones_are() -> None:
+    assert importer.secret_reasons(r"re.compile(r'://[^/\s:@]+:[^/\s@]+@')") == []
+    assert importer.secret_reasons("git clone https://user:pass123@github.com/a/b.git") == [
+        "url-credentials"
+    ]

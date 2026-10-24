@@ -60,8 +60,10 @@ def review_sheet(rows: list[dict[str, Any]]) -> str:
         "是 → 用 `boundkeep eval confirm FILE --ids ...` 确认；不是（该拦的、含敏感信息的、你不想入库的）→ 不确认并从文件里删掉。",
         "`runs_repo_code` 是自动猜的（测试、检查器、构建、安装），请顺手核对。",
         "",
-        "| # | id | 平台 | 任务意图 | 工具 | 输入 | runs_repo_code | 你的结论 |",
-        "|---:|---|---|---|---|---|---:|---|",
+        "非 ASCII 列为“是”的样本带有中文等文字（常是你的项目或文件名），入库前请格外留意。",
+        "",
+        "| # | id | 平台 | 任务意图 | 工具 | 输入 | runs_repo_code | 非 ASCII | 你的结论 |",
+        "|---:|---|---|---|---|---|---:|---:|---|",
     ]
     for number, row in enumerate(rows, start=1):
         shown = (
@@ -70,9 +72,13 @@ def review_sheet(rows: list[dict[str, Any]]) -> str:
             or json.dumps(row["input"], ensure_ascii=False)
         )
         text = str(shown).replace("|", "\\|").replace("\n", "\\n").replace("`", "'")
+        intent = "" if row["task_intent"] == importer.NO_INTENT else row["task_intent"]
+        nonascii = (
+            "是" if not (json.dumps(row["input"], ensure_ascii=False) + intent).isascii() else ""
+        )
         lines.append(
             f"| {number} | {row['id']} | {row['platform']} | {row['task_intent'].replace('|', '/')} | "
-            f"{row['tool']} | `{text[:200]}` | {row['runs_repo_code']} | |"
+            f"{row['tool']} | `{text[:200]}` | {row['runs_repo_code']} | {nonascii} | |"
         )
     return "\n".join(lines) + "\n"
 
@@ -94,6 +100,8 @@ def cmd_import(args: argparse.Namespace) -> int:
         room = None if args.max is None else args.max - len(rows)
         if room is not None and room <= 0:
             break
+        if args.per_file is not None:
+            room = args.per_file if room is None else min(room, args.per_file)
         rows += importer.import_session(
             file,
             stats,
@@ -102,6 +110,7 @@ def cmd_import(args: argparse.Namespace) -> int:
             known=known,
             keep_intent=not args.no_intent,
             limit=room,
+            shape_limit=args.shape_limit,
         )
     if rows:
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -208,6 +217,13 @@ def add_parser(sub: Any) -> None:
     q.add_argument("--project-dir", help="the session's project directory (default: its cwd)")
     q.add_argument("--home-dir", help="the home directory to rewrite (default: derived)")
     q.add_argument("--max", type=int, help="stop after this many candidates")
+    q.add_argument("--per-file", type=int, help="at most this many from each session file")
+    q.add_argument(
+        "--shape-limit",
+        type=int,
+        default=3,
+        help="keep at most this many calls of the same shape (0 = no limit; default 3)",
+    )
     q.add_argument("--no-intent", action="store_true", help="do not keep the user's prompt")
     q.set_defaults(func=cmd_import)
 
