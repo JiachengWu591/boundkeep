@@ -1,6 +1,9 @@
 # M0a 实验的原始记录：未脱敏，绝不提交（脱敏后的证据放 experiments/evidence/）
 experiments/raw/
 
+# Imported real-session samples that no person has confirmed yet: redacted, but never committed
+eval/staging/
+
 # Python
 __pycache__/
 *.pyc

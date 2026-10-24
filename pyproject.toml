@@ -83,6 +83,12 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/e2e/test_cli_hardening.py" = ["F811"]  # imports the `machine` fixture
 "tests/e2e/test_cli_m1.py" = ["F811"]  # imports the `machine` fixture
+# the evaluation report is written in Chinese like the project docs: full-width punctuation and long
+# literal lines are the text, not mistakes
+"src/boundkeep/evalkit/report.py" = ["RUF001", "RUF003", "E501"]
+"src/boundkeep/evalkit/importer.py" = ["RUF001", "E501"]
+"src/boundkeep/evalcli.py" = ["RUF001", "RUF003", "E501"]
+"tests/unit/test_evalkit.py" = ["RUF001"]
 "tests/**" = ["S101", "S105", "S106", "S108", "S603", "S607", "S404", "BLE001", "T20"]
 "scripts/**" = ["S404", "S603", "S607", "BLE001", "T20", "SIM115", "PLW1514", "UP031", "B904", "E501"]
 

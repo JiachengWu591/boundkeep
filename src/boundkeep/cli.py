@@ -20,6 +20,7 @@ from boundkeep import (
     __version__,
     claude_settings,
     console,
+    evalcli,
     fsperm,
     hookcmd,
     install,
@@ -681,6 +682,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_mode)
 
     trust.add_parser(sub)
+    evalcli.add_parser(sub)
 
     p = sub.add_parser("log", help="show the recent audit log")
     p.add_argument("--tail", type=int, default=20, help="number of records (default 20)")
