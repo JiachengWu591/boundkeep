@@ -393,8 +393,9 @@ rules:
     action: ask
     reason: "this file configures a dev tool that loads code named in it"
   - id: ask-installed-package-dirs-write
-    # Writing into the installed packages of the project's own environment (.venv, site-packages) or the
-    # dependencies it unpacked (node_modules) changes the code that pytest, ruff, mypy, node or python run
+    # Writing into the installed packages of the project's own environment (.venv, venv, env, .tox, .nox,
+    # .conda, .pixi, .direnv, __pypackages__, site-packages) or the dependencies it unpacked
+    # (node_modules) changes the code that pytest, ruff, mypy, node or python run
     # next, under the name of a library nobody reads: a prompt-injected agent could rewrite pytest itself
     # or any imported package. An ordinary edit of the project's source never needs it (a package is
     # installed or upgraded by the package manager, which is a command, not a file write), so a write
@@ -404,7 +405,16 @@ rules:
     match:
       path_glob:
         - "**/.venv/**"
+        - "**/venv/**"
+        - "**/env/**"
+        - "**/.tox/**"
+        - "**/.nox/**"
+        - "**/.conda/**"
+        - "**/.pixi/**"
+        - "**/.direnv/**"
+        - "**/__pypackages__/**"
         - "**/site-packages/**"
+        - "**/dist-packages/**"
         - "**/node_modules/**"
       access: write
     action: ask
@@ -2174,3 +2184,12 @@ tests:
   - { tool: Write, input: { file_path: "pytest.toml", content: "x" }, expect: ask }
   - { tool: Write, input: { file_path: ".pdbrc", content: "x" }, expect: ask }
   - { tool: Bash, input: { command: "echo x > .venv/bin/pytest" }, expect: ask }
+
+  # X1 re-review of the fixes: venv-like directories, a switch's colon value, an allow rule never rides an expanded word.
+  - { tool: Write, input: { file_path: "venv/bin/pytest", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: ".tox/py312/bin/pytest", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "environment/app.py", content: "x" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "Out-String -Stream:$env:SECRET_TOKEN" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content a.txt -Wait:$env:SECRET_TOKEN" }, expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-ChildItem -Recurse:$true" }, expect: allow }
+  - { tool: Bash, input: { command: 'head -n "$SECRET_TOKEN" f' }, expect: gray }

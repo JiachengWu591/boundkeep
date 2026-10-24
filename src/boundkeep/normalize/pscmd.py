@@ -29,7 +29,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from boundkeep.normalize import psaliases, psprograms
+from boundkeep.normalize import programs, psaliases, psprograms
 from boundkeep.normalize.model import BashResult, Redirect, SimpleCmd, Word
 from boundkeep.normalize.programs import peel_runner
 
@@ -45,6 +45,7 @@ _MAX_TAG = 64
 _REDIRECT_CHARS = frozenset("0123456789*<>&")
 _BAREISH = ("bare", "single", "double")
 _LITERAL_PARAMS = frozenset({"-literalpath", "-pspath"})
+_BOOLEAN_LITERALS = frozenset({"$true", "$false", "$null"})  # a switch's `:$true` is no value
 _DYNAMIC_PREFIX = "$("
 _ARRAY_SEP = Word(",")  # between the elements of an array argument of a cmdlet
 # Built-in FUNCTIONS (not aliases, not cmdlets) that are Set-Location with a fixed argument: the
@@ -393,6 +394,11 @@ def _elements(c: Mapping[str, Any], st: _State, cmdlet: str | None) -> list[Word
             words = _convert(arg, st, sep=True)  # converted even if dropped: stays visible
             if takes is not False:  # a switch's `:$false` is not a value
                 out.extend([replace(w, glob=False) for w in words] if literal else words)
+            elif any(w.expands and w.text.lower() not in _BOOLEAN_LITERALS for w in words):
+                # X1 re-review R-2: `-Stream:$env:TOKEN` is dropped as "a switch's boolean", but a
+                # value that is not a boolean makes PowerShell fail to bind it and ECHO it in the
+                # error; the simple variable forms leave no other trace, so this is the trace
+                st.add_gray("ps-switch-value")
         elif literal and takes is not False:
             literal_next = True
     return out
@@ -542,6 +548,8 @@ def _command(c: object, st: _State) -> SimpleCmd | None:
             if dev.exe is not None:
                 env = ((psprograms.DEV_EXE_ENV, dev.exe),)
                 exe_written = _exe_may_be_written(st, dev.exe.text)
+                if not programs.devtool_exe_in_env(dev.exe.text):
+                    wrappers = (*wrappers, programs.UNVETTED_EXE)  # R-5: no allow rule
     redirects = _redirects(c, st)
     if exe_written:
         st.add_gray("exec-of-written-file")

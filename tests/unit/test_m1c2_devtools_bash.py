@@ -201,7 +201,10 @@ def test_b_path_qualified_dev_tool_lists_its_own_path_as_a_read(
     assert action.program in DEVTOOLS
     assert "program-path-qualified" not in action.gray_reasons
     assert action.gray_reasons == ()
-    assert action.wrappers == ()
+    # X1 re-review R-5: an executable outside any virtual-environment directory is marked so that
+    # no allow rule matches it (it is any file the agent may have written)
+    unvetted = () if programs.devtool_exe_in_env(program_path) else (programs.UNVETTED_EXE,)
+    assert action.wrappers == unvetted
     assert "exec" in action.risk_tags
     reads = [p for p in action.paths if p.raw == program_path]
     # a path that exists on the host (e.g. /usr/bin/python3 in a Linux container, usually a

@@ -92,7 +92,14 @@ from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from boundkeep.normalize.model import BashResult, Redirect, SimpleCmd, Word
-from boundkeep.normalize.programs import DEVTOOLS, devtool_form, is_code_env, peel_runner
+from boundkeep.normalize.programs import (
+    DEVTOOLS,
+    UNVETTED_EXE,
+    devtool_exe_in_env,
+    devtool_form,
+    is_code_env,
+    peel_runner,
+)
 
 __all__ = ["parse_bash"]
 
@@ -1891,6 +1898,8 @@ class _Parser:
             cur = [_W(Word(form.tool), False, form.tool), *cur[form.start :]]
             if form.path is not None:
                 cmd_redirs += (Redirect("<", form.path, "program"),)
+                if not devtool_exe_in_env(form.path.text):
+                    wrappers.append(UNVETTED_EXE)  # R-5: no allow rule for an exe outside any env
         p = cur[0]
         pname: str | None = None
         if p.dyn or p.word.glob:

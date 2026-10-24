@@ -22,7 +22,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from boundkeep.normalize import psprograms
+from boundkeep.normalize import programs, psprograms
 from boundkeep.normalize.model import Action, Word
 
 from .test_norm_event import WORLDS, run
@@ -876,7 +876,10 @@ def test_path_qualified_call_lists_the_exe_as_a_read_path_and_is_not_gray(
     else:
         assert a.gray is False
     assert "exec" in a.risk_tags
-    assert a.wrappers == ()
+    # X1 re-review R-5: an executable outside any virtual-environment directory is marked so that
+    # no allow rule matches it
+    unvetted = () if programs.devtool_exe_in_env(exe) else (programs.UNVETTED_EXE,)
+    assert a.wrappers == unvetted
     assert a.subcommand is None
 
 

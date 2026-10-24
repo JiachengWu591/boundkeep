@@ -170,6 +170,17 @@ def test_the_snapshot_applies_to_pretooluse_only_and_changes_no_other_rule(
     assert harness.send("pre", event, "d1").decision == "deny"  # the other rules are untouched
 
 
+def test_a_session_first_seen_while_the_policy_is_unusable_never_gains_a_later_trust(
+    harness: Harness,
+) -> None:
+    # X1 re-review R-7: the snapshot is also taken when there is no usable policy (nothing in it)
+    Path(harness.policy).write_text("version: [unbalanced\n", encoding="utf-8")
+    assert _verdict(harness, "session-a", 1) == "ask"  # no usable policy: everything asks
+    _write(harness, _trusted_text("E:\\proj"))  # the policy comes back, now with a trusted project
+    assert _verdict(harness, "session-a", 2) == "ask"  # not for the session that began without it
+    assert _verdict(harness, "session-b", 3) == "none"  # a session that begins now has it
+
+
 # ---------------------------------------------------------------------------- H-6: hard links
 
 

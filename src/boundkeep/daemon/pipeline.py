@@ -86,6 +86,18 @@ _CONFIG_DIR_READ_RULE_ID = "no-claude-config-dir-secret-read"
 # the same twin. Their globs are access-read globs that must NOT become "protected names" of a
 # recursive read (a Grep over a directory that holds a settings file), hence the common prefix.
 LINK_RULE_PREFIX = "deny-link-"
+# Exact ids, not the prefix (X1 re-review R-9): a rule of the user's that merely starts with the
+# prefix keeps its protection of recursive reads.
+LINK_RULE_IDS = frozenset(
+    {
+        "deny-link-to-guard-files",
+        "deny-link-copy-of-guard-files",
+        f"{LINK_RULE_PREFIX}protect-guard-config-dir",
+        f"{LINK_RULE_PREFIX}copy-protect-guard-config-dir",
+        f"{LINK_RULE_PREFIX}protect-guard-code",
+        f"{LINK_RULE_PREFIX}copy-protect-guard-code",
+    }
+)
 _LINK_REASON = "a link to a protected file would let a later write change it"
 
 
@@ -369,7 +381,7 @@ def protected_read_globs(policy: Policy) -> tuple[str, ...]:
             continue
         if match.access is not None and match.access != "read":
             continue
-        if rule.id.startswith(LINK_RULE_PREFIX):
+        if rule.id in LINK_RULE_IDS:
             continue  # names the target of a link being CREATED; reading the file is another rule
         out.update(dict.fromkeys(match.path_glob))
     return tuple(out)

@@ -707,6 +707,9 @@ def check_trusted_projects(home: str) -> list[Check]:
         if not os.path.isdir(expanded[index]):
             checks.append(Check(name, WARN, f"{text} no longer exists", fix))
             continue
+        guard = trust.guard_tree_reason(expanded[index])
+        if guard is not None:
+            checks.append(Check(name, WARN, f"{text} should not be trusted: {guard}", fix))
         real = _redirects(entry)
         if real is not None:
             checks.append(

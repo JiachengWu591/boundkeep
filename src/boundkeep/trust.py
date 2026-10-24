@@ -22,8 +22,10 @@ from typing import Any
 import yaml
 
 from boundkeep import console, fsperm, paths
+from boundkeep.normalize import paths as norm_paths
 from boundkeep.policy import PolicyError, load_policy, parse_policy_text
 from boundkeep.policy.loader import _atomic_write, _decode, _read_policy_bytes
+from boundkeep.policy.schema import home_guard_tree_reason
 
 KEY = "trusted_projects"
 KEY_COMMENT = (
@@ -354,6 +356,21 @@ def _commit(policy_path: str, bom: str, old_text: str, new_text: str, expected: 
         console.err(f"boundkeep: warning: could not make {policy_path} private ({exc})")
 
 
+def guard_tree_reason(path: str) -> str | None:
+    """Why ``path`` (a directory) cannot be a trusted project because it is one of the home
+    directory's key, settings or application-data trees (``~/.ssh``, ``~/.claude``, ``AppData``);
+    None when it is not. Checked by ``trust add`` and ``doctor``, not by the policy loader (an old
+    entry must not make the whole policy unloadable, X1 re-review R-6)."""
+    try:
+        key = norm_paths.normalize_path(path, cwd=None, home=None, dialect="tool", literal=True).key
+        home = norm_paths.normalize_path(
+            home_for_policy(), cwd=None, home=None, dialect="tool", literal=True
+        ).key
+    except Exception:  # noqa: BLE001 - a helper for a warning must not stop the command
+        return None
+    return home_guard_tree_reason(key, home)
+
+
 # Claude Code sets these in every shell it starts for the agent, and a child process inherits them,
 # including one started with Start-Process / `cmd /c start` (which DOES get a real console: the
 # terminal check below cannot tell a person from an agent's child, X1 review of M1c-2, H-5).
@@ -375,6 +392,18 @@ NESTED_MAX_DEPTH = 3
 NESTED_MAX_ENTRIES = 5000
 NESTED_SHOWN = 5
 _NESTED_SKIP = frozenset({".git", "node_modules", ".venv", "venv", "site-packages", "__pycache__"})
+
+
+_REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
+def _is_junction(entry: os.DirEntry[str]) -> bool:
+    """A Windows junction or any reparse point: ``is_dir(follow_symlinks=False)`` is True for it
+    (X1 re-review R-10), and the search must not go through it."""
+    if sys.platform != "win32":
+        return False
+    attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
+    return bool(attributes & _REPARSE_POINT)
 
 
 def nested_repositories(directory: str) -> tuple[list[str], bool]:
@@ -407,7 +436,7 @@ def nested_repositories(directory: str) -> tuple[list[str], bool]:
                 if child.name in _NESTED_SKIP:
                     continue
                 try:
-                    if not child.is_dir(follow_symlinks=False):
+                    if not child.is_dir(follow_symlinks=False) or _is_junction(child):
                         continue
                 except OSError:
                     continue
@@ -447,6 +476,9 @@ def cmd_add(args: argparse.Namespace) -> int:
     canonical = canonical_dir(given)
     if not os.path.isdir(canonical):
         return _fail(f"{canonical} is not an existing directory")
+    guard = guard_tree_reason(canonical)
+    if guard is not None:
+        return _fail(f"{canonical} cannot be a trusted project: {guard}")
     try:
         bom, text = _read_text(policy_path)
         entries = entries_of(text)

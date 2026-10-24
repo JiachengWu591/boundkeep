@@ -164,7 +164,16 @@ def test_the_installed_code_rule_has_the_expected_shape(name: str) -> None:
     (rule,) = [r for r in data["rules"] if r["id"] == rid]
     assert rule["match"]["path_glob"] == [
         "**/.venv/**",
+        "**/venv/**",
+        "**/env/**",
+        "**/.tox/**",
+        "**/.nox/**",
+        "**/.conda/**",
+        "**/.pixi/**",
+        "**/.direnv/**",
+        "**/__pypackages__/**",
         "**/site-packages/**",
+        "**/dist-packages/**",
         "**/node_modules/**",
     ]
     assert rule["match"]["access"] == "write"
@@ -205,11 +214,17 @@ def _entry_error(entry: str, home: str = "C:\\Users\\testuser") -> str | None:
         "~/AppData/Roaming",
     ],
 )
-def test_keys_settings_and_app_data_directories_are_not_projects(entry: str) -> None:
-    error = _entry_error(entry)
-    assert error is not None, entry
-    assert "too broad" in error, (entry, error)
-    assert "keys, settings or application data" in error
+def test_keys_settings_and_app_data_directories_are_not_projects(
+    entry: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # X1 re-review R-6: `trust add` and `doctor` judge this; the policy LOADER no longer does (an
+    # entry written before the check existed must not make the whole policy unloadable)
+    assert _entry_error(entry) is None, entry
+    monkeypatch.setattr(trust, "home_for_policy", lambda: "C:\\Users\\testuser")
+    path = entry.replace("~", "C:\\Users\\testuser", 1) if entry.startswith("~") else entry
+    reason = trust.guard_tree_reason(path)
+    assert reason is not None, entry
+    assert "keys, settings or application data" in reason
 
 
 @pytest.mark.parametrize(
@@ -224,16 +239,21 @@ def test_keys_settings_and_app_data_directories_are_not_projects(entry: str) -> 
         "E:\\dev",
     ],
 )
-def test_ordinary_project_directories_are_still_accepted(entry: str) -> None:
+def test_ordinary_project_directories_are_still_accepted(
+    entry: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert _entry_error(entry) is None, entry
+    monkeypatch.setattr(trust, "home_for_policy", lambda: "C:\\Users\\testuser")
+    path = entry.replace("~", "C:\\Users\\testuser", 1) if entry.startswith("~") else entry
+    assert trust.guard_tree_reason(path) is None, entry
 
 
-def test_the_posix_home_trees_are_refused_too() -> None:
+def test_the_posix_home_trees_are_judged_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(trust, "home_for_policy", lambda: "/home/testuser")
     for entry in ("/home/testuser/.ssh", "/home/testuser/.config/x", "/home/testuser/.claude"):
-        error = _entry_error(entry, home="/home/testuser")
-        assert error is not None, entry
-        assert "too broad" in error, entry
-    assert _entry_error("/home/testuser/work/app", home="/home/testuser") is None
+        assert trust.guard_tree_reason(entry) is not None, entry
+    assert trust.guard_tree_reason("/home/testuser/work/app") is None
+    assert trust.guard_tree_reason("/srv/other/.ssh") is None  # not under the home directory
 
 
 def _repo(path: Path, *, file_marker: bool = False) -> None:

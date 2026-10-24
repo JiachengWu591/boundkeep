@@ -52,6 +52,7 @@ from boundkeep.normalize.model import (
     SimpleCmd,
     Word,
 )
+from boundkeep.normalize.programs import DEVTOOLS
 from boundkeep.policy.glob import GlobError, compile_glob
 from boundkeep.policy.schema import too_broad
 
@@ -1046,6 +1047,8 @@ def _scan_refs(
             notes.append("recursive-scan-unreadable")
         if result.dir_links and follow_links:
             notes.append("recursive-scan-link")
+        if result.hard_links:
+            notes.append("recursive-scan-hardlink")  # R-3: a name proves nothing about the file
         for hit in result.hits:
             norm = paths.NormPath(
                 f"{ref.raw}/{hit.rel}"[:512], hit.key, ref.flavor, True, False, ()
@@ -1255,6 +1258,42 @@ def _peel_busybox(cmd: SimpleCmd) -> SimpleCmd:
     return replace(cmd, argv=cmd.argv[1:], wrappers=(*cmd.wrappers, "busybox"))
 
 
+_BOOLEAN_LITERALS = frozenset({"$true", "$false", "$null"})
+
+
+def _consumed_as_path(word: str, path_text: str) -> bool:
+    """Did the path layer take ``word`` (or the value attached to it) as the path ``path_text``?"""
+    if word == path_text:
+        return True
+    if word.endswith(("=" + path_text, ":" + path_text)):  # --opt=VALUE, -opt:VALUE
+        return True
+    return word[:1] == "-" and word[1:2] != "-" and word[2:] == path_text  # -oVALUE
+
+
+def _has_dynamic_args(
+    program: str | None, args: Sequence[Word], path_words: Sequence[Word]
+) -> bool:
+    """Does the command carry a word that expands (or, for a dev tool, globs) which is not a path?
+
+    ``cat $FILE`` and ``Get-Content $HOME\\a.txt`` are paths: the path layer judges them. What is
+    left are values of options and parameters: ``pytest -k "$u@args.txt"`` (an argument file once
+    the shell has expanded it), ``ConvertTo-Json $env:TOKEN`` (printed), ``ruff --select $env:X``
+    (echoed by the error). Nothing about those words is known, so no allow rule may rely on the
+    command being what it looks like.
+    """
+    glob_counts = program in DEVTOOLS
+    texts = [w.text for w in path_words]
+    for word in args:
+        if not (word.expands or (glob_counts and word.glob)):
+            continue
+        if word.text.lower() in _BOOLEAN_LITERALS:
+            continue
+        if any(_consumed_as_path(word.text, t) for t in texts):
+            continue
+        return True
+    return False
+
+
 def _command_action(
     ctx: _Ctx, tool: str, st: _Line, cmd: SimpleCmd, common: dict[str, Any]
 ) -> Action:
@@ -1374,6 +1413,7 @@ def _command_action(
         risk_tags=tuple(tags),
         gray=bool(reasons),
         gray_reasons=reasons,
+        dynamic_args=_has_dynamic_args(program, classify_args, [w for w, _a in info.paths]),
         **ctx.base,
         **common,
     )

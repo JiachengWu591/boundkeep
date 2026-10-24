@@ -32,6 +32,7 @@ import fnmatch
 import functools
 import os
 import re
+import stat
 import sys
 import time
 from collections import deque
@@ -42,7 +43,9 @@ from typing import Literal
 from boundkeep.policy.glob import Glob, GlobError, compile_glob
 
 MAX_SCAN_ENTRIES = 30000  # entries (files and directories) looked at per request
-SCAN_TIME_BUDGET_S = 0.2  # wall time of all scans of one request
+SCAN_TIME_BUDGET_S = (
+    0.35  # wall time of all scans of one request (0.2 before the link count: +5 us/file)
+)
 MAX_SCAN_HITS = 64  # reported entries per scan; the first few already decide the verdict
 _TIME_CHECK_MASK = 63  # the clock is read every 64 entries
 _REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT (symlinks and junctions on Windows)
@@ -290,6 +293,9 @@ class ScanResult:
     hits: list[ScanHit] = field(default_factory=list)
     status: ScanStatus = "ok"
     dir_links: bool = False  # a symlink / junction to a directory was met and not followed
+    # a file with more than one name was met among the files the command reads (X1 re-review R-3):
+    # it can BE a protected file under an ordinary name, and a name-based scan cannot tell
+    hard_links: bool = False
 
 
 def _is_link(entry: os.DirEntry[str]) -> bool:
@@ -299,6 +305,21 @@ def _is_link(entry: os.DirEntry[str]) -> bool:
         attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
         return bool(attributes & _REPARSE_POINT)
     return False
+
+
+def _hard_linked(entry: os.DirEntry[str]) -> bool:
+    """Is `entry` a regular file with more than one name? (False when it cannot be told.)
+
+    `DirEntry.stat` reports no link count on Windows (`st_nlink` is 0 there), so a second
+    `os.stat` is the price of the answer; POSIX has it from the entry.
+    """
+    try:
+        info = entry.stat(follow_symlinks=False)
+        if not info.st_nlink and sys.platform == "win32":
+            info = os.stat(entry.path)
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_nlink > 1
 
 
 def scan(
@@ -397,7 +418,10 @@ def _walk(
                     else:
                         stack.append((entry.path, rel_path, protected))
                     continue
-                reported = (protected or inside) and (select is None or select(rel_path, name))
+                read = select is None or select(rel_path, name)
+                if read and not result.hard_links and _hard_linked(entry):
+                    result.hard_links = True
+                reported = (protected or inside) and read
                 if reported:
                     _hit(result, prefixes, rel_path, windows, False)
                 if len(result.hits) >= MAX_SCAN_HITS:

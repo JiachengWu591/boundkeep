@@ -485,6 +485,65 @@ def test_add_does_not_ask_for_a_single_repository_or_a_plain_directory(
     assert "not the root of a git repository" in out  # a note, not a question
 
 
+# ------------------------------------------------------------------------- key / settings trees
+# X1 re-review R-6: `trust add` and `doctor` judge them; the policy loader does NOT (an entry
+# written before the check existed must not make the whole policy unloadable)
+
+
+def _guard_dir(env: Env, *parts: str) -> Path:
+    path = env.user_home.joinpath(*parts)
+    path.mkdir(parents=True)
+    return path
+
+
+@pytest.mark.parametrize(
+    "parts", [(".ssh",), (".config", "proj"), (".claude", "projects"), (".aws",), (".cache", "x")]
+)
+def test_add_refuses_a_directory_of_keys_or_settings(env: Env, parts: tuple[str, ...]) -> None:
+    directory = _guard_dir(env, *parts)
+    before = env.policy.read_bytes()
+    code, out, err = env.run("trust", "add", "--project-dir", str(directory))
+    assert code == 1
+    assert "keys, settings or application data" in err
+    assert "trusted:" not in out
+    assert env.policy.read_bytes() == before
+
+
+def test_an_old_entry_in_such_a_directory_leaves_the_policy_loadable(env: Env) -> None:
+    directory = _guard_dir(env, ".config", "legacy-proj")
+    ok = _project(env, "ok")
+    text = default_policy_text()  # (written by hand: `trust add` refuses the first one now)
+    for entry in (directory, ok):
+        text = trust.add_entry_text(text, trust.canonical_dir(str(entry)))
+    _write_policy(env.policy, text)
+    load_policy(str(env.policy), home=str(env.user_home))  # does not raise
+    assert env.run("trust", "list")[0] == 0
+    warns = [c for c in _doctor(env) if c.status == doctor.WARN]
+    assert len(warns) == 1
+    assert "should not be trusted" in warns[0].detail
+    assert "keys, settings or application data" in warns[0].detail
+    assert warns[0].fix
+    assert "trust remove" in warns[0].fix
+    code, out, _err = env.run("trust", "remove", "--project-dir", str(directory))
+    assert code == 0
+    assert "no longer trusted" in out
+    assert [c for c in _doctor(env) if c.status == doctor.WARN] == []
+
+
+def test_the_nested_repository_search_does_not_go_through_a_junction(
+    env: Env, tmp_path: Path
+) -> None:
+    if sys.platform != "win32":
+        pytest.skip("junctions are a Windows thing")
+    outside = tmp_path / "outside"
+    _repo(outside / "far-away-repo")
+    root = env.projects / "dev"
+    (root / "a").mkdir(parents=True)
+    _make_link(outside, root / "a" / "jct")
+    found, _cut = trust.nested_repositories(str(root))
+    assert found == []  # the repository on the other side of the junction is not reported
+
+
 def test_the_agent_marker_names_are_the_ones_claude_code_sets() -> None:
     assert trust.AGENT_ENV == ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 

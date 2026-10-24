@@ -3680,6 +3680,7 @@ _PYLINT_FORMAT_OPTIONS = frozenset({"--output-format", "-f"})
 # output or caches to a path no rule sees). Only variables that change how the output looks or
 # how deterministic the run is leave the call understood; everything else makes it gray.
 DEVTOOL_ENV_GRAY = "devtool-env-prefix"
+DEVTOOL_WARNING_GRAY = "devtool-warning-filter"
 _DEVTOOL_SAFE_ENV = _fs(
     "ci no_color force_color clicolor clicolor_force term colorterm columns lines lang language "
     "tz pythonhashseed pythonutf8 pythonioencoding pythonunbuffered pythondontwritebytecode "
@@ -3714,9 +3715,39 @@ def python_option_value_ok(flag: str, value: str) -> bool:
     return False
 
 
-def devtool_env_is_safe(name: str) -> bool:
+# X1 re-review R-5: a path-qualified dev tool (``./venv/bin/pytest``, ``.\.venv\Scripts\ruff.exe``)
+# is the project's own environment only when a directory of the path names one. ``./pytest``,
+# ``bin/pytest`` or ``tools/ruff`` is any file the agent may have written: it stays the ordinary
+# path-qualified program (gray). These are the names ``ask-installed-package-dirs-write`` guards.
+UNVETTED_EXE = (
+    "unvetted-exe"  # in Action.wrappers: a path-qualified dev tool outside any environment
+)
+_ENV_DIR_NAMES = frozenset(
+    {".venv", "venv", "env", ".tox", ".nox", ".conda", ".pixi", ".direnv", "__pypackages__"}
+)
+
+
+def devtool_exe_in_env(text: str) -> bool:
+    """Does a directory of the path-qualified program ``text`` name a virtual environment?"""
+    return any(seg.casefold() in _ENV_DIR_NAMES for seg in re.split(r"[\\/]", text)[:-1])
+
+
+_SAFE_ENV_VALUE = re.compile(r"[A-Za-z0-9_.@+-]*(?:/[A-Za-z0-9_.@+-]+)*")
+
+
+def devtool_env_is_safe(name: str, value: str = "") -> bool:
+    """May ``NAME=value`` stand in front of a dev tool? Only the listed names, and only values that
+    are not a path (X1 re-review R-12: ``LC_ALL=/home/x`` makes the C library load data from there,
+    ``TZ=:/path`` reads a file). ``America/New_York`` and ``C.UTF-8`` are fine; ``/x``, ``../x``,
+    ``C:\\x`` and anything with a space or a quote are not."""
     low = name.lower()
-    return low in _DEVTOOL_SAFE_ENV or low.startswith("lc_")
+    if low not in _DEVTOOL_SAFE_ENV and not low.startswith("lc_"):
+        return False
+    return (
+        _SAFE_ENV_VALUE.fullmatch(value) is not None
+        and not value.startswith("/")
+        and ".." not in value.split("/")
+    )
 
 
 def _reporters_are_plain(value: str) -> bool:
@@ -3746,6 +3777,12 @@ def devtool_gray_reasons(
         )
     ):
         out.append(DEVTOOL_DRIVE_RELATIVE_GRAY)
+    # pytest's own -W imports the category module too (re-review R-11), like `python -W`
+    if tool == "pytest" and any(
+        opt in ("-W", "--pythonwarnings") and not python_option_value_ok("-W", w.text)
+        for opt, _role, w in values
+    ):
+        out.append(DEVTOOL_WARNING_GRAY)
     if tool == "pylint" and any(
         opt in _PYLINT_FORMAT_OPTIONS and not _reporters_are_plain(w.text)
         for opt, _role, w in values
@@ -3771,7 +3808,7 @@ _DEVSPECS: dict[str, _DevSpec] = {
             "rsyncdir=u ignore=u ignore-glob=x deselect=x maxfail=x tb=x durations=x "
             "durations-min=x capture=x color=x import-mode=x log-level=x log-format=x "
             "log-date-format=x log-cli-level=x doctest-glob=x pastebin=x dist=x numprocesses=x "
-            "maxprocesses=x timeout=x",
+            "maxprocesses=x timeout=x debug=w pythonwarnings=x",
             flags="pyargs collect-only co lf ff sw doctest-modules cov cov-append",
         ),
         node_ids=True,
@@ -4066,7 +4103,7 @@ def _apply_redirects(a: _Acc, redirects: Sequence[Redirect]) -> None:
 def _apply_env(a: _Acc, env: Sequence[tuple[str, Word]]) -> None:
     for name, w in env:
         low = name.lower()
-        if a.prog in _DEVSPECS and not devtool_env_is_safe(name):
+        if a.prog in _DEVSPECS and not devtool_env_is_safe(name, w.text):
             a.gray.append(f"{DEVTOOL_ENV_GRAY}:{name}")
         if low in _ENV_PROXY and a.network:
             a.url(w.text)

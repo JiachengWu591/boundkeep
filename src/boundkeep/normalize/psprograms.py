@@ -1636,7 +1636,7 @@ _DEV_OPTS: dict[str, Opts] = {
         "log-cli-level=x log-cli-format=x log-cli-date-format=x log-auto-indent=x log-disable=x "
         "log-file-mode=x log-file-level=x log-file-format=x log-file-date-format=x "
         "hypothesis-profile=x hypothesis-verbosity=x hypothesis-seed=x numprocesses=x dist=x "
-        "pastebin=x pdbcls=x log-file=w",
+        "pastebin=x pdbcls=x log-file=w debug=w",
         flags="exitfirst strict-config strict-markers strict fixtures funcargs fixtures-per-test "
         "pdb trace runxfail lf last-failed ff failed-first nf new-first cache-clear sw stepwise "
         "sw-skip stepwise-skip sw-reset stepwise-reset verbose quiet no-header no-summary "
@@ -1646,7 +1646,7 @@ _DEV_OPTS: dict[str, Opts] = {
         "doctest-ignore-import-errors doctest-continue-on-failure version help "
         "disable-plugin-autoload trace-config setup-only setup-show setup-plan "
         "hypothesis-show-statistics hypothesis-explain cov cov-reset no-cov-on-fail no-cov "
-        "cov-append cov-branch live markers debug cache-show",
+        "cov-append cov-branch live markers cache-show",
     ),
     "ruff": _opts(
         short="o=w",
@@ -1786,8 +1786,8 @@ def _dev_tool(
     for w in pos:
         ctx.put(_node_file(w) if tool == "pytest" else w, "unknown")
     kept = [(name, value) for name, value in env if name != DEV_EXE_ENV]
-    for name, _value in kept:
-        if not programs.devtool_env_is_safe(name):
+    for name, value in kept:
+        if not programs.devtool_env_is_safe(name, value.text):
             a.gray.append(f"{programs.DEVTOOL_ENV_GRAY}:{name}")
     return _finish(ctx, tool, redirects, kept)
 

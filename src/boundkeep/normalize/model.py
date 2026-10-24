@@ -108,6 +108,11 @@ class Action(BaseModel):
     inside_project: bool | None = None  # True only when every path is definitely inside
     risk_tags: tuple[RiskTag, ...] = ()
     gray: bool = False  # this action (or part of it) could not be understood
+    # A word of the command that expands (a variable, a substitution) or, for a dev tool, globs and
+    # is NOT a path the path layer judges: what the program really receives is not known, and it
+    # may print it, open it or read arguments from it. An allow rule never matches such an action
+    # (X1 re-review R-1, R-2, R-4); deny and ask rules are not affected.
+    dynamic_args: bool = False
     gray_reasons: tuple[str, ...] = Field(default=())
     mcp_server: str | None = None
     mcp_tool: str | None = None

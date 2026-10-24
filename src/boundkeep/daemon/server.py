@@ -408,6 +408,9 @@ class Daemon:
         """``state.policy`` with the ``trusted_projects`` that count for this event's session."""
         policy = state.policy
         if policy is None:
+            # still note the session, with nothing trusted: when the policy comes back, an entry
+            # that appeared meanwhile must not count for a session that began without it (R-7)
+            self._trust.effective(payload.get("session_id"), ())
             return None
         counted, added = self._trust.effective(payload.get("session_id"), policy.trusted_projects)
         if added:

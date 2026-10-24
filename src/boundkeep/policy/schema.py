@@ -573,11 +573,27 @@ _BROAD_WINDOWS_EXACT: Final = frozenset(
 )
 _BROAD_HOME_CHILDREN: Final = ("documents", "desktop", "downloads")
 # X1 review of M1c-2 (M-3): the directories of keys, settings and application data inside the home
-# directory are not projects, and everything below them is refused too (a typo or a copy-paste
-# must not trust ``~/.claude`` or ``~/.ssh``). Compared casefolded, like the list above.
+# directory are not projects, and nothing below them is either (a typo or a copy-paste must not
+# trust ``~/.claude`` or ``~/.ssh``). Compared casefolded, like the list above. NOT checked by the
+# policy loader (X1 re-review R-6: an entry written before this check existed would make the whole
+# policy unloadable, and an agent cannot edit the file anyway): ``boundkeep trust add`` refuses
+# them and ``boundkeep doctor`` warns about the ones already listed, see ``home_guard_tree_reason``.
 _GUARD_HOME_TREES: Final = (
-    ".ssh", ".gnupg", ".aws", ".kube", ".docker", ".config", ".claude", ".boundkeep", "appdata",
+    ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".config", ".claude", ".boundkeep",
+    ".password-store", ".terraform.d", ".vscode", ".cache", ".local", "appdata", "library",
 )  # fmt: skip
+
+
+def home_guard_tree_reason(key: str, home_key: str) -> str | None:
+    """Why a directory (canonical ``/`` key) inside the home directory holds keys, settings or
+    application data and so cannot be a trusted project; None when it does not."""
+    folded = key.casefold()
+    home = home_key.casefold().rstrip("/")
+    if home and any(
+        folded == f"{home}/{d}" or folded.startswith(f"{home}/{d}/") for d in _GUARD_HOME_TREES
+    ):
+        return "it is a directory of keys, settings or application data in your home directory"
+    return None
 
 
 def is_anchor_key(key: str) -> bool:
@@ -616,8 +632,6 @@ def _broad_reason(key: str, home_key: str) -> str | None:
     home = home_key.casefold().rstrip("/")
     if any(folded == f"{home}/{child}" for child in _BROAD_HOME_CHILDREN):
         return "it is one of your Documents, Desktop or Downloads folders (it holds many things)"
-    if any(folded == f"{home}/{d}" or folded.startswith(f"{home}/{d}/") for d in _GUARD_HOME_TREES):
-        return "it is a directory of keys, settings or application data in your home directory"
     return None
 
 

@@ -249,9 +249,11 @@ def _match_detail(
         return None
     if rule.tool is not None and not _tool_matches(rule.tool, action.tool):
         return None
-    if rule.action == "allow" and (action.gray or action.wrappers):
+    if rule.action == "allow" and (action.gray or action.wrappers or action.dynamic_args):
         # An allow rule describes the bare command; behind sudo / env / nohup ... it is a
-        # different action (privileges, environment, background), so it never rides the rule.
+        # different action (privileges, environment, background), so it never rides the rule. The
+        # same for a word the shell expands that is no path (X1 re-review R-1, R-2, R-4): what the
+        # program receives is not what the rule saw.
         return None
     match = rule.match
     details: list[str] = []
