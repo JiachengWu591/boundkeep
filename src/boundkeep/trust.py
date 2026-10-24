@@ -555,8 +555,12 @@ def cmd_list(_args: argparse.Namespace) -> int:
         return EXIT_OK
     console.out(f"trusted projects ({len(entries)}) in {policy_path}:")
     for entry in entries:
-        state = "exists" if os.path.isdir(expand_entry(entry)) else "missing"
+        expanded = expand_entry(entry)
+        state = "exists" if os.path.isdir(expanded) else "missing"
         console.out(f"  {state:<7} {printable_entry(entry)}")
+        guard = guard_tree_reason(expanded)  # an old entry the loader no longer refuses (R2-4)
+        if guard is not None:
+            console.out(f"          ^ should not be trusted ({guard}): boundkeep trust remove")
     return EXIT_OK
 
 

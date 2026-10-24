@@ -19,6 +19,7 @@ Design rules (docs/m1-design.md "底线"):
 
 from __future__ import annotations
 
+import posixpath
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -3729,7 +3730,12 @@ _ENV_DIR_NAMES = frozenset(
 
 def devtool_exe_in_env(text: str) -> bool:
     """Does a directory of the path-qualified program ``text`` name a virtual environment?"""
-    return any(seg.casefold() in _ENV_DIR_NAMES for seg in re.split(r"[\\/]", text)[:-1])
+    # collapse `.` and `..` first (R2-2): `./venv/../pytest` is `./pytest`, not a tool in an env
+    collapsed = posixpath.normpath(text.replace("\\", "/"))
+    parts = collapsed.split("/")
+    if parts[0] == "..":  # climbs out of the project: not the project's own environment
+        return False
+    return any(seg.casefold() in _ENV_DIR_NAMES for seg in parts[:-1])
 
 
 _SAFE_ENV_VALUE = re.compile(r"[A-Za-z0-9_.@+-]*(?:/[A-Za-z0-9_.@+-]+)*")
@@ -3743,10 +3749,12 @@ def devtool_env_is_safe(name: str, value: str = "") -> bool:
     low = name.lower()
     if low not in _DEVTOOL_SAFE_ENV and not low.startswith("lc_"):
         return False
+    if low != "tz" and "/" in value:  # only a zone name (``Europe/Paris``) has a ``/`` (R2-5)
+        return False
     return (
         _SAFE_ENV_VALUE.fullmatch(value) is not None
-        and not value.startswith("/")
-        and ".." not in value.split("/")
+        and value[:1] not in ("/", "-", "@")
+        and ".." not in value
     )
 
 

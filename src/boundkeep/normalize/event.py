@@ -1261,13 +1261,30 @@ def _peel_busybox(cmd: SimpleCmd) -> SimpleCmd:
 _BOOLEAN_LITERALS = frozenset({"$true", "$false", "$null"})
 
 
+# characters that make the part of a word before its value dynamic (a name that expands or globs)
+_DYNAMIC_NAME_CHARS = frozenset("$`*?[{")
+
+
 def _consumed_as_path(word: str, path_text: str) -> bool:
-    """Did the path layer take ``word`` (or the value attached to it) as the path ``path_text``?"""
+    """Did the path layer take exactly this ``word`` (or the value attached to an option) as the
+    path ``path_text``?
+
+    Exact only (X1 second re-review R2-1): the whole word, ``-oVALUE``, ``--opt=VALUE`` or
+    ``-opt:VALUE`` with the value after the FIRST ``=`` / ``:`` equal to the path, and an option
+    part that is itself plain text. A suffix match let ``"$u@a.txt=tests"`` pass as the path
+    ``tests``.
+    """
     if word == path_text:
         return True
-    if word.endswith(("=" + path_text, ":" + path_text)):  # --opt=VALUE, -opt:VALUE
-        return True
-    return word[:1] == "-" and word[1:2] != "-" and word[2:] == path_text  # -oVALUE
+    if word[:1] != "-":
+        return False
+    if word[1:2] != "-" and len(word) > 2 and word[2:] == path_text:  # -oVALUE
+        return word[1] not in _DYNAMIC_NAME_CHARS
+    separators = [i for i in (word.find("="), word.find(":")) if i > 0]
+    if not separators:
+        return False
+    cut = min(separators)
+    return word[cut + 1 :] == path_text and not (set(word[:cut]) & _DYNAMIC_NAME_CHARS)
 
 
 def _has_dynamic_args(
