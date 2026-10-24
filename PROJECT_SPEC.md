@@ -19,7 +19,8 @@
 > - **M1c / M1c-2 的定向 X1 审查已做，H-1 到 H-6 已修（`m1c2-x1-fixes-done`）**：审查 `docs/reviews/M1c2-security-review.md`，修复报告 `docs/reports/M1c2-review-fixes.md`、`M1c2-review-fixes-2.md`。
 > - **中危 M-1、M-3、已安装代码写入改 ask、L-1 的便宜部分已做（`m1c2-x1-medium-fixes-done`）**：报告 `docs/reports/M1c2-review-fixes-3.md`。
 > - **独立复审（3 高危、5 中危、7 低危）的 R-1 到 R-12 已修（`m1c2-x1-rereview-fixes-done`）**：复审 `docs/reviews/M1c2-fixes-rereview.md`，报告 `docs/reports/M1c2-review-fixes-4.md`。
-> - **等待你做**：同一复审者的定向复核；M-2（污染位）推迟到 M3a，L-1 的选项白名单会改规则（M2 基线之前做或重取基线）；复审通过之后规则冻结。
+> - **第二次复审（1 高危、1 中危、5 低危）的 R2-1、R2-2 与低危已修（未提交）**：复审 `docs/reviews/M1c2-fixes-rereview-2.md`，报告 `docs/reports/M1c2-review-fixes-5.md`。
+> - **等待你做**：同一复审者对 R2-1、R2-2 的定向复核；M-2（污染位）推迟到 M3a，L-1 的选项白名单会改规则（M2 基线之前做或重取基线）；复审通过之后规则冻结。
 > - **下一步**：M2（评测集、评测框架、`rules-only` 基线）。基线必须在规则冻结之后取，否则基线对应的是一份之后又会变的策略。
 > - **还没开始**：会话状态与污染标记（M3a）、LLM 审计层（M3b）、策略编译（M4）、Web 界面（M5、M6）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
