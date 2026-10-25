@@ -20,8 +20,10 @@
 > - **中危 M-1、M-3、已安装代码写入改 ask、L-1 的便宜部分已做（`m1c2-x1-medium-fixes-done`）**：报告 `docs/reports/M1c2-review-fixes-3.md`。
 > - **独立复审（3 高危、5 中危、7 低危）的 R-1 到 R-12 已修（`m1c2-x1-rereview-fixes-done`）**：复审 `docs/reviews/M1c2-fixes-rereview.md`，报告 `docs/reports/M1c2-review-fixes-4.md`。
 > - **第二次复审（1 高危、1 中危、5 低危）的 R2-1、R2-2 与低危已修（未提交）**：复审 `docs/reviews/M1c2-fixes-rereview-2.md`，报告 `docs/reports/M1c2-review-fixes-5.md`。
-> - **等待你做**：同一复审者对 R2-1、R2-2 的定向复核；M-2（污染位）推迟到 M3a，L-1 的选项白名单会改规则（M2 基线之前做或重取基线）；复审通过之后规则冻结。
-> - **下一步**：M2（评测集、评测框架、`rules-only` 基线）。基线必须在规则冻结之后取，否则基线对应的是一份之后又会变的策略。
+> - **复审通过，规则已冻结**（提交 `6821142`，标签 `m1c2-x1-rereview2-fixes-done`）：同一复审者复核 R2-1、R2-2，无高危、中危。
+> - **M2 已完成（标签 `m2-baseline`）**：评测集 633 条（恶意 241、正常 392，全部经使用者确认）、评测框架 `src/boundkeep/evalkit` 与 `eval/run_eval.py`、`rules-only` 基线（`eval/report.md`，报告 `docs/reports/M2.md`，口径 `docs/eval-methodology.md`）。**已知缺口：obfuscation 只有 11 条（目标 30 条）**；评测暴露的规则层问题记在 `docs/reports/M2.md` 第 7 节，没有改。
+> - **等待你做**：真实 Claude Code 里的手工验收；Linux 容器套件；M-2（污染位）推迟到 M3a；L-1 的选项白名单与评测暴露的规则问题会改规则，改完要重取基线。
+> - **下一步**：M3a（会话状态、污染标记、LLM 后端接口与假后端、二次裁决、`rules+taint` 评测）。
 > - **还没开始**：会话状态与污染标记（M3a）、LLM 审计层（M3b）、策略编译（M4）、Web 界面（M5、M6）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -721,7 +723,7 @@ boundkeep/
 | M1c-2 | 开发工具预设：`trusted_projects` 与 `project_trusted`、`boundkeep trust`、`pytest`/`ruff`/`mypy` 等的识别与 allow、PowerShell 管道头修复、数据整形 allow（§7） | 默认不信任任何项目；信任前后的判决差异有真实冒烟；`trust add` 的真实控制台路径有手工验收 | 已完成（标签 `m1c2-done`；手工验收通过）；**定向 X1 审查待做** |
 | M1c-3 | 放行项目内的 `cd` 族（`allow-cd-family`，必须带 `path_inside_project`） | `cd` 之后的命令仍按新目录判断；项目外与动态目标的 `cd` 仍是灰色 | 已完成（标签 `m1c3-done`；未单独做手工验收） |
 | M1c-4 | 放行当前会话自己的 scratchpad 目录（`path_in_scratchpad`，只对文件工具） | 只认当前会话 id 与守护进程临时目录下的精确结构；现有 deny/ask 仍然优先；shell 命令不受影响 | **完成**（`m1c4-done`；真实会话手工验收未做） |
-| M2 | 评测集 v1（含 Windows 样本）+ `run_eval.py` + `rules-only` 基线 | 产出第一份 `report.md`（基线数字，按平台分别报告） | **未开始**（前置：M1c 系列规则冻结，M1c 与 M1c-2 的定向 X1 审查通过） |
+| M2 | 评测集 v1（含 Windows 样本）+ `run_eval.py` + `rules-only` 基线 | 产出第一份 `report.md`（基线数字，按平台分别报告） | **已完成**（标签 `m2-baseline`；obfuscation 类样本不足 30 条，已知缺口） |
 | M3a | 会话状态、污染标记、后端接口与假后端、OpenAI 兼容适配器（对本地假服务测试）、二次裁决、`rules+taint` 评测、`llm check` | 不需要网络与密钥；一致性测试通过；`rules+taint` 行完整 | 未开始 |
 | M3b | 真实 LLM 后端评测（可推迟） | 你自备密钥并确认费用、在本地运行；`rules+LLM` 与 `rules+LLM+taint` 两行完整，增量如实报告 | 未开始 |
 | M4 | 策略校验 + 自然语言策略编译（含离线模式） | 输入一句话，得到规则 + 测试用例 + 回放影响的 diff，确认后写入并通过 `test`；离线模式不需要任何后端 | 未开始 |
