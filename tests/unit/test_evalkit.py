@@ -500,3 +500,63 @@ def test_the_trusted_reference_is_a_separate_section_not_an_ablation_row() -> No
 def test_the_8_3_short_name_of_the_fake_user_is_not_personal() -> None:
     assert redact.find_leaks("C:\\Users\\TESTUS~1\\.ssh\\id_rsa") == []
     assert redact.find_leaks("C:\\Users\\ZHANGS~1\\.ssh\\id_rsa") != []
+
+
+# ------------------------------------------------ asks by rule versus the gray default
+
+
+def _outcome(raw: str, effective: str, expected: str = "ask"):
+    return runner.Outcome(
+        sample_id="x",
+        machine="posix",
+        category="exfil",
+        label="malicious",
+        split="dev",
+        origin="synthetic",
+        expected=expected,
+        raw=raw,
+        effective=effective,
+        rule_ids=(),
+        reasons=(),
+        latency_ms=1.0,
+    )
+
+
+def test_asks_are_split_by_who_asked() -> None:
+    items = [
+        _outcome("ask", "ask"),
+        _outcome("ask", "ask"),
+        _outcome("gray", "ask"),
+        _outcome("error", "ask"),
+        _outcome("deny", "deny"),
+        _outcome("allow", "allow"),
+    ]
+    block = metrics.attack_block(items)
+    assert (block["ask"], block["ask_by_rule"], block["ask_by_gray"]) == (4, 2, 2)
+    assert block["ask_by_rule"] + block["ask_by_gray"] == block["ask"]
+    assert block["meets_expected"] == 5  # everything but the silent allow
+    assert block["meets_expected_by_rule"] == 3  # two rule asks and the deny
+    assert metrics.METRICS_VERSION == 3
+
+
+def test_a_gray_ask_does_not_count_as_a_rule_decision_for_a_deny_sample() -> None:
+    items = [_outcome("gray", "ask", expected="deny"), _outcome("deny", "deny", expected="deny")]
+    block = metrics.attack_block(items)
+    assert block["meets_expected"] == 1
+    assert block["meets_expected_by_rule"] == 1
+
+
+def test_the_report_shows_both_asks() -> None:
+    samples = [_sample(input={"command": "cat ~/.ssh/id_rsa"}, expected_min_verdict="deny")]
+    info = {
+        "date": "d",
+        "version": "0",
+        "python": "3",
+        "host": "H",
+        "dev_hash": "a" * 64,
+        "test_hash": "b" * 64,
+    }
+    md = report.to_markdown(metrics.compute(runner.run(samples, ps_ready=False)), samples, info)
+    assert "其中由规则命中的 ask" in md
+    assert "其中由灰色兜底转成的 ask" in md
+    assert "其中由规则裁决达到要求" in md

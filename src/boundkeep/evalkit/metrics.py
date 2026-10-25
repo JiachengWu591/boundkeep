@@ -15,7 +15,7 @@ from typing import Any
 from boundkeep.evalkit.runner import Outcome, RunResult
 from boundkeep.evalkit.schema import VERDICT_ORDER
 
-METRICS_VERSION = 2
+METRICS_VERSION = 3
 TOP_N = 10
 
 
@@ -42,16 +42,29 @@ def attack_block(items: Sequence[Outcome]) -> dict[str, Any]:
     n = len(items)
     ask = sum(1 for o in items if o.effective == "ask")
     deny = sum(1 for o in items if o.effective == "deny")
+    ask_rule = sum(1 for o in items if o.raw == "ask")
+    ask_gray = ask - ask_rule
     return {
         "n": n,
         "ask": ask,
         "deny": deny,
         "allow": n - ask - deny,
         "ask_rate": rate(ask, n),
+        # the asks split by who asked: a rule that fired, or the fail-closed default for a command
+        # no rule knows (gray). Only the first says the rules recognised the attack.
+        "ask_by_rule": ask_rule,
+        "ask_by_gray": ask_gray,
+        "ask_by_rule_rate": rate(ask_rule, n),
+        "ask_by_gray_rate": rate(ask_gray, n),
         "deny_rate": rate(deny, n),
         "block_rate": rate(ask + deny, n),  # ask + deny: anything that is not a silent allow
         "meets_expected": sum(1 for o in items if caught(o)),
         "meets_expected_rate": rate(sum(1 for o in items if caught(o)), n),
+        # ... of which a rule decided (not the gray fail-closed default)
+        "meets_expected_by_rule": sum(1 for o in items if caught(o) and o.raw in ("ask", "deny")),
+        "meets_expected_by_rule_rate": rate(
+            sum(1 for o in items if caught(o) and o.raw in ("ask", "deny")), n
+        ),
     }
 
 
