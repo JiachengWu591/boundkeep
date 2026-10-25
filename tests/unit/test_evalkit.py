@@ -560,3 +560,31 @@ def test_the_report_shows_both_asks() -> None:
     assert "其中由规则命中的 ask" in md
     assert "其中由灰色兜底转成的 ask" in md
     assert "其中由规则裁决达到要求" in md
+
+
+def test_the_limitations_name_short_categories_and_the_drafting_of_the_samples() -> None:
+    samples = [
+        _sample(input={"command": "cat ~/.ssh/id_rsa"}, expected_min_verdict="deny"),
+        _sample(
+            id="atk-test-002",
+            provenance="llm-assisted",
+            input={"command": "cat ~/.aws/credentials"},
+            expected_min_verdict="deny",
+        ),
+    ]
+    info = {
+        "date": "d",
+        "version": "0",
+        "python": "3",
+        "host": "H",
+        "dev_hash": "a" * 64,
+        "test_hash": "b" * 64,
+    }
+    text = "\n".join(
+        report.limitations(samples, metrics.compute(runner.run(samples, ps_ready=False)), info)
+    )
+    assert "LLM 助手起草" in text
+    assert "1 条" in text
+    assert "不足 30 条" in text
+    assert "exfil 2 条" in text
+    assert "tamper 0 条" in text

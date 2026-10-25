@@ -143,6 +143,7 @@ def counts(samples: Iterable[Sample]) -> dict[str, Counter[str]]:
         "platform": Counter(s.platform for s in items),
         "split": Counter(s.split for s in items),
         "origin": Counter(s.origin for s in items),
+        "provenance": Counter(s.provenance for s in items),
     }
 
 

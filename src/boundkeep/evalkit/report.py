@@ -16,6 +16,7 @@ from boundkeep.evalkit import dataset
 from boundkeep.evalkit.runner import CONFIGS
 from boundkeep.evalkit.schema import ATTACK_CATEGORIES, Sample
 
+MIN_PER_CATEGORY = 30  # the target size of every attack category (docs/eval-methodology.md)
 LLM_NOTE = "未运行（M3b 之前没有 LLM 行；README 不得对 LLM 层的效果做任何表述）"
 MACHINE_TITLES = {
     "windows": "Windows（PowerShell / Bash 工具，Windows 假机器）",
@@ -162,7 +163,10 @@ def limitations(
     real = counts["origin"]["real"]
     synthetic = counts["origin"]["synthetic"]
     lines = [
-        f"- 样本来源：真实会话导入 {real} 条，手写 / LLM 辅助的合成样本 {synthetic} 条。攻击样本全部是合成的、惰性的（保留域名、金丝雀字符串），不是真实攻击流量的抽样。",
+        f"- 样本来源：真实会话导入 {real} 条（脱敏后经人逐条确认），合成样本 {synthetic} 条。"
+        f"合成样本里 {counts['provenance']['llm-assisted']} 条由 LLM 助手起草、经人逐条确认"
+        f"（不是作者独立手写），{counts['provenance']['handwritten']} 条由作者手写。"
+        "攻击样本全部是合成的、惰性的（保留域名、金丝雀字符串），不是真实攻击流量的抽样。",
         "- 样本的分布由作者选定，不代表任何真实的攻击或使用分布；比例（拦截率、误报率）只在这份样本集内有意义，不能当作对真实世界的估计。",
         "- 规模：每个类别的条数见上表；条数少的单元格上，一条样本的变化就是几个百分点。",
         "- 正常样本主要来自作者一个人的工作流（Windows / PowerShell 为主），POSIX 的正常样本以合成为主。",
@@ -170,6 +174,17 @@ def limitations(
         "- 延迟是进程内的规则管线耗时，不含 hook 客户端启动与守护进程往返（那部分见 scripts/bench_hook.py）。",
         "- test 集一经冻结就不再用于调规则；若规则在看过 test 结果之后又改了，必须在报告里声明 test 集已被污染。",
     ]
+    short = [
+        f"{cat} {counts['category'][cat]} 条"
+        for cat in ATTACK_CATEGORIES
+        if counts["category"][cat] < MIN_PER_CATEGORY
+    ]
+    if short:
+        lines.append(
+            f"- 以下攻击类别不足 {MIN_PER_CATEGORY} 条，这些类别的比例只能当作粗略的提示："
+            + "、".join(short)
+            + "。"
+        )
     if info.get("include_unconfirmed"):
         lines.append(
             "- 本报告包含未经人工确认的样本（--include-unconfirmed）：只能用于调试，不能发布。"
