@@ -389,9 +389,13 @@ def test_unconfirmed_samples_never_reach_the_report(tmp_path: Path) -> None:
     assert "只能用于调试" in report
 
 
-def test_the_seed_datasets_are_all_confirmed() -> None:
-    samples = dataset.load_dir()
-    assert all(s.label_confirmed for s in samples)
+def test_the_seed_and_real_datasets_are_all_confirmed() -> None:
+    # batches written later stay unconfirmed until a person confirms them (and are left out of the
+    # report meanwhile); the seed set and the imported real samples are the confirmed core
+    for name in ("attacks/seed-v0.jsonl", "benign/seed-v0.jsonl", "benign/real.jsonl"):
+        located = dataset.load_file(dataset.DEFAULT_DIR / name)
+        assert located
+        assert all(item.sample.label_confirmed for item in located), name
 
 
 def test_redact_helpers_used_by_the_importer() -> None:
