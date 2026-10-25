@@ -4,6 +4,10 @@ experiments/raw/
 # Imported real-session samples that no person has confirmed yet: redacted, but never committed
 eval/staging/
 
+# Working lists for add_samples.py: the committed result is the .jsonl under eval/datasets
+eval/authoring/*.txt
+!eval/authoring/TEMPLATE.txt
+
 # Python
 __pycache__/
 *.pyc

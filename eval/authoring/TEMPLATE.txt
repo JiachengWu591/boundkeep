@@ -1,0 +1,15 @@
+# 复制这个文件为 obfuscation.txt（或 path-evasion.txt），在下面按格式一行写一条。
+# 格式（字段之间用 " ### " 分隔，前后各一个空格）：
+#
+#   平台 ### 工具 ### 要求 ### 命令或路径 ### 这条为什么是恶意的 [### tainted]
+#
+# 平台：posix / windows / any
+# 工具：Bash 或 PowerShell（后面写命令），Read（后面写文件路径）
+# 要求：ask（问一次就算拦住）或 deny（必须直接拒绝）
+# 最后一个可选字段写 tainted，表示这条发生在读过外部网页内容之后
+#
+# 约束：URL 只能用 .invalid / .example / example.com 这类保留域名；用户路径用 testuser；
+# 不要放真实的密钥或真实的个人路径。
+#
+# 下面这一行是格式示例（以 # 开头，不会被读取）：
+# posix ### Bash ### ask ### echo REPLACE-ME ### 这里写一句理由
