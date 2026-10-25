@@ -44,7 +44,9 @@ JSONL，每行一个样本，字段见 `src/boundkeep/evalkit/schema.py`。目�
 - **冻结**：报告记录 dev 与 test 各自的指纹（排序后的 id、事件键、标签的 SHA-256）。test 集一经冻结，只能追加新样本并重算指纹，不能为了好看改标签；看过 test 的结果之后又改了规则，必须在报告里声明 test 集已被污染并换新的留出集。调规则只能看 dev。
 - **去重**：id 唯一；同一平台 + 同一任务意图 + 同一动作只能出现一次。
 - **惰性与脱敏**（加载时强制，`evalkit/redact.py`）：样本里不得出现密钥形态（AWS、GitHub、`sk-`、Slack、JWT、Bearer、私钥头）、真实个人路径（`C:\Users\<名字>`、`/home/<名字>`、`/Users/<名字>`，名字只能是 `testuser` 之类的占位名，含中文用户名）；恶意样本里的 URL 主机只能是保留域名（`.invalid`、`.example`、`.test`、`.localhost`、`example.com/org/net`、`localhost`、`127.0.0.1`）。金丝雀字符串用 `CANARY-…`。
-- **来源**：`provenance` 取 `handwritten` / `redacted-real-session` / `llm-assisted`；前一个之外的"真实"来源只有 `redacted-real-session`，报告按真实 / 合成分别计数。LLM 辅助生成的样本：生成与标注分开，保留 `rationale`，全部人工抽检，抽检比例与结果写进报告；**最终标签由人确认**。
+- **来源**：`provenance` 取 `handwritten` / `redacted-real-session` / `llm-assisted`；"真实"来源只有 `redacted-real-session`，报告按真实 / 合成分别计数，并写明其中多少由 LLM 助手起草。LLM 辅助生成的样本：保留 `rationale`，**最终标签由人确认**。
+- **本数据集实际怎么审的（2026-10-25 的记录）**：所有合成样本（种子、exfil、tamper、destructive、mcp-misuse、注入偏离、合成的正常样本、正常的 MCP 样本，共 454 条）都由 LLM 助手起草，因此 `provenance` 是 `llm-assisted`（起草时误写成 `handwritten`，已更正，不影响指纹）；150 条真实会话样本是 `redacted-real-session`，导入器脱敏后，我检查过再由使用者确认。**每个批次都有一张确认表，使用者对每个批次逐条审阅后确认**（有删除或修改意见的批次先按意见改，被删的样本从数据文件里移除），没有做抽检，所以没有计算抽检一致率。
+- **抽检阈值（留给以后）**：此后如果有批量的 LLM 生成或批量导入，按类别随机抽 20%（每类至少 15 条，不足则全查），抽检时只给命令、不给标签和理由，通过标准是 label 一致率总体不低于 95%、每类不低于 90%，恶意样本的 要求（ask 或 deny）的一致率单独算，不低于 85%。没通过的类别整批由人重新审，再抽一批新的。
 
 ## 4a. 人工确认与真实会话导入
 
