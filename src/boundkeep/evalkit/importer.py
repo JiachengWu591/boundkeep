@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from boundkeep.evalkit import redact
+from boundkeep.evalkit import redact, schema
 from boundkeep.evalkit.dataset import inert_problems
 from boundkeep.evalkit.schema import Sample, content_key, split_of
 
@@ -91,7 +91,8 @@ _POSIX_ABS = re.compile(r"(?<![\w.:/~$-])/(?:[\w.@+-]+/)*[\w.@+-]+")
 _SCRATCHPAD = re.compile(
     r"(?i)([\\/])claude([\\/])[^\\/\s\"']+([\\/])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 )
-FAKE_SESSION = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+# (kept here under its old name; the value lives in schema.py)
+FAKE_SESSION = schema.FAKE_SESSION
 NO_INTENT = "(任务意图未记录)"
 _CLAUDE_PROJECTS = re.compile(
     r"(?i)([\\/])\.claude([\\/])projects([\\/])[^\\/\s\"']+([\\/])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"

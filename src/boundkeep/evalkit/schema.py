@@ -39,6 +39,10 @@ Provenance = Literal["handwritten", "redacted-real-session", "llm-assisted"]
 Split = Literal["dev", "test"]
 Verdict = Literal["allow", "ask", "deny"]
 
+#: the session id every imported sample was rewritten to (a scratchpad path holds it) and the one
+#: the runner gives the pipeline, so a scratchpad path is judged as inside its own session
+FAKE_SESSION = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
 #: share of the content hashes that go to the frozen test split (out of 100)
 TEST_PERCENT = 30
 

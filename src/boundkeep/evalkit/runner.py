@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from boundkeep import policycli
-from boundkeep.evalkit.schema import Sample
+from boundkeep.evalkit.schema import FAKE_SESSION, Sample
 from boundkeep.policy import Policy, default_policy_text, parse_policy_text
 
 Machine = Literal["posix", "windows"]
@@ -134,7 +134,7 @@ def run(
             started = time.perf_counter()
             try:
                 review = policycli._run_one(
-                    policies[machine], machine, sample.tool, sample.input, None, None
+                    policies[machine], machine, sample.tool, sample.input, None, None, FAKE_SESSION
                 )
                 raw = str(review.verdict.decision)
                 rule_ids = tuple(review.verdict.rule_ids)
