@@ -1188,7 +1188,7 @@ rules:
     tool: [Bash, PowerShell]
     match:
       program: [git]
-      subcommand: [status, diff, log, show, blame, rev-parse, branch]
+      subcommand: [status, diff, log, show, blame, rev-parse, branch, add, commit, stash]
       path_outside_project: true
     action: ask
     reason: "a path that is not inside the project directory"
@@ -1429,6 +1429,124 @@ rules:
         - "--form"
         - "--forma"
       paths_read_only: true
+    action: allow
+  - id: allow-git-add
+    # `git add` only copies files of the work tree into the index (and the object store); it
+    # runs nothing, reads no network and touches no file outside .git. Its operands are paths of
+    # unknown access, so the secret, credential and .git rules above judge them (`git add .env`
+    # and `git add .git/config` are denied) and ask-git-read-outside-project asks for a pathspec
+    # outside the project. Left out: -f / --force (stages ignored files, which is where secrets
+    # and build output live; every abbreviation too), -e / --edit (starts the editor) and
+    # --pathspec-from-file (a file git reads for the list of paths; each abbreviation), plus the
+    # global options allow-git-read-only leaves out (-c, -C, --git-dir ...). Not covered: `git add -A`
+    # stages an untracked .env that is not ignored (the index, not the network: a `git push` asks);
+    # in an UNTRUSTED repository git also reads .git/config (fsmonitor and similar programs), the
+    # same residual as allow-git-read-only, which is why defaults.emit_allow stays off.
+    tool: [Bash, PowerShell]
+    match:
+      program: [git]
+      subcommand: [add]
+      flags_none:
+        - "-c"
+        - "-C"
+        - "--config-env"
+        - "--git-dir"
+        - "--work-tree"
+        - "--exec-path"
+        - "--paginate"
+        - "--help"
+        - "-f"
+        - "--f"
+        - "--fo"
+        - "--for"
+        - "--forc"
+        - "--force"
+        - "-e"
+        - "--e"
+        - "--ed"
+        - "--edi"
+        - "--edit"
+        - "--pathspec-fr"
+        - "--pathspec-fro"
+        - "--pathspec-from"
+        - "--pathspec-from-"
+        - "--pathspec-from-f"
+        - "--pathspec-from-fi"
+        - "--pathspec-from-fil"
+        - "--pathspec-from-file"
+    action: allow
+  - id: allow-git-commit-message
+    # `git commit` with the message on the command line (-m, --message or --no-edit: without one git
+    # starts the editor named in the configuration). It writes a commit object and moves the current
+    # branch, locally; a commit can be undone with the reflog. What it can run: the repository's
+    # own hooks (pre-commit, commit-msg ...) from .git/hooks or core.hooksPath. The agent cannot
+    # write those without a question (ask-git-internals-write), a hook that came with the
+    # repository is the residual (the same class as allow-git-read-only's fsmonitor; emit_allow
+    # stays off). Left out: -e / --edit, -S / --gpg-sign (starts the configured gpg program; each
+    # abbreviation) and the global options allow-git-read-only leaves out. A `-F FILE` or
+    # --template path outside the project asks (ask-git-read-outside-project).
+    tool: [Bash, PowerShell]
+    match:
+      program: [git]
+      subcommand: [commit]
+      flags_any: ["-m", "--message", "--no-edit"]
+      flags_none:
+        - "-c"
+        - "-C"
+        - "--config-env"
+        - "--git-dir"
+        - "--work-tree"
+        - "--exec-path"
+        - "--paginate"
+        - "--help"
+        - "-e"
+        - "--e"
+        - "--ed"
+        - "--edi"
+        - "--edit"
+        - "-S"
+        - "--g"
+        - "--gp"
+        - "--gpg"
+        - "--gpg-"
+        - "--gpg-s"
+        - "--gpg-si"
+        - "--gpg-sig"
+        - "--gpg-sign"
+    action: allow
+  - id: allow-git-stash
+    # `git stash` (push, list, show, apply, pop) moves uncommitted changes into a stash and back.
+    # Nothing is lost: the changes are commits you can list and apply. NOT allowed: drop and clear
+    # (destroy a stash), branch, create, store and anything else; the normalizer marks those with the
+    # flag --stash-other because the rule language cannot see the positional word. Left out too:
+    # -a / --all (moves ignored files, build output and virtual environments), --pathspec-from-file
+    # and the global options allow-git-read-only leaves out.
+    tool: [Bash, PowerShell]
+    match:
+      program: [git]
+      subcommand: [stash]
+      flags_none:
+        - "--stash-other"
+        - "-c"
+        - "-C"
+        - "--config-env"
+        - "--git-dir"
+        - "--work-tree"
+        - "--exec-path"
+        - "--paginate"
+        - "--help"
+        - "-a"
+        - "--a"
+        - "--al"
+        - "--all"
+        - "--pathspec-fr"
+        - "--pathspec-fro"
+        - "--pathspec-from"
+        - "--pathspec-from-"
+        - "--pathspec-from-f"
+        - "--pathspec-from-fi"
+        - "--pathspec-from-fil"
+        - "--pathspec-from-file"
     action: allow
   - id: allow-ps-inspect-inside-project
     # The read cmdlets that take a path. Every path must be inside the project and only read; a
@@ -1922,7 +2040,7 @@ tests:
   - { tool: Bash, input: { command: "git branch -v topic" },          expect: gray }   # -v with a name creates the branch
   - { tool: Bash, input: { command: "git branch -d topic" },          expect: gray }
   - { tool: Bash, input: { command: "git branch -a -d topic" },       expect: gray }
-  - { tool: Bash, input: { command: "git stash list" },               expect: gray }
+  - { tool: Bash, input: { command: "git stash list" },               expect: allow }   # allow-git-stash (was gray before the git add / commit / stash rules)
   - { tool: Bash, input: { command: "git --version" },                expect: gray }
   - { tool: Bash, input: { command: "git -c core.pager=x log" },      expect: gray }   # inline config can name a program
   - { tool: Bash, input: { command: "git log --ext-diff" },           expect: gray }
@@ -1936,7 +2054,41 @@ tests:
   - { tool: Bash, input: { command: "git show HEAD:.env" },           expect: deny }   # REV:PATH is a read of the path
   - { tool: Bash, input: { command: "git diff -- ../outside.txt" },   expect: ask }
   - { tool: Bash, input: { command: "sudo git status" },              expect: gray }
-  - { tool: Bash, input: { command: "git add ." },                    expect: gray }   # not a read
+  - { tool: Bash, input: { command: "git add ." },                    expect: allow }   # allow-git-add (was gray before the git add / commit / stash rules)
+  # ---- git add / commit / stash (allow-git-add, allow-git-commit-message, allow-git-stash).
+  - { tool: Bash, input: { command: "git add -A" },                   expect: allow }
+  - { tool: Bash, input: { command: "git add src/app.py tests" },     expect: allow }
+  - { tool: Bash, input: { command: "git add -f build/x" },           expect: gray }   # force stages ignored files
+  - { tool: Bash, input: { command: "git add --forc x" },             expect: gray }   # an abbreviation of --force
+  - { tool: Bash, input: { command: "git add -e" },                   expect: gray }   # starts the editor
+  - { tool: Bash, input: { command: "git add --pathspec-from-file=list.txt" }, expect: gray }
+  - { tool: Bash, input: { command: "git add ../other/x" },           expect: ask }    # outside the project
+  - { tool: Bash, input: { command: "git add .env" },                 expect: deny }   # the secret rules judge the operand
+  - { tool: Bash, input: { command: "git add .git/config" },          expect: deny }
+  - { tool: Bash, input: { command: "git -C ../other add ." },        expect: ask }    # another repository: the directory is outside the project
+  - { tool: Bash, input: { command: "git -c core.fsmonitor=x add ." }, expect: gray }
+  - { tool: Bash, input: { command: "sudo git add ." },               expect: gray }
+  - { tool: Bash, input: { command: "git commit -m 'fix typo'" },     expect: allow }
+  - { tool: Bash, input: { command: "git commit -am fix" },           expect: allow }
+  - { tool: Bash, input: { command: "git commit --amend --no-edit" }, expect: allow }
+  - { tool: Bash, input: { command: "git add . && git commit -m wip" }, expect: allow }
+  - { tool: Bash, input: { command: "git commit" },                   expect: gray }   # no message: starts the editor
+  - { tool: Bash, input: { command: "git commit -e -m x" },           expect: gray }
+  - { tool: Bash, input: { command: "git commit -S -m x" },           expect: gray }   # starts the gpg program
+  - { tool: Bash, input: { command: "git commit --gpg-sign -m x" },   expect: gray }
+  - { tool: Bash, input: { command: "git commit -m \"$(date)\"" },    expect: gray }   # the message is computed
+  - { tool: Bash, input: { command: "git commit -F ../msg.txt" },     expect: ask }
+  - { tool: Bash, input: { command: "git commit -m x && git push" },  expect: ask }    # the push asks, so the line asks
+  - { tool: Bash, input: { command: "git stash" },                    expect: allow }
+  - { tool: Bash, input: { command: "git stash push -m wip" },        expect: allow }
+  - { tool: Bash, input: { command: "git stash pop" },                expect: allow }
+  - { tool: Bash, input: { command: "git stash -u" },                 expect: allow }
+  - { tool: Bash, input: { command: "git stash drop" },               expect: gray }   # destroys a stash
+  - { tool: Bash, input: { command: "git stash clear" },              expect: gray }
+  - { tool: Bash, input: { command: "git stash branch topic" },       expect: gray }
+  - { tool: Bash, input: { command: "git stash -a" },                 expect: gray }   # moves ignored files too
+  - { tool: PowerShell, platform: [windows], input: { command: "git add -A; git commit -m wip" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], input: { command: "git stash drop" }, expect: gray }
   # Project-internal writes: mkdir and touch, and Write / Edit / MultiEdit / NotebookEdit.
   - { tool: Bash, input: { command: "mkdir -p build/out" },           expect: allow }
   - { tool: Bash, input: { command: "touch notes.md" },               expect: allow }

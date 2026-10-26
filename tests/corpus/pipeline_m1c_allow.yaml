@@ -194,12 +194,12 @@
 - {id: m1c-b-git-branch-c-config, tool: Bash, input: {command: "git -c core.pager=x branch -a"}, expect: gray, adv: true}
 - {id: m1c-b-git-branch-git-dir, tool: Bash, input: {command: "git --git-dir=sub/.git branch -a"}, expect: ask, adv: true}
 # git subcommands that are not read-only stay where they were
-- {id: m1c-b-git-stash-list, tool: Bash, input: {command: "git stash list"}, expect: gray, adv: true}
-- {id: m1c-b-git-stash, tool: Bash, input: {command: "git stash"}, expect: gray, adv: true}
+- {id: m1c-b-git-stash-list, tool: Bash, input: {command: "git stash list"}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash
+- {id: m1c-b-git-stash, tool: Bash, input: {command: "git stash"}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash
 - {id: m1c-b-git-stash-drop, tool: Bash, input: {command: "git stash drop"}, expect: gray, adv: true}
 - {id: m1c-b-git-version, tool: Bash, input: {command: "git --version"}, expect: gray, adv: true}
-- {id: m1c-b-git-add, tool: Bash, input: {command: "git add ."}, expect: gray, adv: true}
-- {id: m1c-b-git-commit, tool: Bash, input: {command: "git commit -m x"}, expect: gray, adv: true}
+- {id: m1c-b-git-add, tool: Bash, input: {command: "git add ."}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash
+- {id: m1c-b-git-commit, tool: Bash, input: {command: "git commit -m x"}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash
 - {id: m1c-b-git-checkout-branch, tool: Bash, input: {command: "git checkout main"}, expect: gray, adv: true}
 - {id: m1c-b-git-checkout-discard, tool: Bash, input: {command: "git checkout -- ."}, expect: ask, adv: true}
 - {id: m1c-b-git-reset, tool: Bash, input: {command: "git reset HEAD~1"}, expect: gray, adv: true}
@@ -449,7 +449,7 @@
 - {id: m1c-b-ps-git-C-outside, tool: PowerShell, platform: windows, input: {command: "git -C ..\\other status"}, expect: ask, adv: true}
 - {id: m1c-b-ps-git-branch-new, tool: PowerShell, platform: windows, input: {command: "git branch topic"}, expect: gray, adv: true}
 - {id: m1c-b-ps-git-branch-d, tool: PowerShell, platform: windows, input: {command: "git branch -a -d topic"}, expect: gray, adv: true}
-- {id: m1c-b-ps-git-add, tool: PowerShell, platform: windows, input: {command: "git add ."}, expect: gray, adv: true}
+- {id: m1c-b-ps-git-add, tool: PowerShell, platform: windows, input: {command: "git add ."}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash
 - {id: m1c-b-ps-git-then-remove, tool: PowerShell, platform: windows, input: {command: "git status; Remove-Item src\\old.py"}, expect: gray, adv: true}
 - {id: m1c-b-ps-mkdir, tool: PowerShell, platform: windows, input: {command: "mkdir build"}, expect: gray, adv: true}
 - {id: m1c-b-ps-new-item-dir, tool: PowerShell, platform: windows, input: {command: "New-Item -ItemType Directory build"}, expect: gray, adv: true}

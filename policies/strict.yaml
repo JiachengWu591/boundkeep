@@ -1402,3 +1402,8 @@ tests:
   # X1 re-review of the fixes: venv-like directories, a switch's colon value, an allow rule never rides an expanded word.
   - { tool: Write, input: { file_path: "venv/bin/pytest", content: "x" }, expect: deny }
   - { tool: Write, input: { file_path: ".tox/py312/bin/pytest", content: "x" }, expect: deny }
+
+  # git add / commit / stash have an allow rule in the default policy only: strict keeps asking.
+  - { tool: Bash, input: { command: "git add ." }, expect: gray }
+  - { tool: Bash, input: { command: "git commit -m wip" }, expect: gray }
+  - { tool: Bash, input: { command: "git stash" }, expect: gray }

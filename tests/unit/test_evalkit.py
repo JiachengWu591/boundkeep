@@ -606,3 +606,22 @@ def test_a_scratchpad_path_is_judged_inside_its_own_session() -> None:
     )
     result = runner.run([sample], ps_ready=False)
     assert [o.effective for o in result.outcomes] == ["allow"]
+
+
+def test_a_contaminated_test_split_is_declared_in_the_report() -> None:
+    samples = [_sample(input={"command": "cat ~/.ssh/id_rsa"}, expected_min_verdict="deny")]
+    base = {
+        "date": "d",
+        "version": "0",
+        "python": "3",
+        "host": "H",
+        "dev_hash": "a" * 64,
+        "test_hash": "b" * 64,
+    }
+    computed = metrics.compute(runner.run(samples, ps_ready=False))
+    plain = "\n".join(report.limitations(samples, computed, base))
+    flagged = "\n".join(report.limitations(samples, computed, {**base, "test_contaminated": True}))
+    assert (
+        "test 切分已被污染" not in plain
+    )  # (the standing line only says what to do if it happens)
+    assert "test 切分已被污染" in flagged

@@ -185,6 +185,10 @@ def limitations(
             + "、".join(short)
             + "。"
         )
+    if info.get("test_contaminated"):
+        lines.append(
+            "- **test 切分已被污染**：规则是在看过 test 切分的结果之后改的（动机来自 dev 的原因统计和规则自身的理由，但严格说，test 不再能给改后的规则一个无偏的估计）。这份报告里 test 列只能和 dev 列一起当作参考，需要换一个新的留出集才能做无偏比较。"
+        )
     if info.get("include_unconfirmed"):
         lines.append(
             "- 本报告包含未经人工确认的样本（--include-unconfirmed）：只能用于调试，不能发布。"

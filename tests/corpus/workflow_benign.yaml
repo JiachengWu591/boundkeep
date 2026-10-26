@@ -32,7 +32,7 @@
 - {id: t1-git-branch, tool: Bash, input: {"command": "git branch"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: bare `git branch` cannot be told from `git branch NAME` (the rule language cannot see positional words), so only listing forms (-a, -r, --list, ...) are allowed; moved to keep-ask
 - {id: t1-git-branch-a, tool: Bash, input: {"command": "git branch -a"}, tier: t1-read, expect_after: allow, today: gray}
 - {id: t1-git-show-stat, tool: Bash, input: {"command": "git show HEAD --stat"}, tier: t1-read, expect_after: allow, today: gray}
-- {id: t1-git-stash-list, tool: Bash, input: {"command": "git stash list"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: `git stash` is not allowed (the rule language cannot see the `list` positional, `git stash` alone stashes your work); moved to keep-ask
+- {id: t1-git-stash-list, tool: Bash, input: {"command": "git stash list"}, tier: t1-read, expect_after: allow, today: gray}  # M1c: `git stash` is not allowed (the rule language cannot see the `list` positional, `git stash` alone stashes your work); moved to keep-ask
 - {id: t1-git-rev-parse, tool: Bash, input: {"command": "git rev-parse HEAD"}, tier: t1-read, expect_after: allow, today: gray}
 - {id: t1-git-blame, tool: Bash, input: {"command": "git blame src/app.py"}, tier: t1-read, expect_after: allow, today: gray}  # UNSURE: read-only, but prints author names/emails of the history
 - {id: t1-git-version, tool: Bash, input: {"command": "git --version"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: version probes are not allowed (the program is not read-only in general, e.g. python / node run code); moved to keep-ask
@@ -193,17 +193,17 @@
 
 # ---- KEEP-ASK (keep-ask): benign but intentionally still ask (changes state, network, installs).
 
-- {id: ka-git-add-dot, tool: Bash, input: {"command": "git add ."}, tier: keep-ask, expect_after: ask, today: gray}
-- {id: ka-git-add-file, tool: Bash, input: {"command": "git add src/app.py"}, tier: keep-ask, expect_after: ask, today: gray}
-- {id: ka-git-commit, tool: Bash, input: {"command": "git commit -m x"}, tier: keep-ask, expect_after: ask, today: gray}
-- {id: ka-git-commit-amend, tool: Bash, input: {"command": "git commit --amend --no-edit"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ka-git-add-dot, tool: Bash, input: {"command": "git add ."}, tier: t2-write, expect_after: allow, today: gray}
+- {id: ka-git-add-file, tool: Bash, input: {"command": "git add src/app.py"}, tier: t2-write, expect_after: allow, today: gray}
+- {id: ka-git-commit, tool: Bash, input: {"command": "git commit -m x"}, tier: t2-write, expect_after: allow, today: gray}
+- {id: ka-git-commit-amend, tool: Bash, input: {"command": "git commit --amend --no-edit"}, tier: t2-write, expect_after: allow, today: gray}
 - {id: ka-git-checkout-discard, tool: Bash, input: {"command": "git checkout -- ."}, tier: keep-ask, expect_after: ask, today: ask}
 - {id: ka-git-checkout-branch, tool: Bash, input: {"command": "git checkout main"}, tier: keep-ask, expect_after: ask, today: gray}
 - {id: ka-git-checkout-new, tool: Bash, input: {"command": "git checkout -b feature"}, tier: keep-ask, expect_after: ask, today: gray}
 - {id: ka-git-switch, tool: Bash, input: {"command": "git switch main"}, tier: keep-ask, expect_after: ask, today: gray}
 - {id: ka-git-merge, tool: Bash, input: {"command": "git merge main"}, tier: keep-ask, expect_after: ask, today: gray}
 - {id: ka-git-rebase, tool: Bash, input: {"command": "git rebase main"}, tier: keep-ask, expect_after: ask, today: gray}
-- {id: ka-git-stash, tool: Bash, input: {"command": "git stash"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ka-git-stash, tool: Bash, input: {"command": "git stash"}, tier: t2-write, expect_after: allow, today: gray}
 - {id: ka-git-reset, tool: Bash, input: {"command": "git reset HEAD~1"}, tier: keep-ask, expect_after: ask, today: gray}
 - {id: ka-git-tag, tool: Bash, input: {"command": "git tag v1"}, tier: keep-ask, expect_after: ask, today: gray}
 - {id: ka-git-push, tool: Bash, input: {"command": "git push"}, tier: keep-ask, expect_after: ask, today: ask}
@@ -243,8 +243,8 @@
 - {id: ka-ln-s, tool: Bash, input: {"command": "ln -s a.txt b.txt"}, tier: keep-ask, expect_after: ask, today: gray}
 - {id: ka-xargs, tool: Bash, input: {"command": "ls | xargs wc -l"}, tier: keep-ask, expect_after: ask, today: gray}  # UNSURE: run-time arguments cannot be known; kept ask
 - {id: t3-docker-run, tool: Bash, input: {"command": "docker run --rm alpine echo hi"}, tier: t3-exec, expect_after: ask, today: ask}  # runs arbitrary image code: tier 3
-- {id: ps-ka-git-add, tool: PowerShell, platform: windows, input: {"command": "git add ."}, tier: keep-ask, expect_after: ask, today: gray}
-- {id: ps-ka-git-commit, tool: PowerShell, platform: windows, input: {"command": "git commit -m x"}, tier: keep-ask, expect_after: ask, today: gray}
+- {id: ps-ka-git-add, tool: PowerShell, platform: windows, input: {"command": "git add ."}, tier: t2-write, expect_after: allow, today: gray}
+- {id: ps-ka-git-commit, tool: PowerShell, platform: windows, input: {"command": "git commit -m x"}, tier: t2-write, expect_after: allow, today: gray}
 - {id: ps-ka-git-push, tool: PowerShell, platform: windows, input: {"command": "git push"}, tier: keep-ask, expect_after: ask, today: ask}
 - {id: ps-ka-git-pull, tool: PowerShell, platform: windows, input: {"command": "git pull"}, tier: keep-ask, expect_after: ask, today: ask}
 - {id: ps-ka-iwr, tool: PowerShell, platform: windows, input: {"command": "Invoke-WebRequest https://example.invalid/x"}, tier: keep-ask, expect_after: ask, today: ask}

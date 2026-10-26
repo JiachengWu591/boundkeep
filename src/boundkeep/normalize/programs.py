@@ -2610,6 +2610,11 @@ _GIT_SUB_OPTS: dict[str, Opts] = {
 }
 
 
+# `git stash` with no subcommand is `push`; these subcommands neither destroy a stash nor reach
+# outside the work tree. Everything else (drop, clear, branch, create, store ...) is marked.
+_GIT_STASH_PLAIN = frozenset({None, "push", "save", "list", "show", "apply", "pop"})
+GIT_STASH_OTHER_FLAG = "--stash-other"
+
 _GIT_TREE_WRITERS = _fs(
     "checkout switch restore reset clean merge rebase cherry-pick revert stash pull apply am "
     "checkout-index read-tree sparse-checkout submodule worktree"
@@ -2891,6 +2896,11 @@ def _h_git(a: _Acc, args: Sequence[Word]) -> None:
     _git_operands(a, sub, pos, before, after, seen, chain)
     if sub == "add" and seen & {"-f", "--force"}:
         a.recursive = True  # ``git add -f DIR`` stages even ignored files below DIR
+    if sub == "stash" and sub2 not in _GIT_STASH_PLAIN:
+        # The rule language cannot see positional words, so `stash drop` / `clear` (which destroy a
+        # stash), `branch`, `create`, `store` and anything unknown are marked with a flag no real
+        # git option can have; a rule that allows `stash` lists it in flags_none.
+        a.flags.append(GIT_STASH_OTHER_FLAG)
     if sub == "stash" and sub2 in ("push", "save"):
         for w in (*before[1:], *after):  # every operand of ``stash push`` is a pathspec
             a.path(w, operand_access)

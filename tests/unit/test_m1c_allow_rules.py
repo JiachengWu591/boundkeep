@@ -53,6 +53,9 @@ EXPECTED_ALLOW_IDS = {
     "allow-no-path-commands",
     "allow-git-read-only",
     "allow-git-branch-list",
+    "allow-git-add",  # tests/unit/test_git_local_vcs_allow.py
+    "allow-git-commit-message",
+    "allow-git-stash",
     "allow-ps-inspect-inside-project",
     "allow-ps-list-here",
     "allow-ps-no-path-commands",
@@ -327,7 +330,13 @@ def test_every_allow_rule_without_path_inside_project_is_covered_by_a_guard_rule
     assert guard_programs == guarded
     # git: the guard names every subcommand some git allow rule allows
     allowed: set[str] = set()
-    for rule_id in ("allow-git-read-only", "allow-git-branch-list"):
+    for rule_id in (
+        "allow-git-read-only",
+        "allow-git-branch-list",
+        "allow-git-add",
+        "allow-git-commit-message",
+        "allow-git-stash",
+    ):
         allowed |= set(rules[rule_id]["match"]["subcommand"])
     assert set(git_guard["match"]["subcommand"]) == allowed
     assert git_guard["match"]["program"] == ["git"]
@@ -1025,12 +1034,10 @@ NOT_ALLOWED_BASH = [
     "git branch -f topic HEAD~3",
     "git branch -u origin/main",
     "git branch --set-upstream-to=origin/main",
+    # git stash / add / commit left this list when allow-git-stash, allow-git-add and
+    # allow-git-commit-message were added (their own tests: test_git_local_vcs_allow.py)
     "git branch --edit-description",
-    "git stash list",
-    "git stash",
     "git --version",
-    "git add .",
-    "git commit -m x",
     "touch -r ../x notes.md",
     "touch --reference=README.md notes.md",
     # outside the project
@@ -1226,7 +1233,6 @@ NOT_ALLOWED_PS = [
     "git -C ..\\other status",
     "git branch topic",
     "git branch -a -d topic",
-    "git add .",
     "git status; Remove-Item src\\old.py",
     "mkdir build",
     "New-Item -ItemType Directory build",

@@ -39,6 +39,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also measure samples no person has confirmed (never for a published report)",
     )
+    p.add_argument(
+        "--test-contaminated",
+        action="store_true",
+        help="the rules were changed after the test split had been looked at: say so in the report",
+    )
     p.add_argument("--stamp", type=Path, nargs="+", help="set the split of every sample in FILE")
     return p
 
@@ -86,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         "samples": len(samples),
         "left_out_unconfirmed": left_out,
         "include_unconfirmed": bool(args.include_unconfirmed),
+        "test_contaminated": bool(args.test_contaminated),
     }
     out_dir: Path = args.out_dir
     (out_dir / "results").mkdir(parents=True, exist_ok=True)
