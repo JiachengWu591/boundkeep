@@ -197,6 +197,28 @@
 - {id: m1c-b-git-stash-list, tool: Bash, input: {command: "git stash list"}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash
 - {id: m1c-b-git-stash, tool: Bash, input: {command: "git stash"}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash
 - {id: m1c-b-git-stash-drop, tool: Bash, input: {command: "git stash drop"}, expect: gray, adv: true}
+# X1 review of the git add / commit / stash rules (docs/reviews/M2-rules-1-review.md), R3-1
+- {id: m1c-b-git-commit-pathspec-from-file, tool: Bash, input: {command: "git commit -m x --allow-empty --pathspec-from-file=notes.txt"}, expect: gray, adv: true}
+- {id: m1c-b-git-commit-pathspec-abbrev, tool: Bash, input: {command: "git commit -m x --allow-empty --pathspec-fr=notes.txt"}, expect: gray, adv: true}
+- {id: m1c-b-git-commit-pathspec-secret, tool: Bash, input: {command: "git commit -m x --allow-empty --pathspec-from-file=id_rsa"}, expect: deny, adv: true}
+- {id: m1c-b-git-commit-pathspec-credentials, tool: Bash, input: {command: "git commit -m x --allow-empty --pathspec-from-file=credentials.json"}, expect: deny, adv: true}
+- {id: m1c-b-git-add-pathspec-secret, tool: Bash, input: {command: "git add --pathspec-from-file=id_rsa"}, expect: deny, adv: true}
+- {id: m1c-b-ps-git-commit-pathspec, tool: PowerShell, platform: windows, input: {command: "git commit -m x --allow-empty --pathspec-from-file=notes.txt"}, expect: gray, adv: true}
+# R3-2 / R3-4 / R3-7: stash list|show option set, interactive options
+- {id: m1c-b-stash-list-output, tool: Bash, input: {command: "git stash list --format=%b --output=conftest.py"}, expect: gray, adv: true}
+- {id: m1c-b-stash-list-output-abbrev, tool: Bash, input: {command: "git stash list --format=%b --o=Makefile"}, expect: gray, adv: true}
+- {id: m1c-b-stash-show-output, tool: Bash, input: {command: "git stash show -p --output=pyproject.toml"}, expect: gray, adv: true}
+- {id: m1c-b-stash-show-patch, tool: Bash, input: {command: "git stash show -p"}, expect: gray, adv: true}
+- {id: m1c-b-stash-list-patch, tool: Bash, input: {command: "git stash list -p"}, expect: gray, adv: true}
+- {id: m1c-b-ps-stash-list-output, tool: PowerShell, platform: windows, input: {command: "git stash list --format=%b --output=conftest.py"}, expect: gray, adv: true}
+- {id: m1c-b-git-add-patch, tool: Bash, input: {command: "git add -p"}, expect: gray, adv: true}
+- {id: m1c-b-git-commit-patch, tool: Bash, input: {command: "git commit -m x --patch"}, expect: gray, adv: true}
+# X1 review R4-1: git's stash list parser honours the options after a `--`
+- {id: m1c-b-stash-list-dd-output, tool: Bash, input: {command: "git stash list -- --output=conftest.py"}, expect: gray, adv: true}
+- {id: m1c-b-stash-list-dd-format-output, tool: Bash, input: {command: "git stash list -- --format=%b --output=Makefile"}, expect: gray, adv: true}
+- {id: m1c-b-stash-list-dd-agent-config, tool: Bash, input: {command: "git stash list -- --output=.claude/settings.json"}, expect: gray, adv: true}
+- {id: m1c-b-ps-stash-list-dd-output, tool: PowerShell, platform: windows, input: {command: "git stash list -- --output=conftest.py"}, expect: gray, adv: true}
+- {id: m1c-b-git-add-inter, tool: Bash, input: {command: "git add --inter"}, expect: gray, adv: true}
 - {id: m1c-b-git-version, tool: Bash, input: {command: "git --version"}, expect: gray, adv: true}
 - {id: m1c-b-git-add, tool: Bash, input: {command: "git add ."}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash
 - {id: m1c-b-git-commit, tool: Bash, input: {command: "git commit -m x"}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash

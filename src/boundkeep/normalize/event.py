@@ -64,6 +64,7 @@ SEARCH_TOOLS = frozenset({"Glob", "Grep"})
 HARMLESS_TOOLS = frozenset({"ToolSearch", "TodoWrite"})
 
 MAX_GIT_WALK = 16  # levels find_git_root climbs
+MAX_GIT_WALK_ABOVE = 128  # levels the "repository root above the project" check climbs (R3-5)
 PS_PARSE_BUDGET_S = 0.3  # the PowerShell helper's own limit (not charged to TIME_BUDGET_S)
 TIME_BUDGET_S = 0.25  # normalize_event runs on the daemon's event loop
 MAX_ACTIONS = 256  # simple commands handled per command line
@@ -255,7 +256,7 @@ def _gray(ctx: _Ctx, tool: str, *reasons: str, **extra: Any) -> Action:
 # --------------------------------------------------------------------------------------------
 
 
-def find_git_root(cwd: str) -> str | None:
+def find_git_root(cwd: str, *, limit: int = MAX_GIT_WALK) -> str | None:
     """The nearest ancestor of ``cwd`` that holds a ``.git`` entry, on this machine; else None.
 
     Only a plain local path is looked at: a UNC, ``\\\\?\\`` or device path, a network or other
@@ -270,7 +271,7 @@ def find_git_root(cwd: str) -> str | None:
         if norm.uncertain or not paths.is_local_disk(norm):
             return None
         current = os.path.abspath(cwd)
-        for _ in range(MAX_GIT_WALK):
+        for _ in range(limit):
             if os.path.exists(os.path.join(current, ".git")):
                 return current
             parent = os.path.dirname(current)
@@ -283,6 +284,100 @@ def find_git_root(cwd: str) -> str | None:
 
 
 _too_broad = too_broad  # shared with the ``trusted_projects`` check (policy/schema.py)
+
+# `git add -A`, `git commit -a` and `git stash` act on the whole work tree of the repository, with
+# no operand that names a path: the paths they touch are the repository's, not the project's.
+_GIT_WHOLE_TREE = frozenset({"add", "commit", "stash"})
+
+# Directories `git add .` is not expected to stage: dependencies, caches and version control. The
+# scan for protected names in `_add_may_stage_protected` leaves them out (a virtual environment
+# holds files named like secrets, cacert.pem, and is almost always ignored).
+_STAGE_SCAN_SKIP = subtree.VCS_DIR_NAMES | frozenset(
+    {
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".tox",
+        ".nox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".hypothesis",
+    }
+)
+
+
+def _stages_whole_repository(flags: set[str], targets: list[str]) -> bool:
+    """Does this `git add` stage the whole repository, whatever directory it runs in?
+
+    `-A`, `--all` and `--no-ignore-removal` (each also by unique abbreviation) do, and so does any
+    pathspec that starts with `:` (`:/`, `:(top)`, and the exclude-only magic `:!x`, `:^x`,
+    `:(exclude)x`, which select everything but x; X1 review R5-1, R6-1). Only plain paths do not.
+    """
+    if "-A" in flags:
+        return True
+    if any(f.startswith("--a") and "--all".startswith(f) for f in flags):
+        return True
+    if any(f.startswith("--no-i") and "--no-ignore-removal".startswith(f) for f in flags):
+        return True
+    return any(target.startswith(":") for target in targets)
+
+
+def _add_may_stage_protected(
+    ctx: _Ctx, st: _Line, info: programs.CmdInfo, notes: list[str]
+) -> bool:
+    """X1 review R3-3: could this `git add` put a protected file into the index?
+
+    `git add -A` (or `.`, or a directory) stages an untracked `.env` that is not ignored, and the
+    already allowed `git diff --cached` then prints it. The tree below the operand directories (the
+    working directory when there is none) is looked at for names the read rules protect; one found
+    makes the action gray (ask), never deny: the scan does not read `.gitignore`, so a deny would
+    hit every project that keeps an ignored `.env` on disk. `-u` stages only tracked files and is
+    left out.
+    """
+    if {"-u", "--update"} & set(info.flags):
+        return False
+    words = [w for w, _access in info.paths] or [Word(".")]
+    targets = [w.text for w in words]
+    flags = set(info.flags)
+    if _stages_whole_repository(flags, targets) and ctx.root is not None:
+        # from a sub-directory `-A`, `--all`, `:/` and `:(top)` still stage the whole repository
+        # (X1 review R5-1): the project root is looked at too, not only the working directory
+        targets.append(ctx.root.raw)
+    for target in targets:
+        refs = _refs(ctx, notes, target, "read", cwds=st.cwds, dialect=st.shell, dynamic=False)
+        directories = [
+            r for r in refs if (native := _native_dir(r)) is not None and os.path.isdir(native)
+        ]
+        if directories and _scan_refs(ctx, notes, directories, "read", skip_names=_STAGE_SCAN_SKIP):
+            return True
+    return False
+
+
+def _git_root_above_project(ctx: _Ctx, st: _Line) -> bool:
+    """X1 review R3-5: is the repository root a strict ancestor of the project directory?
+
+    Then a command with no path operand reaches files above the project (a monorepo sub-directory,
+    a dotfiles repository in the home directory). Looks at the disk, so it is off wherever the
+    subtree look is off (the fake machines of ``boundkeep test`` and the evaluation).
+    """
+    if ctx.protected.empty or ctx.budget.lexical or ctx.root is None:
+        return False
+    starts = [c for c in st.cwds if c] or ([ctx.cwd] if ctx.cwd else [])
+    if not starts or len(starts) != len(st.cwds):
+        return False  # a directory that is not known is gray on its own
+    project_keys = {ctx.root.key} | ({ctx.root_resolved.key} if ctx.root_resolved else set())
+    for start in starts:
+        top = find_git_root(start, limit=MAX_GIT_WALK_ABOVE)
+        if top is None:
+            continue
+        repo = paths.normalize_path(
+            top, cwd=None, home=ctx.home, env=ctx.env, dialect="tool", literal=True
+        ).key.rstrip("/")
+        if any(key != repo and key.startswith(repo + "/") for key in project_keys):
+            return True
+    return False
 
 
 def _home_of(home: str | None, env: Mapping[str, str]) -> paths.NormPath | None:
@@ -1354,6 +1449,8 @@ def _command_action(
         ):
             program = program.lower()
     _scan_assignments(st, cmd, program)
+    if program == "git" and info.subcommand in _GIT_WHOLE_TREE and _git_root_above_project(ctx, st):
+        gray_reasons.append("git-root-above-project")
     if cmd.argv and _dynamic(cmd.argv[0]):
         gray_reasons.append("dynamic-program")
     if cmd.args_from_stdin:
@@ -1390,6 +1487,12 @@ def _command_action(
                     access,
                     skip_names=subtree.VCS_DIR_NAMES if program == "git" else frozenset(),
                 )
+    if (
+        program == "git"
+        and info.subcommand == "add"
+        and _add_may_stage_protected(ctx, st, info, notes)
+    ):
+        gray_reasons.append("git-add-may-stage-protected")
     names, unknown_host = _domains_of(info.urls)
     if unknown_host:
         gray_reasons.append("unparseable-url")

@@ -2548,12 +2548,15 @@ _GIT_SUB_OPTS: dict[str, Opts] = {
     "commit": _opts(
         short="m=x F=r C=x c=x t=r",
         long="message=x file=r reuse-message=x reedit-message=x template=r author=x date=x "
-        "fixup=x squash=x cleanup=x",
+        "fixup=x squash=x cleanup=x pathspec-from-file=r",
         attached="S=x",
     ),
     "tag": _opts(short="m=x F=r u=x", long="message=x file=r local-user=x", attached="s=x"),
     "merge": _opts(short="m=x F=r s=x X=x", long="message=x file=r strategy=x strategy-option=x"),
-    "stash": _opts(short="m=x", long="message=x"),
+    "stash": _opts(short="m=x", long="message=x pathspec-from-file=r"),
+    # R3-1: the file named by --pathspec-from-file is READ by git (its content is echoed in the
+    # error when no path matches), so it is a read path the secret and outside-project rules judge
+    "add": _opts(long="pathspec-from-file=r"),
     "push": _opts(
         short="o=x",
         long="push-option=x repo=x receive-pack=cmd exec=cmd signed=x",
@@ -2614,6 +2617,11 @@ _GIT_SUB_OPTS: dict[str, Opts] = {
 # outside the work tree. Everything else (drop, clear, branch, create, store ...) is marked.
 _GIT_STASH_PLAIN = frozenset({None, "push", "save", "list", "show", "apply", "pop"})
 GIT_STASH_OTHER_FLAG = "--stash-other"
+# The only options `git stash list` / `git stash show` may carry and stay plain.
+_GIT_STASH_LIST_FLAGS = frozenset({"--oneline"})
+_GIT_STASH_SHOW_FLAGS = frozenset(
+    {"--stat", "--name-only", "--name-status", "--numstat", "--shortstat"}
+)
 
 _GIT_TREE_WRITERS = _fs(
     "checkout switch restore reset clean merge rebase cherry-pick revert stash pull apply am "
@@ -2896,6 +2904,16 @@ def _h_git(a: _Acc, args: Sequence[Word]) -> None:
     _git_operands(a, sub, pos, before, after, seen, chain)
     if sub == "add" and seen & {"-f", "--force"}:
         a.recursive = True  # ``git add -f DIR`` stages even ignored files below DIR
+    if sub == "stash" and sub2 in ("list", "show"):
+        # `stash list|show` take the whole of `git log` / `git diff`'s option set (--output writes a
+        # file, --format prints values, -p shows the diff of stashed secrets, --ext-diff starts a
+        # program ...). A blacklist cannot be complete (X1 review R3-2, R3-4, R3-6, R3-10), so these
+        # two are an ALLOWLIST: any option outside the few listed marks the action.
+        listed = _GIT_STASH_LIST_FLAGS if sub2 == "list" else _GIT_STASH_SHOW_FLAGS
+        # git's own `stash list` parser takes a user-supplied `--` and still honours the options
+        # after it (`git stash list -- --output=x` writes x; X1 review R4-1), so a `--` marks too
+        if sc.dd_at >= 0 or any(flag not in listed for flag in sc.flags):
+            a.flags.append(GIT_STASH_OTHER_FLAG)
     if sub == "stash" and sub2 not in _GIT_STASH_PLAIN:
         # The rule language cannot see positional words, so `stash drop` / `clear` (which destroy a
         # stash), `branch`, `create`, `store` and anything unknown are marked with a flag no real

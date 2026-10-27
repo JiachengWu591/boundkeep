@@ -1455,6 +1455,17 @@ rules:
         - "--exec-path"
         - "--paginate"
         - "--help"
+        - "-p"
+        - "--patc"
+        - "--patch"
+        - "-i"
+        - "--inter"
+        - "--intera"
+        - "--interac"
+        - "--interact"
+        - "--interacti"
+        - "--interactiv"
+        - "--interactive"
         - "-f"
         - "--f"
         - "--fo"
@@ -1474,6 +1485,7 @@ rules:
         - "--pathspec-from-fi"
         - "--pathspec-from-fil"
         - "--pathspec-from-file"
+        - "--pathspec-file-nul"
     action: allow
   - id: allow-git-commit-message
     # `git commit` with the message on the command line (-m, --message or --no-edit: without one git
@@ -1483,7 +1495,9 @@ rules:
     # write those without a question (ask-git-internals-write), a hook that came with the
     # repository is the residual (the same class as allow-git-read-only's fsmonitor; emit_allow
     # stays off). Left out: -e / --edit, -S / --gpg-sign (starts the configured gpg program; each
-    # abbreviation) and the global options allow-git-read-only leaves out. A `-F FILE` or
+    # abbreviation), --pathspec-from-file / --pathspec-file-nul (git reads the named file and prints
+    # its content in the error when no path matches: X1 review R3-1) and the global options
+    # allow-git-read-only leaves out. A `-F FILE` or
     # --template path outside the project asks (ask-git-read-outside-project).
     tool: [Bash, PowerShell]
     match:
@@ -1499,6 +1513,17 @@ rules:
         - "--exec-path"
         - "--paginate"
         - "--help"
+        - "-p"
+        - "--patc"
+        - "--patch"
+        - "-i"
+        - "--inter"
+        - "--intera"
+        - "--interac"
+        - "--interact"
+        - "--interacti"
+        - "--interactiv"
+        - "--interactive"
         - "-e"
         - "--e"
         - "--ed"
@@ -1513,14 +1538,28 @@ rules:
         - "--gpg-si"
         - "--gpg-sig"
         - "--gpg-sign"
+        - "--pathspec-fr"
+        - "--pathspec-fro"
+        - "--pathspec-from"
+        - "--pathspec-from-"
+        - "--pathspec-from-f"
+        - "--pathspec-from-fi"
+        - "--pathspec-from-fil"
+        - "--pathspec-from-file"
+        - "--pathspec-file-nul"
     action: allow
   - id: allow-git-stash
     # `git stash` (push, list, show, apply, pop) moves uncommitted changes into a stash and back.
     # Nothing is lost: the changes are commits you can list and apply. NOT allowed: drop and clear
     # (destroy a stash), branch, create, store and anything else; the normalizer marks those with the
     # flag --stash-other because the rule language cannot see the positional word. Left out too:
-    # -a / --all (moves ignored files, build output and virtual environments), --pathspec-from-file
-    # and the global options allow-git-read-only leaves out.
+    # -a / --all (moves ignored files, build output and virtual environments), --pathspec-from-file,
+    # -p / --patch (interactive) and the global options allow-git-read-only leaves out.
+    # `stash list` and `stash show` accept the option set of `git log` / `git diff` (--output writes
+    # a file, --format prints values, -p shows stashed secrets, --ext-diff starts a program), so
+    # for those two the NORMALIZER keeps an allowlist and marks every other option --stash-other:
+    # only --oneline (list) and --stat, --name-only, --name-status, --numstat, --shortstat (show)
+    # stay plain (X1 review R3-2, R3-4).
     tool: [Bash, PowerShell]
     match:
       program: [git]
@@ -1535,6 +1574,17 @@ rules:
         - "--exec-path"
         - "--paginate"
         - "--help"
+        - "-p"
+        - "--patc"
+        - "--patch"
+        - "-i"
+        - "--inter"
+        - "--intera"
+        - "--interac"
+        - "--interact"
+        - "--interacti"
+        - "--interactiv"
+        - "--interactive"
         - "-a"
         - "--a"
         - "--al"
@@ -1547,6 +1597,7 @@ rules:
         - "--pathspec-from-fi"
         - "--pathspec-from-fil"
         - "--pathspec-from-file"
+        - "--pathspec-file-nul"
     action: allow
   - id: allow-ps-inspect-inside-project
     # The read cmdlets that take a path. Every path must be inside the project and only read; a
@@ -2078,6 +2129,9 @@ tests:
   - { tool: Bash, input: { command: "git commit --gpg-sign -m x" },   expect: gray }
   - { tool: Bash, input: { command: "git commit -m \"$(date)\"" },    expect: gray }   # the message is computed
   - { tool: Bash, input: { command: "git commit -F ../msg.txt" },     expect: ask }
+  - { tool: Bash, input: { command: "git commit -m x --allow-empty --pathspec-from-file=notes.txt" }, expect: gray }   # git reads the file and echoes it in its error (X1 review R3-1)
+  - { tool: Bash, input: { command: "git commit -m x --allow-empty --pathspec-from-file=id_rsa" }, expect: deny }
+  - { tool: Bash, input: { command: "git commit -m x --allow-empty --pathspec-fr=credentials.json" }, expect: deny }
   - { tool: Bash, input: { command: "git commit -m x && git push" },  expect: ask }    # the push asks, so the line asks
   - { tool: Bash, input: { command: "git stash" },                    expect: allow }
   - { tool: Bash, input: { command: "git stash push -m wip" },        expect: allow }
@@ -2085,6 +2139,23 @@ tests:
   - { tool: Bash, input: { command: "git stash -u" },                 expect: allow }
   - { tool: Bash, input: { command: "git stash drop" },               expect: gray }   # destroys a stash
   - { tool: Bash, input: { command: "git stash clear" },              expect: gray }
+  # X1 review R3-2, R3-4: `stash list|show` accept the option set of git log / git diff; only a few options stay plain.
+  - { tool: Bash, input: { command: "git stash list --oneline" },     expect: allow }
+  - { tool: Bash, input: { command: "git stash show --stat" },        expect: allow }
+  - { tool: Bash, input: { command: "git stash list --format=%b --output=conftest.py" }, expect: gray }   # writes the stash message into a project file
+  - { tool: Bash, input: { command: "git stash list --format=%b --outp=Makefile" }, expect: gray }
+  - { tool: Bash, input: { command: "git stash show -p --output=package.json" }, expect: gray }
+  - { tool: Bash, input: { command: "git stash show -p" },            expect: gray }   # the diff of stashed files, secrets included
+  - { tool: Bash, input: { command: "git stash list -- --output=conftest.py" }, expect: gray }   # git honours the options after a `--` (X1 review R4-1)
+  - { tool: Bash, input: { command: "git stash list -- -p" },        expect: gray }
+  - { tool: Bash, input: { command: "git add --interacti" },          expect: gray }   # an abbreviation of --interactive
+  - { tool: Bash, input: { command: "git stash list -p" },            expect: gray }
+  - { tool: Bash, input: { command: "git stash show --ext-diff" },    expect: gray }
+  - { tool: PowerShell, platform: [windows], input: { command: "git stash list --format=%b --output=conftest.py" }, expect: gray }
+  # R3-7: interactive selection reads stdin and can start the editor.
+  - { tool: Bash, input: { command: "git add -p" },                   expect: gray }
+  - { tool: Bash, input: { command: "git commit -m x --patch" },      expect: gray }
+  - { tool: Bash, input: { command: "git stash push -p" },            expect: gray }
   - { tool: Bash, input: { command: "git stash branch topic" },       expect: gray }
   - { tool: Bash, input: { command: "git stash -a" },                 expect: gray }   # moves ignored files too
   - { tool: PowerShell, platform: [windows], input: { command: "git add -A; git commit -m wip" }, expect: allow }
