@@ -14,6 +14,7 @@ defaults:
 llm_audit: {...}               # 只校验结构（M3 才有后端）
 taint: {sources: [WebFetch, WebSearch, "mcp__*"]}   # 决定 PostToolUse 的 matcher
 trusted_projects: []           # 你明确信任的项目目录（默认空），见下面的"受信任的项目"
+mcp_read_only: []              # 你声明只读的 MCP 工具（默认空），见下面的"MCP 工具"
 rules: [...]
 tests: [...]
 ```
@@ -61,9 +62,22 @@ rules:
 | `network: true` | 该动作联网 |
 | `domain_not_in` | 联网，且（目标域名未知，或**任一**域名不在列表里）。域名精确相等或是真正的子域才算"在" |
 | `domain_in` | 联网，且域名非空且**每个**都在列表里 |
+| `destination` | `known` 或 `unknown`，需要联网：`known` 至少有一个已知域名，`unknown` 一个都没有（配置好的 git 远端或包源、运行时拼出的主机、变量里的 URL）。M2 之后加入，用来把"目的地无法确定"和"主机不在白名单"分成两条规则 |
 | `mcp_server` | MCP 工具的 server 名。**区分大小写**（`GitHub` 不是 `github`） |
+| `mcp_read_only: true` | 该动作是顶层 `mcp_read_only` 里声明过的 MCP 工具的调用，而且它的灰色原因**只有** `mcp-tool-not-reviewed`（参数里有命令、可能写入的 SQL、读不懂的 URL 等都会多一个原因）。只有带这个字段的 allow 规则能放行这样一个灰色动作；单独写它不满足 allow 规则必须点名工具或程序的检查 |
 
 所有布尔字段只能写 `true`，列表不能为空。**任何 match 字段、`tool`、`platform` 都不能写成 null**（`key:` 后面留空、`null`、`~`）：缺省才表示"不限"，一个悄悄等价于缺省的 null 会让 `path_inside_project:` 这样的笔误把 allow 规则放宽。加载时报 `rules[0].match.path_inside_project: ... is null`，带行号。
+
+### MCP 工具（`mcp_read_only`，M2 之后）
+
+MCP 调用永远带灰色原因 `mcp-tool-not-reviewed`：boundkeep 不知道一个服务器拿参数做什么。归一化层从参数里取出能判断的部分交给 deny / ask 规则（它们大多没有 `tool:`，所以对 MCP 同样生效）：
+
+- **路径**：**任何键**下的值（含嵌套的列表与对象；前后空白不算），只要是绝对路径、`~` 开头的路径、UNC 路径或 `file:` URI，都按本机路径处理（X1 审查 R9-1：只认路径类键名会漏掉 `file_name`、`folder`、`uri` 等）；相对路径可能是远端仓库里的路径，不处理。以变量开头且带分隔符的值（`$HOME/...`、`%USERPROFILE%\\...`）与路径类键下的盘符相对路径（`C:x`）这里解析不了，加灰色 `mcp-path-unclear`。参数走查按层广度优先，有上限（500 个值、6 层、每层 100 项、单个值 4 MiB）；超过任何一项加灰色 `mcp-arguments-not-all-seen`：没看全的调用不会被放行。工具名**以** `read` / `get` / `list` / `search` 等词**开头**、且不含写入类的词时，访问方式是读，否则是"可能读也可能写"（`get_and_store` 可能写）。以 `..` 开头的值加灰色 `mcp-path-unclear`；值前后的不可见字符（字节序标记、零宽字符）不算。所以 `mcp__filesystem__read_file` 读 `~/.aws/credentials` 被拒，写 `~/.bashrc` 被拒。
+- **命令**：`command` / `commands` / `cmd` / `script` / `shell` / `code` 键的字符串或字符串列表（同级有 `args` / `arguments` / `argv` 列表时拼在一起）按 Bash 方言解析，得到的动作带灰色 `mcp-command:<工具名>`：只能让 deny / ask 生效（`rm -rf ~` 被拒），永远不会放行。
+- **URL**：值里任何 `scheme://` 形式的 URL（`file:` 除外，它是路径；也包括写在一段文字里的），以及主机类键（`url`、`uri`、`host`、`endpoint`、`webhook` 等）下没有 scheme 的值，都进入域名，`net-allowlist` 照常判断；解析不出主机的加灰色 `unparseable-url`。
+- **SQL**：键名含 `sql` 或 `statement` 的参数里**不能证明是单条只读语句**的（`SELECT` / `WITH` / `SHOW` / `EXPLAIN` 等开头、不含写入类的词、没有第二条语句；首词在去掉注释与开头的 `;`、`(` 之后取，写入类的词与 `;` 在原文里找，MySQL 的 `/*! ... */` 也算），以及 `query`、`q`、以 `query` 结尾的键里看起来会写的（以写入类首词开头，或有 `;` 后接词），加灰色 `mcp-sql-not-read-only`（X1 审查 R9-2）。
+
+顶层 `mcp_read_only` 是你声明为只读的工具：`mcp__服务名__工具名`，或 `mcp__服务名__前缀*`；服务名必须写全（通配的服务名会把所有服务器的工具都声明成只读，加载报错），最多 64 项，默认空。默认策略的 `allow-declared-read-only-mcp` 放行声明过的工具的调用，条件是：灰色原因只有 `mcp-tool-not-reviewed`、本机路径都是只读；项目外的路径由 `ask-mcp-path-outside-project` 问，白名单外的主机由 `net-allowlist` 问，受保护的文件照常被拒。策略文件 agent 写不了，所以声明只能由你改。**注意**：参数会原样发给服务器，一个只读但连远端服务的工具仍然能把 agent 塞进查询里的内容带出去；只声明你信得过的服务器的工具。strict 策略没有这条 allow。
 
 ### 受信任的项目（`trusted_projects`）
 
@@ -157,20 +171,28 @@ tests:
 | `no-history-read` | deny | 读 `.bash_history`、`.zsh_history`、`.python_history`、`.psql_history`、`.mysql_history`、PSReadLine 的 `ConsoleHost_history.txt` 等 |
 | `no-windows-credential-read` / `no-browser-profile-read` | deny | Windows 凭据、DPAPI、保险库、`System32\config`、`windows\repair`；Windows / Linux / macOS 浏览器配置目录与钥匙串。都含 `**/users/*/...` 形式，WSL 看到的 `/mnt/c/Users/x/...` 也被拦 |
 | `no-raw-disk-access` | deny | 读写 `/dev/sd*`、`nvme*`、`mmcblk*`、`/dev/mem`、`\\.\PhysicalDrive*` 等裸设备 |
-| `protect-windows-persistence`、`windows-persistence-commands` | ask | PowerShell profile（含 OneDrive 重定向后的 Documents）、启动文件夹、`schtasks` / `reg` / `sc`（含 WSL 里的 `reg.exe`）；按程序名：计划任务与计划作业、服务、注册表属性写入（含 `Copy/Move/Rename/Clear-ItemProperty`）、WMI/CIM 实例、本地用户与组、防火墙规则与设置、Defender 排除项、`Clear-EventLog`、`setx`、`vssadmin`、`wevtutil`、`takeown`、`cipher`、`Stop-Computer` / `Restart-Computer` |
+| `protect-windows-persistence` | deny（M2 之后，原为 ask） | PowerShell profile（含 OneDrive 重定向后的 Documents）、启动文件夹、计划任务目录 |
+| `deny-windows-persistence-tamper` | deny（M2 之后） | 没有只读用法、编码任务也用不到的那部分：`Register-ScheduledTask`、`Register-ScheduledJob`、`New-Service`、`Set-WmiInstance`、`New-LocalUser`、`Add-LocalGroupMember`、Defender 的三个 `*-MpPreference`、防火墙规则与设置、`Set-ExecutionPolicy`、`Enable-PSRemoting`、`Clear-EventLog`、`bcdedit`、`takeown`、`Stop-Computer`、`Restart-Computer` |
+| `windows-persistence-commands` | ask | PowerShell profile（含 OneDrive 重定向后的 Documents）、启动文件夹、`schtasks` / `reg` / `sc`（含 WSL 里的 `reg.exe`）；按程序名：计划任务与计划作业、服务、注册表属性写入（含 `Copy/Move/Rename/Clear-ItemProperty`）、WMI/CIM 实例、本地用户与组、防火墙规则与设置、Defender 排除项、`Clear-EventLog`、`setx`、`vssadmin`、`wevtutil`、`takeown`、`cipher`、`Stop-Computer` / `Restart-Computer` |
 | `ask-net-account-changes` | ask | `net` / `net1` 的 `user`、`localgroup`、`group`、`share`、`stop`、`start`、`accounts`、`config`（建账号、提权限、改密码、共享、控制服务） |
-| `protect-shell-startup-files`、`ask-system-config-write`、`ask-scheduled-jobs`、`ask-user-services`、`ask-launchctl` | ask | `.bashrc` / `.zshrc` / autostart / systemd 用户单元 / `~/.local/bin`；写 `/etc/**` 等系统配置；`crontab` / `at` / `systemd-run`；`systemctl --user`；`launchctl` |
-| `ask-ssh-write` | ask | 写 `.ssh` |
+| `protect-shell-startup-files`、`deny-system-config-write` | deny（M2 之后，原为 ask） | `.bashrc` / `.zshrc` / autostart / systemd 用户单元 / LaunchAgents；写 `/etc/**` 等系统配置 |
+| `ask-user-path-dirs-write` | ask | 写 `~/.local/bin`、`~/bin`（装个脚本是正常请求，所以不拒） |
+| `deny-crontab-install`、`deny-service-registration` | deny（M2 之后） | 除 `crontab -l` 以外的 `crontab`；`systemctl` / `launchctl` 的注册类动词（`enable`、`link`、`add-wants`、`preset`、`set-property`、`edit`、`load`、`bootstrap`、`submit` 等）。规范化层把 `systemctl` / `launchctl` 的第一个位置参数作为 subcommand |
+| `ask-scheduled-jobs`、`ask-user-services`、`ask-launchctl` | ask | 其余的 `crontab -l` / `at` / `systemd-run`；`systemctl --user`；`launchctl` |
+| `deny-ssh-write` | deny（M2 之后，原为 ask） | 写 `.ssh` |
 | `ask-privilege-escalation` | ask | `su` / `sudo` / `doas` / `pkexec` 作为程序出现（被剥掉的 `sudo` 看里面的命令） |
 | `rm-outside-project` | deny | 递归删除项目之外的路径 |
 | `ask-delete-outside-project` | ask | 删除项目之外的单个文件 |
 | `git-force-push` | ask | `--force`、`--force-with-lease`、`+refspec`、`--mirror`、`--delete` 的 push |
 | `ask-git-reset-hard`、`ask-git-clean-force`、`ask-git-discard-paths`、`ask-git-branch-force-delete`、`ask-git-rewrite-history` | ask | `git reset --hard`、`git clean -f`、`git checkout -- <路径>` 与 `git restore <路径>`（`--staged` 也会问：规则语言不能排除标志）、`git branch -D`、`filter-branch` / `filter-repo` |
 | `ask-docker-prune` | ask | `docker system/volume/image prune` |
-| `ask-find-delete` | ask | `find ... -delete`（默认只在项目之外；strict 一律） |
-| `ask-disk-tools` | ask | `mkfs*`、`wipefs`、`fdisk`、`parted`、`diskpart` 等（strict：deny） |
-| `ask-recursive-permission-change` | ask | `chmod -R` / `chown -R` / `chgrp -R` 项目之外（strict 一律） |
-| `net-allowlist` | ask | 访问 pypi.org、files.pythonhosted.org、github.com、registry.npmjs.org 之外的主机（目标未知也算） |
+| `deny-find-delete-outside-project` | deny（M2 之后，原为 ask） | 项目之外的 `find ... -delete`（strict 另外对项目内也问） |
+| `deny-disk-tools` | deny（M2 之后，原为 ask） | `mkfs*`、`wipefs`、`fdisk`、`parted`、`diskpart` 等 |
+| `deny-recursive-permission-change` | deny（M2 之后，原为 ask） | 项目之外的 `chmod -R` / `chown -R` / `chgrp -R`（strict 另外对项目内也问） |
+| `net-allowlist` | ask | 访问已知主机且不在白名单里：pypi.org、files.pythonhosted.org、github.com、githubusercontent.com、registry.npmjs.org、registry.yarnpkg.com、crates.io、proxy.golang.org、sum.golang.org、api.nuget.org（含子域）。在白名单上不等于放行，命令仍要有 allow 规则 |
+| `net-unknown-destination` | ask | 联网但目的地无法确定（配置好的 git 远端或包源、运行时拼出的主机）（M2 之后从 `net-allowlist` 拆出） |
+| `ask-mcp-path-outside-project` | ask | MCP 调用的本机路径不在项目内（见"MCP 工具"） |
+| `allow-declared-read-only-mcp` | allow | **仅 default**：`mcp_read_only` 里声明过的 MCP 工具的调用（默认没有声明，不生效；见"MCP 工具"） |
 | `ask-shell-read-outside-project`、`ask-git-read-outside-project`（仅 default；strict 的 `ask-read-outside-project` 已经覆盖） | ask | 下面几条 allow 规则（读 stdin 的 `head` / `tail` / `wc` / `grep` / `egrep` / `fgrep`、不带路径的 `Get-ChildItem`、不带路径的 `git status` / `git diff`）没有路径可以要求"在项目内"，所以从另一侧补上：这些程序带一个不能证明在项目内的路径（项目外，或不确定；读、写都算）时 ask，最严者胜。这两条没有 `path_glob` / `access`，有意如此：读类规则里的 `**` 会进入递归读取的子树扫描的"受保护名字"，让目录下的每个文件都被当成受保护文件。程序清单必须与那几条 allow 规则一致（有测试检查）；git 那条的子命令清单与 git 的 allow 规则一致。`cat` 不在其中：它的 allow 规则要求路径在项目内，项目外的 `cat` 仍是灰色 |
 | `read-inside-project` | allow | `Read` / `Glob` / `Grep` 且路径确定在项目内（strict 里唯一的 allow 规则） |
 | `allow-list-inside-project` | allow | **仅 default。** Bash `ls` / `dir`：路径都只读且确定在项目内（不带路径时是 `.`）；排除 `--time-style`（`+FORMAT` 会原样打印其中的字符，环境变量的值也在内） |
