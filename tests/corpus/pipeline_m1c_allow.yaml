@@ -219,7 +219,41 @@
 - {id: m1c-b-stash-list-dd-agent-config, tool: Bash, input: {command: "git stash list -- --output=.claude/settings.json"}, expect: gray, adv: true}
 - {id: m1c-b-ps-stash-list-dd-output, tool: PowerShell, platform: windows, input: {command: "git stash list -- --output=conftest.py"}, expect: gray, adv: true}
 - {id: m1c-b-git-add-inter, tool: Bash, input: {command: "git add --inter"}, expect: gray, adv: true}
-- {id: m1c-b-git-version, tool: Bash, input: {command: "git --version"}, expect: gray, adv: true}
+# Read-only information commands (allow-version-probe, allow-git-ls-files, which): what must stay out
+- {id: m1c-b-version-with-code, tool: Bash, input: {command: "python3 --version -c 'print(1)'"}, expect: gray, adv: true}
+- {id: m1c-b-version-with-script, tool: Bash, input: {command: "node --version script.js"}, expect: gray, adv: true}
+- {id: m1c-b-version-redirect, tool: Bash, input: {command: "python3 --version > conftest.py"}, expect: ask, adv: true}
+- {id: m1c-b-version-wrapper, tool: Bash, input: {command: "sudo python3 --version"}, expect: gray, adv: true}
+- {id: m1c-b-version-env-code, tool: Bash, input: {command: "PYTHONSTARTUP=x python3 --version"}, expect: gray, adv: true}
+- {id: m1c-b-version-expands, tool: Bash, input: {command: "python3 --version $X"}, expect: gray, adv: true}
+- {id: m1c-b-ps-version-with-code, tool: PowerShell, platform: windows, input: {command: "python --version -c 'print(1)'"}, expect: gray, adv: true}
+- {id: m1c-b-ls-files-exclude-from, tool: Bash, input: {command: "git ls-files --exclude-from=ignore.txt"}, expect: gray, adv: true}
+- {id: m1c-b-ls-files-format, tool: Bash, input: {command: "git ls-files --format=%(path)"}, expect: gray, adv: true}
+- {id: m1c-b-ls-files-dd, tool: Bash, input: {command: "git ls-files -- --exclude-from=x"}, expect: gray, adv: true}
+- {id: m1c-b-ls-files-redirect, tool: Bash, input: {command: "git ls-files > conftest.py"}, expect: ask, adv: true}
+- {id: m1c-b-ls-files-outside, tool: Bash, input: {command: "git ls-files ../other"}, expect: ask, adv: true}
+- {id: m1c-b-ps-ls-files-exclude-from, tool: PowerShell, platform: windows, input: {command: "git ls-files --exclude-from=ignore.txt"}, expect: gray, adv: true}
+- {id: m1c-b-r7-env-pyenv, tool: Bash, input: {command: "PYENV_VERSION=3.0 python --version"}, expect: gray, adv: true}
+- {id: m1c-b-r7-env-mise, tool: Bash, input: {command: "MISE_TRUSTED_CONFIG_PATHS=/ python3 --version"}, expect: gray, adv: true}
+- {id: m1c-b-r7-env-rustup, tool: Bash, input: {command: "RUSTUP_TOOLCHAIN=x cargo --version"}, expect: gray, adv: true}
+- {id: m1c-b-r7-env-trace, tool: Bash, input: {command: "GIT_TRACE=conftest.py git --version"}, expect: gray, adv: true}
+- {id: m1c-b-r7-env-trace2, tool: Bash, input: {command: "GIT_TRACE2_EVENT=Makefile git ls-files"}, expect: gray, adv: true}
+- {id: m1c-b-r7-env-ls-files, tool: Bash, input: {command: "FOO=1 git ls-files"}, expect: gray, adv: true}
+- {id: m1c-b-r7-pathspec-top, tool: Bash, input: {command: "git ls-files :/"}, expect: gray, adv: true}
+- {id: m1c-b-r7-pathspec-magic, tool: Bash, input: {command: "git ls-files ':(top)'"}, expect: gray, adv: true}
+- {id: m1c-b-r7-pathspec-exclude, tool: Bash, input: {command: "git ls-files ':!src'"}, expect: gray, adv: true}
+- {id: m1c-b-r7-write-python-version, tool: Write, input: {file_path: ".python-version", content: "x"}, expect: ask, adv: true}
+- {id: m1c-b-r7-write-mise, tool: Write, input: {file_path: "mise.toml", content: "x"}, expect: ask, adv: true}
+- {id: m1c-b-r8-write-selector-1, tool: Write, input: {file_path: ".config/mise/config.toml", content: "x"}, expect: ask, adv: true}
+- {id: m1c-b-r8-write-selector-2, tool: Write, input: {file_path: "mise/config.toml", content: "x"}, expect: ask, adv: true}
+- {id: m1c-b-r8-write-selector-3, tool: Write, input: {file_path: ".mise/conf.d/a.toml", content: "x"}, expect: ask, adv: true}
+- {id: m1c-b-r8-write-selector-4, tool: Write, input: {file_path: "mise.dev.toml", content: "x"}, expect: ask, adv: true}
+- {id: m1c-b-r8-write-selector-5, tool: Write, input: {file_path: ".rtx.toml", content: "x"}, expect: ask, adv: true}
+- {id: m1c-b-r8-write-selector-6, tool: Write, input: {file_path: ".python-versions", content: "x"}, expect: ask, adv: true}
+- {id: m1c-b-r8-write-selector-7, tool: Write, input: {file_path: ".volta/hooks.json", content: "x"}, expect: ask, adv: true}
+- {id: m1c-b-r7-ps-env-version, tool: PowerShell, platform: windows, input: {command: "$env:PYENV_VERSION='3.0'; python --version"}, expect: gray, adv: true}
+- {id: m1c-b-which-expands, tool: Bash, input: {command: "which $SECRET_NAME"}, expect: gray, adv: true}
+- {id: m1c-b-git-version, tool: Bash, input: {command: "git --version"}, expect: allow}  # allow-version-probe / allow-git-ls-files (was gray before the info-command rules)
 - {id: m1c-b-git-add, tool: Bash, input: {command: "git add ."}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash
 - {id: m1c-b-git-commit, tool: Bash, input: {command: "git commit -m x"}, expect: allow}  # allow-git-add / allow-git-commit-message / allow-git-stash
 - {id: m1c-b-git-checkout-branch, tool: Bash, input: {command: "git checkout main"}, expect: gray, adv: true}
@@ -227,7 +261,7 @@
 - {id: m1c-b-git-reset, tool: Bash, input: {command: "git reset HEAD~1"}, expect: gray, adv: true}
 - {id: m1c-b-git-remote-v, tool: Bash, input: {command: "git remote -v"}, expect: gray, adv: true}
 - {id: m1c-b-git-config-get, tool: Bash, input: {command: "git config --get user.name"}, expect: gray, adv: true}
-- {id: m1c-b-git-ls-files, tool: Bash, input: {command: "git ls-files"}, expect: gray, adv: true}
+- {id: m1c-b-git-ls-files, tool: Bash, input: {command: "git ls-files"}, expect: allow}  # allow-version-probe / allow-git-ls-files (was gray before the info-command rules)
 - {id: m1c-b-git-grep, tool: Bash, input: {command: "git grep TODO"}, expect: gray, adv: true}
 - {id: m1c-b-git-cat-file, tool: Bash, input: {command: "git cat-file -p HEAD"}, expect: gray, adv: true}
 - {id: m1c-b-git-reflog, tool: Bash, input: {command: "git reflog expire --all"}, expect: gray, adv: true}
@@ -395,9 +429,9 @@
 - {id: m1c-b-bash-c-env, tool: Bash, input: {command: "bash -c 'cat .env'"}, expect: deny, adv: true}
 - {id: m1c-b-subshell-env, tool: Bash, input: {command: "(cat .env)"}, expect: deny, adv: true}
 - {id: m1c-b-ps-call-operator-dynamic, tool: PowerShell, platform: windows, input: {command: "& $env:SOME_TOOL status"}, expect: gray, adv: true}
-- {id: m1c-b-version-python, tool: Bash, input: {command: "python --version"}, expect: gray, adv: true}
-- {id: m1c-b-version-node, tool: Bash, input: {command: "node --version"}, expect: gray, adv: true}
-- {id: m1c-b-version-npm, tool: Bash, input: {command: "npm --version"}, expect: gray, adv: true}
+- {id: m1c-b-version-python, tool: Bash, input: {command: "python --version"}, expect: allow}  # allow-version-probe / allow-git-ls-files (was gray before the info-command rules)
+- {id: m1c-b-version-node, tool: Bash, input: {command: "node --version"}, expect: allow}  # allow-version-probe / allow-git-ls-files (was gray before the info-command rules)
+- {id: m1c-b-version-npm, tool: Bash, input: {command: "npm --version"}, expect: allow}  # allow-version-probe / allow-git-ls-files (was gray before the info-command rules)
 - {id: m1c-b-sort-o, tool: Bash, input: {command: "sort -o out.txt in.txt"}, expect: gray, adv: true}
 - {id: m1c-b-sed-i, tool: Bash, input: {command: "sed -i s/a/b/ src/app.py"}, expect: gray, adv: true}
 - {id: m1c-b-cp, tool: Bash, input: {command: "cp a.txt b.txt"}, expect: gray, adv: true}
@@ -477,7 +511,7 @@
 - {id: m1c-b-ps-new-item-dir, tool: PowerShell, platform: windows, input: {command: "New-Item -ItemType Directory build"}, expect: gray, adv: true}
 - {id: m1c-b-ps-new-item-symlink, tool: PowerShell, platform: windows, input: {command: "New-Item -ItemType SymbolicLink -Path link -Target C:\\Windows"}, expect: gray, adv: true}
 - {id: m1c-b-ps-new-item-junction, tool: PowerShell, platform: windows, input: {command: "New-Item -ItemType Junction -Path j -Target C:\\Users"}, expect: gray, adv: true}
-- {id: m1c-b-ps-python-version, tool: PowerShell, platform: windows, input: {command: "python --version"}, expect: gray, adv: true}
+- {id: m1c-b-ps-python-version, tool: PowerShell, platform: windows, input: {command: "python --version"}, expect: allow}  # allow-version-probe / allow-git-ls-files (was gray before the info-command rules)
 - {id: m1c-b-ps-get-process, tool: PowerShell, platform: windows, input: {command: "Get-Process"}, expect: gray, adv: true}
 - {id: m1c-b-ps-get-content-pipe-outside, tool: PowerShell, platform: windows, input: {command: "Get-Content src\\app.py | Set-Content ..\\x"}, expect: gray, adv: true}
 

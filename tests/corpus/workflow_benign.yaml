@@ -35,12 +35,12 @@
 - {id: t1-git-stash-list, tool: Bash, input: {"command": "git stash list"}, tier: t1-read, expect_after: allow, today: gray}  # M1c: `git stash` is not allowed (the rule language cannot see the `list` positional, `git stash` alone stashes your work); moved to keep-ask
 - {id: t1-git-rev-parse, tool: Bash, input: {"command": "git rev-parse HEAD"}, tier: t1-read, expect_after: allow, today: gray}
 - {id: t1-git-blame, tool: Bash, input: {"command": "git blame src/app.py"}, tier: t1-read, expect_after: allow, today: gray}  # UNSURE: read-only, but prints author names/emails of the history
-- {id: t1-git-version, tool: Bash, input: {"command": "git --version"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: version probes are not allowed (the program is not read-only in general, e.g. python / node run code); moved to keep-ask
-- {id: t1-python-version, tool: Bash, input: {"command": "python --version"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: version probes are not allowed (python is an exec program); moved to keep-ask
-- {id: t1-python3-version, tool: Bash, input: {"command": "python3 --version"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: version probes are not allowed (python is an exec program); moved to keep-ask
-- {id: t1-node-version, tool: Bash, input: {"command": "node --version"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: version probes are not allowed (node is an exec program); moved to keep-ask
-- {id: t1-npm-version, tool: Bash, input: {"command": "npm --version"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: version probes are not allowed (npm runs project scripts and plugins); moved to keep-ask
-- {id: t1-cargo-version, tool: Bash, input: {"command": "cargo --version"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: version probes are not allowed (cargo runs build code); moved to keep-ask
+- {id: t1-git-version, tool: Bash, input: {"command": "git --version"}, tier: t1-read, expect_after: allow, today: gray}  # allow-version-probe (X1 review R7-5: the older note here said version probes were not allowed)
+- {id: t1-python-version, tool: Bash, input: {"command": "python --version"}, tier: t1-read, expect_after: allow, today: gray}  # allow-version-probe (X1 review R7-5: the older note here said version probes were not allowed)
+- {id: t1-python3-version, tool: Bash, input: {"command": "python3 --version"}, tier: t1-read, expect_after: allow, today: gray}  # allow-version-probe (X1 review R7-5: the older note here said version probes were not allowed)
+- {id: t1-node-version, tool: Bash, input: {"command": "node --version"}, tier: t1-read, expect_after: allow, today: gray}  # allow-version-probe (X1 review R7-5: the older note here said version probes were not allowed)
+- {id: t1-npm-version, tool: Bash, input: {"command": "npm --version"}, tier: t1-read, expect_after: allow, today: gray}  # allow-version-probe (X1 review R7-5: the older note here said version probes were not allowed)
+- {id: t1-cargo-version, tool: Bash, input: {"command": "cargo --version"}, tier: t1-read, expect_after: allow, today: gray}  # allow-version-probe (X1 review R7-5: the older note here said version probes were not allowed)
 - {id: t1-go-version, tool: Bash, input: {"command": "go version"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: version probes are not allowed (go runs build code); moved to keep-ask
 - {id: t1-ls, tool: Bash, input: {"command": "ls"}, tier: t1-read, expect_after: allow, today: gray}
 - {id: t1-ls-la, tool: Bash, input: {"command": "ls -la"}, tier: t1-read, expect_after: allow, today: gray}
@@ -95,8 +95,8 @@
 - {id: ps-t1-git-status, tool: PowerShell, platform: windows, input: {"command": "git status"}, tier: t1-read, expect_after: allow, today: gray}
 - {id: ps-t1-git-diff-stat, tool: PowerShell, platform: windows, input: {"command": "git diff --stat"}, tier: t1-read, expect_after: allow, today: gray}
 - {id: ps-t1-git-log, tool: PowerShell, platform: windows, input: {"command": "git log --oneline -n 20"}, tier: t1-read, expect_after: allow, today: gray}
-- {id: ps-t1-python-version, tool: PowerShell, platform: windows, input: {"command": "python --version"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: version probes are not allowed (python is an exec program); moved to keep-ask
-- {id: ps-t1-node-version, tool: PowerShell, platform: windows, input: {"command": "node --version"}, tier: keep-ask, expect_after: ask, today: gray}  # M1c: version probes are not allowed (node is an exec program); moved to keep-ask
+- {id: ps-t1-python-version, tool: PowerShell, platform: windows, input: {"command": "python --version"}, tier: t1-read, expect_after: allow, today: gray}  # allow-version-probe (X1 review R7-5: the older note here said version probes were not allowed)
+- {id: ps-t1-node-version, tool: PowerShell, platform: windows, input: {"command": "node --version"}, tier: t1-read, expect_after: allow, today: gray}  # allow-version-probe (X1 review R7-5: the older note here said version probes were not allowed)
 
 # ---- TIER 1, non-shell tools: Read / Grep / Glob of ordinary in-project files.
 

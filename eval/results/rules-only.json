@@ -20,17 +20,17 @@
           "n": 104
         },
         "benign": {
-          "allow": 42,
-          "ask": 77,
-          "asks_per_100": 64.16666666666667,
+          "allow": 45,
+          "ask": 74,
+          "asks_per_100": 61.666666666666664,
           "deny": 1,
-          "false_positive_rate": 0.65,
+          "false_positive_rate": 0.625,
           "n": 120,
-          "of_which_gray": 53,
+          "of_which_gray": 50,
           "other": {
-            "flagged": 57,
+            "flagged": 54,
             "n": 99,
-            "rate": 0.5757575757575758
+            "rate": 0.5454545454545454
           },
           "repo_code": {
             "flagged": 21,
@@ -78,8 +78,8 @@
           },
           "benign": {
             "benign": {
-              "allow": 42,
-              "ask": 77,
+              "allow": 45,
+              "ask": 74,
               "deny": 1
             }
           }
@@ -105,17 +105,17 @@
             }
           },
           "synthetic": {
-            "allow": 42,
-            "ask": 77,
-            "asks_per_100": 64.16666666666667,
+            "allow": 45,
+            "ask": 74,
+            "asks_per_100": 61.666666666666664,
             "deny": 1,
-            "false_positive_rate": 0.65,
+            "false_positive_rate": 0.625,
             "n": 120,
-            "of_which_gray": 53,
+            "of_which_gray": 50,
             "other": {
-              "flagged": 57,
+              "flagged": 54,
               "n": 99,
-              "rate": 0.5757575757575758
+              "rate": 0.5454545454545454
             },
             "repo_code": {
               "flagged": 21,
@@ -256,7 +256,7 @@
             "verdict": "ask"
           }
         ],
-        "false_positives_total": 78,
+        "false_positives_total": 75,
         "latency_llm": {
           "n": 0,
           "p50_ms": null,
@@ -264,8 +264,8 @@
         },
         "latency_rules": {
           "n": 224,
-          "p50_ms": 3.5314999986439943,
-          "p95_ms": 4.61519998498261
+          "p50_ms": 3.5385999944992363,
+          "p95_ms": 5.01219998113811
         },
         "misses": [
           {
@@ -414,17 +414,17 @@
           "n": 41
         },
         "benign": {
-          "allow": 10,
-          "ask": 34,
-          "asks_per_100": 77.27272727272727,
+          "allow": 11,
+          "ask": 33,
+          "asks_per_100": 75.0,
           "deny": 0,
-          "false_positive_rate": 0.7727272727272727,
+          "false_positive_rate": 0.75,
           "n": 44,
-          "of_which_gray": 22,
+          "of_which_gray": 21,
           "other": {
-            "flagged": 27,
+            "flagged": 26,
             "n": 37,
-            "rate": 0.7297297297297297
+            "rate": 0.7027027027027027
           },
           "repo_code": {
             "flagged": 7,
@@ -472,8 +472,8 @@
           },
           "benign": {
             "benign": {
-              "allow": 10,
-              "ask": 34,
+              "allow": 11,
+              "ask": 33,
               "deny": 0
             }
           }
@@ -499,17 +499,17 @@
             }
           },
           "synthetic": {
-            "allow": 10,
-            "ask": 34,
-            "asks_per_100": 77.27272727272727,
+            "allow": 11,
+            "ask": 33,
+            "asks_per_100": 75.0,
             "deny": 0,
-            "false_positive_rate": 0.7727272727272727,
+            "false_positive_rate": 0.75,
             "n": 44,
-            "of_which_gray": 22,
+            "of_which_gray": 21,
             "other": {
-              "flagged": 27,
+              "flagged": 26,
               "n": 37,
-              "rate": 0.7297297297297297
+              "rate": 0.7027027027027027
             },
             "repo_code": {
               "flagged": 7,
@@ -644,7 +644,7 @@
             "verdict": "ask"
           }
         ],
-        "false_positives_total": 34,
+        "false_positives_total": 33,
         "latency_llm": {
           "n": 0,
           "p50_ms": null,
@@ -652,8 +652,8 @@
         },
         "latency_rules": {
           "n": 85,
-          "p50_ms": 3.4758999827317894,
-          "p95_ms": 4.495700006373227
+          "p50_ms": 3.601500007789582,
+          "p95_ms": 4.964300023857504
         },
         "misses": [
           {
@@ -994,8 +994,8 @@
         },
         "latency_rules": {
           "n": 275,
-          "p50_ms": 5.353400018066168,
-          "p95_ms": 13.306000037118793
+          "p50_ms": 5.2986000082455575,
+          "p95_ms": 13.247399998363107
         },
         "misses": [
           {
@@ -1139,17 +1139,17 @@
           "n": 35
         },
         "benign": {
-          "allow": 43,
-          "ask": 27,
-          "asks_per_100": 38.028169014084504,
+          "allow": 44,
+          "ask": 26,
+          "asks_per_100": 36.61971830985915,
           "deny": 1,
-          "false_positive_rate": 0.39436619718309857,
+          "false_positive_rate": 0.38028169014084506,
           "n": 71,
-          "of_which_gray": 21,
+          "of_which_gray": 20,
           "other": {
-            "flagged": 26,
+            "flagged": 25,
             "n": 69,
-            "rate": 0.37681159420289856
+            "rate": 0.36231884057971014
           },
           "repo_code": {
             "flagged": 2,
@@ -1197,8 +1197,8 @@
           },
           "benign": {
             "benign": {
-              "allow": 43,
-              "ask": 27,
+              "allow": 44,
+              "ask": 26,
               "deny": 1
             }
           }
@@ -1224,17 +1224,17 @@
             }
           },
           "synthetic": {
-            "allow": 10,
-            "ask": 21,
-            "asks_per_100": 67.74193548387096,
+            "allow": 11,
+            "ask": 20,
+            "asks_per_100": 64.51612903225806,
             "deny": 0,
-            "false_positive_rate": 0.6774193548387096,
+            "false_positive_rate": 0.6451612903225806,
             "n": 31,
-            "of_which_gray": 17,
+            "of_which_gray": 16,
             "other": {
-              "flagged": 19,
+              "flagged": 18,
               "n": 29,
-              "rate": 0.6551724137931034
+              "rate": 0.6206896551724138
             },
             "repo_code": {
               "flagged": 2,
@@ -1361,7 +1361,7 @@
             "verdict": "ask"
           }
         ],
-        "false_positives_total": 28,
+        "false_positives_total": 27,
         "latency_llm": {
           "n": 0,
           "p50_ms": null,
@@ -1369,8 +1369,8 @@
         },
         "latency_rules": {
           "n": 106,
-          "p50_ms": 5.811899958644062,
-          "p95_ms": 11.558300000615418
+          "p50_ms": 5.842300015501678,
+          "p95_ms": 12.016099994070828
         },
         "misses": [
           {
@@ -1485,9 +1485,9 @@
   "llm_call_share": 0.0,
   "metrics_version": 3,
   "policy": "policies/default.yaml (shipped)",
-  "policy_sha256": "7e0eda0cd64e133fac9c7ccd080440863b76bfa2104e16682f29183faaac92e9",
+  "policy_sha256": "91afc2f87079ba80ea0170d124be6738adb919e87031ece0db1006cfa7375f5b",
   "run": {
-    "date": "2026-10-26",
+    "date": "2026-10-27",
     "dev_hash": "34a1cd18e50712e5f4eea371fdea0df796724d20158f5a2e051105975b873780",
     "host": "Windows",
     "include_unconfirmed": false,
@@ -1521,17 +1521,17 @@
           "n": 104
         },
         "benign": {
-          "allow": 49,
-          "ask": 70,
-          "asks_per_100": 58.333333333333336,
+          "allow": 52,
+          "ask": 67,
+          "asks_per_100": 55.833333333333336,
           "deny": 1,
-          "false_positive_rate": 0.5916666666666667,
+          "false_positive_rate": 0.5666666666666667,
           "n": 120,
-          "of_which_gray": 46,
+          "of_which_gray": 43,
           "other": {
-            "flagged": 57,
+            "flagged": 54,
             "n": 99,
-            "rate": 0.5757575757575758
+            "rate": 0.5454545454545454
           },
           "repo_code": {
             "flagged": 14,
@@ -1559,17 +1559,17 @@
           "n": 41
         },
         "benign": {
-          "allow": 12,
-          "ask": 32,
-          "asks_per_100": 72.72727272727273,
+          "allow": 13,
+          "ask": 31,
+          "asks_per_100": 70.45454545454545,
           "deny": 0,
-          "false_positive_rate": 0.7272727272727273,
+          "false_positive_rate": 0.7045454545454546,
           "n": 44,
-          "of_which_gray": 20,
+          "of_which_gray": 19,
           "other": {
-            "flagged": 27,
+            "flagged": 26,
             "n": 37,
-            "rate": 0.7297297297297297
+            "rate": 0.7027027027027027
           },
           "repo_code": {
             "flagged": 5,
@@ -1637,17 +1637,17 @@
           "n": 35
         },
         "benign": {
-          "allow": 44,
-          "ask": 26,
-          "asks_per_100": 36.61971830985915,
+          "allow": 45,
+          "ask": 25,
+          "asks_per_100": 35.2112676056338,
           "deny": 1,
-          "false_positive_rate": 0.38028169014084506,
+          "false_positive_rate": 0.36619718309859156,
           "n": 71,
-          "of_which_gray": 20,
+          "of_which_gray": 19,
           "other": {
-            "flagged": 26,
+            "flagged": 25,
             "n": 69,
-            "rate": 0.37681159420289856
+            "rate": 0.36231884057971014
           },
           "repo_code": {
             "flagged": 1,

@@ -2613,6 +2613,45 @@ _GIT_SUB_OPTS: dict[str, Opts] = {
 }
 
 
+# Programs that have a version probe the policy may allow (`allow-version-probe`): `NAME --version`
+# and nothing else. Any other argument marks the action with VERSION_EXTRA_FLAG.
+VERSION_PROBE_PROGRAMS = frozenset(
+    {
+        "git",
+        "python",
+        "python3",
+        "pip",
+        "pip3",
+        "node",
+        "npm",
+        "uv",
+        "cargo",
+        "rustc",
+        "dotnet",
+        "docker",
+    }
+)
+VERSION_EXTRA_FLAG = "--version-with-arguments"
+
+# `git ls-files` takes a long list of options (--exclude-from reads a file, --format prints, ...);
+# the allowlist is the normalizer's: any other option marks the action with GIT_OTHER_OPTION_FLAG.
+# (-c is not in it: `ls-files -c` is --cached, but the token is also the global `-c key=value`,
+# which the allow rule has to refuse; --cached is the default anyway)
+_GIT_LS_FILES_FLAGS = frozenset(
+    {
+        "-o",
+        "--others",
+        "-m",
+        "--modified",
+        "-d",
+        "--deleted",
+        "-z",
+        "--cached",
+        "--exclude-standard",
+    }
+)
+GIT_OTHER_OPTION_FLAG = "--git-other-option"
+
 # `git stash` with no subcommand is `push`; these subcommands neither destroy a stash nor reach
 # outside the work tree. Everything else (drop, clear, branch, create, store ...) is marked.
 _GIT_STASH_PLAIN = frozenset({None, "push", "save", "list", "show", "apply", "pop"})
@@ -2904,6 +2943,14 @@ def _h_git(a: _Acc, args: Sequence[Word]) -> None:
     _git_operands(a, sub, pos, before, after, seen, chain)
     if sub == "add" and seen & {"-f", "--force"}:
         a.recursive = True  # ``git add -f DIR`` stages even ignored files below DIR
+    if sub == "ls-files" and (
+        sc.dd_at >= 0
+        or any(f not in _GIT_LS_FILES_FLAGS for f in sc.flags)
+        # pathspec magic (`:/`, `:(top)`, `:!x` ...) selects by something other than a path under
+        # the working directory, which the outside-project check cannot see (X1 review R7-4)
+        or any(w.text.startswith(":") for w in sc.pos)
+    ):
+        a.flags.append(GIT_OTHER_OPTION_FLAG)
     if sub == "stash" and sub2 in ("list", "show"):
         # `stash list|show` take the whole of `git log` / `git diff`'s option set (--output writes a
         # file, --format prints values, -p shows the diff of stashed secrets, --ext-diff starts a
@@ -4108,7 +4155,8 @@ def is_code_env(name: str) -> bool:
     prefix, so both layers agree.
     """
     low = name.lower()
-    return low in _ENV_CODE or low.startswith(("git_config_", "bash_func_"))
+    # GIT_TRACE*, GIT_TRACE2*: git appends trace lines to the file the value names (review R7-1)
+    return low in _ENV_CODE or low.startswith(("git_config_", "bash_func_", "git_trace"))
 
 
 def _apply_redirects(a: _Acc, redirects: Sequence[Redirect]) -> None:
@@ -4299,6 +4347,20 @@ def _classify(
             handler(a, args)
         if name in _LAUNCHERS:
             a.gray.append(f"command-launcher:{name}")
+    # `python --version` prints the version and stops; `python --version -c ...`, `node --version
+    # x.js` and the like are not a probe (the programs differ in what they do with the rest):
+    # anything but the single word marks the action, and the allow rule lists the marker.
+    # An environment prefix is no part of a plain probe either: `PYENV_VERSION=x python --version`,
+    # `RUSTUP_TOOLCHAIN=x cargo --version`, `MISE_*=... node --version` change which program and
+    # which configuration the launcher shim uses (X1 review R7-1).
+    if (
+        name in VERSION_PROBE_PROGRAMS
+        and "--version" in a.flags
+        and (len(args) != 1 or args[0].text != "--version" or args[0].expands or env)
+    ):
+        a.flags.append(VERSION_EXTRA_FLAG)
+    if env and name == "git" and a.sub == "ls-files":
+        a.flags.append(GIT_OTHER_OPTION_FLAG)
     _apply_redirects(a, redirects)
     _apply_env(a, env)
     paths: list[tuple[Word, Access]] = list(dict.fromkeys(a.paths))

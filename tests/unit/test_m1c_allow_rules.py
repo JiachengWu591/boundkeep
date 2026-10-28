@@ -56,6 +56,8 @@ EXPECTED_ALLOW_IDS = {
     "allow-git-add",  # tests/unit/test_git_local_vcs_allow.py
     "allow-git-commit-message",
     "allow-git-stash",
+    "allow-git-ls-files",  # tests/unit/test_info_commands_allow.py
+    "allow-version-probe",
     "allow-ps-inspect-inside-project",
     "allow-ps-list-here",
     "allow-ps-no-path-commands",
@@ -318,6 +320,10 @@ def test_every_allow_rule_without_path_inside_project_is_covered_by_a_guard_rule
             continue
         if rule["match"]["program"] == ["git"] or rule_id in NO_PATH_RULES:
             continue
+        if rule_id == "allow-version-probe":
+            # `NAME --version` and nothing else: the normalizer marks any further argument, so the
+            # rule never sees a path (tests/unit/test_info_commands_allow.py)
+            continue
         if (
             rule_id == "allow-devtools-trusted-project"
         ):  # its guard is ask-devtools-path-outside-project
@@ -327,6 +333,9 @@ def test_every_allow_rule_without_path_inside_project_is_covered_by_a_guard_rule
     guarded: set[str] = set()
     for rule_id in ("allow-read-filters", "allow-ps-list-here"):
         guarded |= _programs(rules[rule_id])
+    # `which -i x < file` reads its aliases from stdin, so the guard covers it (X1 review R7-3)
+    guarded.add("which")
+    assert "which" in _programs(rules["allow-no-path-commands"])
     assert guard_programs == guarded
     # git: the guard names every subcommand some git allow rule allows
     allowed: set[str] = set()
@@ -336,6 +345,7 @@ def test_every_allow_rule_without_path_inside_project_is_covered_by_a_guard_rule
         "allow-git-add",
         "allow-git-commit-message",
         "allow-git-stash",
+        "allow-git-ls-files",
     ):
         allowed |= set(rules[rule_id]["match"]["subcommand"])
     assert set(git_guard["match"]["subcommand"]) == allowed
@@ -490,8 +500,16 @@ def test_git_read_only_allows_exactly_the_reviewed_subcommands() -> None:
 
 def test_no_allow_rule_covers_version_probes_or_interpreters() -> None:
     programs: set[str] = set()
-    for rule in _allow_rules("default").values():
-        programs |= _programs(rule)
+    for rule_id, rule in _allow_rules("default").items():
+        if rule_id != "allow-version-probe":  # checked on its own below
+            programs |= _programs(rule)
+    probe = _allow_rules("default")["allow-version-probe"]
+    # NAME --version and nothing else: the one spelled-out flag, with the marker that keeps any
+    # further argument out (tests/unit/test_info_commands_allow.py)
+    assert probe["match"]["flags_any"] == ["--version"]
+    assert "--version-with-arguments" in probe["match"]["flags_none"]
+    assert probe["match"]["paths_read_only"] is True
+    assert not _programs(probe) & {"make", "go", "bash", "sh", "powershell", "pwsh", "ruby", "perl"}
     # echo / Write-Output / Select-Object print what the shell expands into them (secrets)
     for printing in ("echo", "printf", "printenv", "env", "write-output", "write-host"):
         assert printing not in programs
@@ -1037,7 +1055,6 @@ NOT_ALLOWED_BASH = [
     # git stash / add / commit left this list when allow-git-stash, allow-git-add and
     # allow-git-commit-message were added (their own tests: test_git_local_vcs_allow.py)
     "git branch --edit-description",
-    "git --version",
     "touch -r ../x notes.md",
     "touch --reference=README.md notes.md",
     # outside the project
@@ -1168,9 +1185,6 @@ NOT_ALLOWED_BASH = [
     "(cat .env)",
     "mkdir -p b; touch b/x.sh; ./b/x.sh",
     # not covered on purpose
-    "python --version",
-    "node --version",
-    "npm --version",
     "du -sh src",
     "date",
     "printenv",
@@ -1238,7 +1252,6 @@ NOT_ALLOWED_PS = [
     "New-Item -ItemType Directory build",
     "New-Item -ItemType SymbolicLink -Path link -Target C:\\Windows",
     "New-Item -ItemType Junction -Path j -Target C:\\Users",
-    "python --version",
     "Get-Process",
 ]
 

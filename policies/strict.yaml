@@ -391,6 +391,41 @@ rules:
       access: write
     action: deny
     reason: "this file configures a dev tool that loads code named in it"
+  - id: deny-toolchain-selector-write
+    # Files that choose WHICH program a launcher shim runs, or that run code themselves: mise
+    # (every project config location: mise.toml, mise.<env>.toml, .mise/, mise/, .config/mise/, the
+    # older rtx names), asdf, pyenv, nvm and sdkman version files, volta's .volta/hooks.json,
+    # dotnet's global.json (MSBuild SDKs), uv.toml. The allow rule for NAME --version runs the
+    # program the shim picks, and the shim reads these files first, so a file the agent just wrote
+    # could make a version probe run something else: writing one is refused (X1 review R7-1). Same reasoning as
+    # the autorun rule above, in a rule of its own because a rule's path_glob list holds at most
+    # 64 entries. No `tool:` filter: Write, Edit, MultiEdit and every shell write carry the
+    # same path with access write.
+    match:
+      path_glob:
+        - "**/mise.toml"
+        - "**/.mise.toml"
+        - "**/mise.*.toml"
+        - "**/.mise.*.toml"
+        - "**/.mise/**"
+        - "**/mise/config*.toml"
+        - "**/mise/conf.d/**"
+        - "**/.config/mise/**"
+        - "**/.rtx.toml"
+        - "**/rtx.toml"
+        - "**/.tool-versions"
+        - "**/.python-version"
+        - "**/.python-versions"
+        - "**/.node-version"
+        - "**/.nvmrc"
+        - "**/.ruby-version"
+        - "**/.sdkmanrc"
+        - "**/.volta/**"
+        - "**/global.json"
+        - "**/uv.toml"
+      access: write
+    action: deny
+    reason: "this file chooses or runs the program a version-manager shim starts"
   - id: deny-installed-package-dirs-write
     # Writing into the installed packages of the project's own environment (.venv, venv, env, .tox, .nox,
     # .conda, .pixi, .direnv, __pypackages__, site-packages) or the dependencies it unpacked
@@ -1377,6 +1412,10 @@ tests:
   - { tool: Bash, input: { command: "ruff check ." }, expect: gray }
   - { tool: Bash, input: { command: "pytest .env" }, expect: deny }
   - { tool: Write, input: { file_path: "mypy.ini", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: ".python-version", content: "x" }, expect: deny }   # X1 review R7-1
+  - { tool: Write, input: { file_path: "mise.toml", content: "x" }, expect: deny }
+  - { tool: Write, input: { file_path: ".config/mise/config.toml", content: "x" }, expect: deny }   # X1 review R8-1
+  - { tool: Write, input: { file_path: ".volta/hooks.json", content: "x" }, expect: deny }
   - { tool: Write, input: { file_path: "pylintrc", content: "x" }, expect: deny }
   - { tool: Write, input: { file_path: ".flake8", content: "x" }, expect: deny }
   - { tool: Write, input: { file_path: ".coveragerc", content: "x" }, expect: deny }
