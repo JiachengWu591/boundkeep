@@ -55,7 +55,11 @@ from boundkeep.normalize.domains import canonical_host, host_matches
 from boundkeep.normalize.model import Action, PathRef, Platform
 from boundkeep.normalize.psprograms import is_cmdlet_name
 from boundkeep.policy.glob import MAX_KEY_LENGTH, first_match
-from boundkeep.policy.schema import Match, Policy, Rule
+from boundkeep.policy.schema import Match, Policy, Rule, mcp_declared_read_only
+
+# the gray reason the normalizer gives every MCP call (normalize/event.py MCP_GRAY; not imported
+# from there: the matcher stays free of the normalizer's internals)
+MCP_GRAY: Final = "mcp-tool-not-reviewed"
 
 CANARY_RULE_ID: Final = "m0-canary"
 CANARY_MARKER: Final = "BOUNDKEEP_CANARY"
@@ -238,24 +242,38 @@ def _path_details(match: Match, action: Action, rule: Rule) -> tuple[str, ...] |
     return None
 
 
+def _declared_mcp(action: Action, declared: tuple[str, ...]) -> bool:
+    """A call of an MCP tool the policy declares read-only, gray for no other reason."""
+    return action.gray_reasons == (MCP_GRAY,) and mcp_declared_read_only(action.tool, declared)
+
+
 def _match_detail(
-    rule: Rule, action: Action, platform: Platform, trusted: tuple[str, ...] = ()
+    rule: Rule,
+    action: Action,
+    platform: Platform,
+    trusted: tuple[str, ...] = (),
+    mcp_read_only: tuple[str, ...] = (),
 ) -> tuple[str, ...] | None:
     """Why ``rule`` matches ``action`` (one line per matched field), or None if it does not.
 
     ``trusted``: the policy's ``trusted_projects`` (canonical keys) for ``project_trusted``.
+    ``mcp_read_only``: the policy's declared read-only MCP tools, for the field of that name.
     """
     if rule.platform is not None and platform not in rule.platform:
         return None
     if rule.tool is not None and not _tool_matches(rule.tool, action.tool):
         return None
-    if rule.action == "allow" and (action.gray or action.wrappers or action.dynamic_args):
+    match = rule.match
+    declared = match.mcp_read_only is not None and _declared_mcp(action, mcp_read_only)
+    if rule.action == "allow" and (
+        (action.gray and not declared) or action.wrappers or action.dynamic_args
+    ):
         # An allow rule describes the bare command; behind sudo / env / nohup ... it is a
         # different action (privileges, environment, background), so it never rides the rule. The
         # same for a word the shell expands that is no path (X1 re-review R-1, R-2, R-4): what the
-        # program receives is not what the rule saw.
+        # program receives is not what the rule saw. The one gray action an allow rule may take is
+        # a call of an MCP tool the user declared read-only, when nothing else made it gray.
         return None
-    match = rule.match
     details: list[str] = []
 
     if match.program is not None:
@@ -313,6 +331,12 @@ def _match_detail(
         if not action.network:
             return None
         details.append("network: true")
+    if match.destination is not None:
+        if not action.network:
+            return None
+        if (match.destination == "known") != bool(action.domains):
+            return None
+        details.append(f"destination: {match.destination}")
     if match.domain_not_in is not None:
         if not action.network:
             return None
@@ -335,14 +359,22 @@ def _match_detail(
         if action.mcp_server is None or action.mcp_server not in match.mcp_server:
             return None
         details.append(f"mcp_server: {action.mcp_server}")
+    if match.mcp_read_only is not None:
+        if not declared:
+            return None
+        details.append(f"mcp_read_only: {action.tool} is declared read-only")
     return tuple(details)
 
 
 def _safe_detail(
-    rule: Rule, action: Action, platform: Platform, trusted: tuple[str, ...] = ()
+    rule: Rule,
+    action: Action,
+    platform: Platform,
+    trusted: tuple[str, ...] = (),
+    mcp_read_only: tuple[str, ...] = (),
 ) -> tuple[str, ...] | None:
     try:
-        return _match_detail(rule, action, platform, trusted)
+        return _match_detail(rule, action, platform, trusted, mcp_read_only)
     except Exception:  # noqa: BLE001 - matching must never raise; fail toward deny/ask
         if rule.action == "allow":
             return None
@@ -355,14 +387,16 @@ def match_rule(
     *,
     platform: Platform,
     trusted_projects: tuple[str, ...] = (),
+    mcp_read_only: tuple[str, ...] = (),
 ) -> bool:
     """True if ``rule`` matches ``action`` on a resident process running on ``platform``.
 
     Pure and total: it never raises. An unexpected internal error counts as a match for deny and
     ask rules and as no match for allow rules. ``trusted_projects`` is ``Policy.trusted_projects``
-    (only ``project_trusted`` looks at it; none given means no project is trusted).
+    (only ``project_trusted`` looks at it; none given means no project is trusted);
+    ``mcp_read_only`` is ``Policy.mcp_read_only`` (none given: no tool is declared).
     """
-    return _safe_detail(rule, action, platform, trusted_projects) is not None
+    return _safe_detail(rule, action, platform, trusted_projects, mcp_read_only) is not None
 
 
 def explain_rule(
@@ -371,9 +405,10 @@ def explain_rule(
     *,
     platform: Platform,
     trusted_projects: tuple[str, ...] = (),
+    mcp_read_only: tuple[str, ...] = (),
 ) -> tuple[str, ...] | None:
     """Like ``match_rule`` but returns one line per matched field (None: no match)."""
-    return _safe_detail(rule, action, platform, trusted_projects)
+    return _safe_detail(rule, action, platform, trusted_projects, mcp_read_only)
 
 
 # --------------------------------------------------------------------------- evaluation
@@ -395,7 +430,7 @@ def _evaluate_action(
     if canary is not None:
         hits.append(canary)
     for rule in policy.rules:
-        detail = _safe_detail(rule, action, platform, policy.trusted_projects)
+        detail = _safe_detail(rule, action, platform, policy.trusted_projects, policy.mcp_read_only)
         if detail is not None:
             hits.append(RuleHit(rule.id, rule.action, rule.reason, detail))
     decision: VerdictDecision = "gray"

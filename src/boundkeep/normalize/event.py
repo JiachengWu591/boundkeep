@@ -36,10 +36,12 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import time
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Final
 
 from boundkeep.normalize import bash, domains, paths, programs, psparse, subtree
 from boundkeep.normalize.model import (
@@ -1917,11 +1919,261 @@ def _web_action(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> Action:
     )
 
 
-def _mcp_action(ctx: _Ctx, tool: str) -> Action:
+# MCP tool inputs (PROJECT_SPEC.md section 7, after the M2 evaluation). The call itself stays
+# gray: what a server does is unknown. What the arguments show is given to the deny and ask rules:
+# a local path, a command to run, a URL.
+MCP_GRAY: Final = "mcp-tool-not-reviewed"
+# keys as compared: casefolded, without "_" and "-" (file_name, fileName and file-name are one)
+_MCP_PATH_KEYS: Final = frozenset(
+    {
+        "path", "paths", "file", "files", "filepath", "filename", "source", "sources",
+        "destination", "dest", "src", "dst", "target", "targetfile", "targetpath", "directory",
+        "dir", "folder", "root", "cwd", "oldpath", "newpath", "workingdirectory", "location",
+        "pathname", "abspath", "repopath", "notebookpath", "uri",
+    }
+)  # fmt: skip
+_MCP_COMMAND_KEYS: Final = frozenset(
+    {"command", "commands", "cmd", "script", "shell", "shellcommand", "commandline", "code"}
+)
+_MCP_ARGS_KEYS: Final = frozenset({"args", "arguments", "argv"})
+# a value under these keys names a host even without a scheme ("c.example.invalid/x")
+_MCP_HOST_KEYS: Final = frozenset(
+    {
+        "url", "uri", "href", "link", "endpoint", "host", "hostname", "domain", "server",
+        "address", "baseurl", "webhook", "webhookurl", "callbackurl", "targeturl", "website",
+    }
+)  # fmt: skip
+# a tool whose name STARTS with one of these words and holds none of the write words only reads
+# its paths; any other tool may read or write them (access "unknown" meets the read and the
+# write rules): `get_and_store` may write (X1 review R10-1)
+_MCP_READ_WORDS: Final = frozenset(
+    {
+        "read", "get", "list", "search", "find", "view", "show", "stat", "describe", "info",
+        "cat", "head", "tail", "ls", "tree", "glob", "grep", "count", "lookup", "inspect",
+        "query", "snapshot",
+    }
+)  # fmt: skip
+_MCP_WRITE_WORDS: Final = frozenset(
+    {
+        "write", "create", "edit", "update", "delete", "remove", "move", "rename", "put", "post",
+        "push", "send", "set", "add", "merge", "upload", "copy", "apply", "run", "exec",
+        "execute", "insert", "drop", "share", "publish", "terminate", "kill", "install",
+        "deploy", "commit", "close", "approve", "save", "patch", "replace", "append",
+        "truncate", "download", "store", "persist", "sync", "import", "export", "transfer",
+        "fork", "clone", "checkout", "mkdir", "touch", "chmod", "link", "archive", "restore",
+        "reset", "revert", "rollback", "cancel", "stop", "start", "restart", "trigger", "invoke",
+        "call", "submit", "assign", "comment", "reply", "review", "label", "tag", "release",
+        "enable", "disable", "configure", "register", "login", "logout", "schedule", "generate",
+        "build", "compile", "convert", "extract", "unzip", "zip", "encrypt", "decrypt", "sign",
+        "render", "print", "cache", "clear", "clean", "purge", "prune", "destroy", "revoke",
+        "grant", "mark", "lock", "unlock", "resolve", "dismiss",
+    }
+)  # fmt: skip
+_MCP_WALK_NODES: Final = 500
+_MCP_WALK_DEPTH: Final = 6
+_MCP_WALK_WIDTH: Final = 100
+_URL_IN_TEXT = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s'\"<>]+")
+_INVISIBLE: Final = "﻿​‌‍⁠᠎"
+_CAMEL_WORDS = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+")
+_FILE_URI = re.compile(r"(?i)^file:(?://)?")
+_DRIVE_RELATIVE = re.compile(r"^[A-Za-z]:(?![/\\])")
+# SQL: the first word says whether it looks like a statement; a read statement is one statement
+# that starts with one of the read words and holds none of the write words anywhere
+_SQL_FIRST: Final = frozenset(
+    {
+        "select", "with", "show", "describe", "desc", "explain", "values", "insert", "update",
+        "delete", "drop", "alter", "create", "grant", "revoke", "truncate", "merge", "replace",
+        "copy", "call", "exec", "execute", "set", "begin", "commit", "rollback", "lock",
+        "vacuum", "attach", "detach", "pragma", "load", "use", "do",
+    }
+)  # fmt: skip
+_SQL_READ_FIRST: Final = frozenset(
+    {"select", "with", "show", "describe", "desc", "explain", "values"}
+)
+_SQL_WRITE_WORD = re.compile(
+    r"(?i)\b(insert|update|delete|drop|alter|create|grant|revoke|truncate|merge|replace|copy|"
+    r"call|exec|execute|into|lock|vacuum|attach|detach|pragma|set|load|outfile|dumpfile)\b"
+)
+
+
+def _mcp_key(key: object) -> str:
+    return str(key).casefold().replace("-", "").replace("_", "")
+
+
+def _mcp_walk(value: object) -> tuple[list[tuple[str, object]], bool]:
+    """(every (key, scalar) pair below ``value``, whether the walk was cut short).
+
+    Breadth first, so the top-level arguments are always seen before a big nested one can use up
+    the budget. List items carry their list's key; a list of strings under a command key is given
+    as one command line. Cut short (too many nodes, too deep, a long list or mapping, a text too
+    long to look at) means some argument was not looked at: the call must not be allowed.
+    """
+    out: list[tuple[str, object]] = []
+    queue: deque[tuple[str, object, int]] = deque([("", value, 0)])
+    cut = False
+    while queue:
+        if len(out) >= _MCP_WALK_NODES:
+            return out, True
+        key, item, depth = queue.popleft()
+        if isinstance(item, Mapping | list | tuple):
+            if depth >= _MCP_WALK_DEPTH:
+                cut = True
+                continue
+            items = list(item.items()) if isinstance(item, Mapping) else list(item)
+            if len(items) > _MCP_WALK_WIDTH:
+                cut = True
+            items = items[:_MCP_WALK_WIDTH]
+            if isinstance(item, Mapping):
+                queue.extend((_mcp_key(k), v, depth + 1) for k, v in items)
+                continue
+            words = [v for v in items if isinstance(v, str)]
+            if key in _MCP_COMMAND_KEYS and words and len(words) == len(items):
+                out.append((key, shlex.join(words)))  # ["rm", "-rf", "~"]
+                continue
+            queue.extend((key, v, depth + 1) for v in items)
+        else:
+            if isinstance(item, str) and _text(item) is None:
+                cut = True  # too long to look at
+            out.append((key, item))
+    return out, cut
+
+
+def _mcp_access(name: str | None) -> Access:
+    words = [w.casefold() for w in _CAMEL_WORDS.findall(name or "")]
+    if words and words[0] in _MCP_READ_WORDS and not set(words) & _MCP_WRITE_WORDS:
+        return "read"
+    return "unknown"
+
+
+def _mcp_sql_kind(key: str) -> str | None:
+    """ "sql": anything not shown to be a read statement may write; "query": a search text is
+    fine, only what may write counts; None: not a SQL argument."""
+    if "sql" in key or "statement" in key:
+        return "sql"
+    if key in ("query", "q") or key.endswith("query"):
+        return "query"
+    return None
+
+
+def _local_path_text(text: str) -> tuple[str | None, bool]:
+    """(the local path a value names, whether it may name one that cannot be read here).
+
+    Any argument, whatever its key: an absolute, ``~`` or UNC path, or a ``file:`` URI (as its
+    path). A relative value is left alone (it may be a path in a remote repository). A value
+    that starts with a variable (``$HOME/...``, ``%USERPROFILE%\\...``) and has a separator is a
+    path nobody can resolve here: unclear.
+    """
+    value = text.strip().strip(_INVISIBLE).strip()  # a byte-order mark is no whitespace (R10-2)
+    if not value or "\n" in value:
+        return None, False
+    if re.match(r"^\.\.([/\\]|$)", value):
+        return None, True  # climbs out of wherever it is relative to: no remote repo path (R10-2)
+    if _FILE_URI.match(value):
+        value = _FILE_URI.sub("", value, count=1)
+        if re.match(r"^/[A-Za-z]:[/\\]", value):
+            value = value[1:]  # file:///C:/x
+        elif not value.startswith("/"):
+            value = "//" + value  # file://host/share: a UNC path
+    if value.startswith(("/", "\\", "~")):
+        return value, False
+    if (
+        len(value) >= 3
+        and value[0].isascii()
+        and value[0].isalpha()
+        and value[1:3] in (":/", ":\\")
+    ):
+        return value, False
+    if value[0] in "$%" and ("/" in value or "\\" in value):
+        return None, True
+    return None, False
+
+
+def sql_is_read_only(text: str) -> bool | None:
+    """True: one read statement; False: it may write; None: it does not look like SQL.
+
+    The first word is taken after comments and leading ``;`` / ``(``; the write words and a
+    second statement are looked for in the raw text, comments included (MySQL runs ``/*! ... */``).
+    Text that does not start like SQL but has a statement separator followed by a word is
+    treated as SQL that may write.
+    """
+    stripped = re.sub(r"(?s)/\*.*?\*/|--[^\n]*", " ", text).lstrip(" \t\r\n;(")
+    first = stripped.split(None, 1)[0].casefold().rstrip("(;") if stripped else ""
+    raw = text.strip().rstrip(";").rstrip()
+    if first not in _SQL_FIRST:
+        return False if re.search(r";\s*\w", raw) else None
+    return first in _SQL_READ_FIRST and ";" not in raw and not _SQL_WRITE_WORD.search(raw)
+
+
+def _mcp_actions(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> list[Action]:
     parts = tool.split("__", 2)
     server = parts[1] if len(parts) >= 2 and parts[1] else None
     name = parts[2] if len(parts) == 3 and parts[2] else None
-    return _gray(ctx, tool, "mcp-tool-not-reviewed", mcp_server=server, mcp_tool=name)
+    pairs, cut = _mcp_walk(tool_input)
+    notes: list[str] = ["mcp-arguments-not-all-seen"] if cut else []
+    refs: list[PathRef] = []
+    access = _mcp_access(name)
+    urls: list[str] = []
+    commands: list[str] = []
+    for key, value in pairs:
+        text = _text(value)
+        if text is None or not text.strip():
+            continue
+        local, unclear = _local_path_text(text)
+        if local is not None:
+            refs += _plain_operands(
+                _refs(ctx, notes, local, access, cwds=(ctx.cwd,), dialect="tool", glob_literal=True)
+            )
+        elif unclear or (key in _MCP_PATH_KEYS and _DRIVE_RELATIVE.match(text.strip())):
+            notes.append("mcp-path-unclear")
+        # every URL in the value, whatever its scheme or position (a file: URI is a path, above);
+        # under a host key a bare host or host/path counts too (X1 review R10-1)
+        found = [u for u in _URL_IN_TEXT.findall(text) if not u.casefold().startswith("file:")]
+        bare = text.strip().strip(_INVISIBLE).strip()
+        if not found and key in _MCP_HOST_KEYS and local is None and not _FILE_URI.match(bare):
+            found = [bare if "://" in bare else "https://" + bare]
+        urls += found
+        if key in _MCP_COMMAND_KEYS:
+            commands.append(text)
+        kind = _mcp_sql_kind(key)
+        if kind is not None:
+            read_only = sql_is_read_only(text)
+            # under a SQL key anything not shown to be a read statement may write; a ``query``
+            # may be a search text, so there only what may write counts
+            if read_only is False or (read_only is None and kind == "sql"):
+                notes.append("mcp-sql-not-read-only")
+    extra = next((v for k, v in tool_input.items() if _mcp_key(k) in _MCP_ARGS_KEYS), None)
+    if len(commands) == 1 and isinstance(extra, list) and all(isinstance(a, str) for a in extra):
+        # {"command": "rm", "args": ["-rf", "~"]}: the server runs the program with these words
+        commands = [" ".join([commands[0], *(shlex.quote(a) for a in extra)])]
+    names, unknown = _domains_of(urls)
+    unc, unc_unknown = _unc_refs(ctx, refs)
+    names = tuple(dict.fromkeys((*names, *unc)))
+    if unknown:
+        notes.append("unparseable-url")
+    network = bool(urls) or bool(unc) or unc_unknown
+    if commands:
+        notes.append("mcp-command")
+    main = Action(
+        tool=tool,
+        paths=tuple(refs),
+        domains=names,
+        network=network,
+        inside_project=_inside(refs),
+        risk_tags=("network_egress",) if network else (),
+        gray=True,
+        gray_reasons=tuple(dict.fromkeys((MCP_GRAY, *notes))),
+        mcp_server=server,
+        mcp_tool=name,
+        **ctx.base,
+    )
+    out = [main]
+    for command in commands:
+        # The server runs it: the Bash dialect is a guess, so these actions stay gray (they can
+        # never be allowed) and only give the deny and ask rules something to look at.
+        for action in _shell_actions(ctx, "Bash", "bash", command):
+            reasons = tuple(dict.fromkeys((*action.gray_reasons, f"mcp-command:{tool}")))
+            out.append(action.model_copy(update={"gray": True, "gray_reasons": reasons}))
+    return out
 
 
 # --------------------------------------------------------------------------------------------
@@ -2039,5 +2291,5 @@ def _dispatch(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> list[Actio
     if tool in HARMLESS_TOOLS:
         return [Action(tool=tool, **ctx.base)]
     if tool.startswith("mcp__"):
-        return [_mcp_action(ctx, tool)]
+        return _mcp_actions(ctx, tool, tool_input)
     return [_gray(ctx, tool, "unknown-tool")]

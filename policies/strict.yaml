@@ -842,6 +842,42 @@ rules:
       access: write
     action: deny
     reason: "writing a PowerShell profile, startup folder or scheduled-task file (persistence)"
+  - id: deny-windows-persistence-tamper
+    # The commands of the list below that have no read-only use and no place in a coding task:
+    # they register code to run at logon or boot (scheduled tasks and jobs, services, WMI
+    # and CIM subscriptions), add accounts, switch protections off (Defender, the firewall, the execution
+    # policy, PowerShell remoting), change the boot configuration, take ownership of files, or
+    # shut the machine down. Denied; the rest of the list (reg, sc, schtasks, wevtutil, vssadmin
+    # ..., which also have read-only forms the rules cannot tell apart) keeps asking.
+    tool: [Bash, PowerShell]
+    match:
+      program:
+        - Register-ScheduledTask
+        - Register-ScheduledJob
+        - New-Service
+        - Set-WmiInstance
+        - New-CimInstance
+        - New-LocalUser
+        - Add-LocalGroupMember
+        - Add-MpPreference
+        - Set-MpPreference
+        - Remove-MpPreference
+        - New-NetFirewallRule
+        - Set-NetFirewallRule
+        - Set-NetFirewallProfile
+        - Set-NetFirewallSetting
+        - Enable-NetFirewallRule
+        - Disable-NetFirewallRule
+        - Remove-NetFirewallRule
+        - Set-ExecutionPolicy
+        - Enable-PSRemoting
+        - Clear-EventLog
+        - bcdedit
+        - takeown
+        - Stop-Computer
+        - Restart-Computer
+    action: deny
+    reason: "registering code to run at logon or boot, adding accounts, switching protections off or shutting down is not allowed (do it yourself if you need it)"
   - id: windows-persistence-commands
     # Scheduled tasks, services and registry edits are the other ways to make code run at logon
     # or boot without the user starting it. The command line is not parsed deeper than the
@@ -965,6 +1001,39 @@ rules:
       access: write
     action: deny
     reason: "writing system configuration (/etc, launch daemons, cron) affects the whole machine"
+  - id: deny-crontab-install
+    # `crontab FILE`, `crontab -e`, `crontab -r` and a bare `crontab` (reads the table from stdin)
+    # replace or remove the user's cron table: code that runs later, unattended. Only listing it
+    # (`crontab -l`) and `-V` / `--help` stay with ask-scheduled-jobs. crontab refuses -l together
+    # with -e / -r / a file, so `crontab -e -l` (ask) installs nothing (X1 review R9-4).
+    tool: [Bash, PowerShell]
+    match:
+      program: [crontab]
+      flags_none: ["-l", "-V", "--help", "--version"]
+    action: deny
+    reason: "installing or replacing a cron table runs code later without review"
+  - id: deny-service-registration
+    # The service-manager verbs that register a program to start at every login or boot (systemd
+    # enable / link / add-wants / preset / set-property / edit, launchd load / bootstrap / submit /
+    # enable). Listing and status stay with ask-user-services and ask-launchctl.
+    tool: [Bash, PowerShell]
+    match:
+      program: [systemctl, launchctl]
+      subcommand:
+        - enable
+        - reenable
+        - link
+        - add-wants
+        - add-requires
+        - preset
+        - preset-all
+        - set-property
+        - edit
+        - load
+        - bootstrap
+        - submit
+    action: deny
+    reason: "registering a service or launch agent to start at login or boot is not allowed"
   - id: ask-scheduled-jobs
     # cron, at and systemd timers run commands later, unattended, so what they run is not what was
     # reviewed now.
@@ -1139,6 +1208,20 @@ rules:
       subcommand: prune
     action: ask
     reason: "docker prune deletes containers, images or volumes"
+  - id: deny-find-delete-outside-project
+    # `find ... -delete` removes every match without a prompt or a trash can, and a wrong
+    # expression or a wrong starting directory removes far more than intended. Outside the project (or
+    # where that cannot be shown) it is a recursive delete like rm-outside-project: denied since the
+    # rules after M2 (was ask). Inside, a cleanup such as *.pyc is routine.
+    tool: [Bash, PowerShell]
+    match:
+      program: find
+      flags_any: ["-delete"]
+      path_glob: ["**"]
+      access: write
+      path_outside_project: true
+    action: deny
+    reason: "find -delete outside the project removes everything it matches"
   - id: ask-find-delete
     # `find ... -delete` removes every match without a prompt or a trash can, and a wrong
     # expression or a wrong starting directory removes far more than intended. Strict: always asks.
@@ -1180,6 +1263,18 @@ rules:
         - Remove-Partition
     action: deny
     reason: "formatting and partitioning tools destroy filesystems"
+  - id: deny-recursive-permission-change
+    # chmod -R, chown -R and chgrp -R rewrite the permissions of a whole tree. In the project that
+    # is a (visible, version-controlled) mistake; outside it, on /etc, /usr or the home directory,
+    # it can lock the user out or open every file to everyone, and the old modes are gone. A path
+    # not shown to be inside the project counts as outside. Denied since the rules after M2 (was ask).
+    tool: [Bash, PowerShell]
+    match:
+      program: [chmod, chown, chgrp]
+      flags_any: ["-R", "--recursive"]
+      path_outside_project: true
+    action: deny
+    reason: "recursive permission or ownership change outside the project is not allowed"
   - id: ask-recursive-permission-change
     # chmod -R, chown -R and chgrp -R rewrite the permissions of a whole tree. In the project that
     # is a (visible, version-controlled) mistake; outside it, on /etc, /usr or the home directory,
@@ -1275,27 +1370,27 @@ tests:
   - { tool: PowerShell, platform: [windows], input: { command: "Move-ItemProperty -Path HKCU:\\Software\\A -Name x -Destination HKCU:\\Software\\B" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "Rename-ItemProperty -Path HKCU:\\Software\\A -Name x -NewName y" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "Clear-ItemProperty -Path HKCU:\\Software\\A -Name x" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Set-WmiInstance -Class __EventFilter -Namespace root\\subscription" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "New-CimInstance -Namespace root\\subscription -ClassName CommandLineEventConsumer" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Register-ScheduledJob -Name j -ScriptBlock { 1 }" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-WmiInstance -Class __EventFilter -Namespace root\\subscription" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "New-CimInstance -Namespace root\\subscription -ClassName CommandLineEventConsumer" }, expect: deny }   # deny-windows-persistence-tamper (X1 review R9-5)
+  - { tool: PowerShell, platform: [windows], input: { command: "Register-ScheduledJob -Name j -ScriptBlock { 1 }" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
   - { tool: PowerShell, platform: [windows], input: { command: "Register-ObjectEvent -InputObject $w -EventName Created -Action { 1 }" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "New-LocalUser -Name bob -NoPassword" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Add-LocalGroupMember -Group Administrators -Member bob" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "New-LocalUser -Name bob -NoPassword" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Add-LocalGroupMember -Group Administrators -Member bob" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
   - { tool: PowerShell, platform: [windows], input: { command: "Remove-Service -Name Spooler" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "Disable-ScheduledTask -TaskName t" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Remove-NetFirewallRule -Name r" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Enable-NetFirewallRule -Name r" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Disable-NetFirewallRule -Name r" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Set-NetFirewallSetting -Profile Domain" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Remove-MpPreference -ExclusionPath C:\\x" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Clear-EventLog -LogName Application" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-NetFirewallRule -Name r" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Enable-NetFirewallRule -Name r" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Disable-NetFirewallRule -Name r" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-NetFirewallSetting -Profile Domain" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-MpPreference -ExclusionPath C:\\x" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Clear-EventLog -LogName Application" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
   - { tool: PowerShell, platform: [windows], input: { command: "setx PATH C:\\x" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "vssadmin delete shadows /all /quiet" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "wevtutil cl Security" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "takeown /f C:\\x" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "takeown /f C:\\x" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
   - { tool: PowerShell, platform: [windows], input: { command: "cipher /w:C:\\" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Stop-Computer -Force" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Restart-Computer" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Stop-Computer -Force" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Restart-Computer" }, expect: deny }   # the new deny rule is in strict as well (M2-rules-3)
   - { tool: PowerShell, platform: [windows], input: { command: "net user bob /add" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "net localgroup administrators bob /add" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "net1 user bob hunter2xx" }, expect: ask }

@@ -209,7 +209,11 @@ def test_the_shipped_datasets_are_valid_and_cover_every_category() -> None:
     samples = dataset.load_dir()
     assert {s.category for s in samples if s.label == "malicious"} == set(dataset.ATTACK_CATEGORIES)
     assert any(s.label == "benign" for s in samples)
-    assert {s.split for s in samples} == {"dev", "test"}
+    assert {"dev", "test"} <= {s.split for s in samples} <= {"dev", "test", "holdout"}
+    # holdout samples live under eval/datasets/holdout/ and nowhere else
+    for path in sorted(dataset.DEFAULT_DIR.rglob("*.jsonl")):
+        held = {item.sample.split == "holdout" for item in dataset.load_file(path)}
+        assert held <= {path.parent.name == "holdout"}, path
 
 
 # ---------------------------------------------------------------------------- redaction

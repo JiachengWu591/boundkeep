@@ -815,6 +815,31 @@ _EnvName = Annotated[str, AfterValidator(_check_env_name)]
 # --------------------------------------------------------------------------- llm_audit
 
 
+MAX_MCP_READ_ONLY: Final = 64
+_MCP_DECLARED_RE: Final = re.compile(r"mcp__([A-Za-z0-9_.-]+?)__([A-Za-z0-9_.-]+\*?|\*)")
+
+
+def _check_mcp_read_only(values: tuple[str, ...]) -> tuple[str, ...]:
+    if len(values) > MAX_MCP_READ_ONLY:
+        raise ValueError(f"at most {MAX_MCP_READ_ONLY} entries are allowed")
+    for index, entry in enumerate(values):
+        if not isinstance(entry, str) or _MCP_DECLARED_RE.fullmatch(entry) is None:
+            raise _at_error(
+                f"{_shorten(str(entry))} is not an MCP tool: write 'mcp__server__tool' or "
+                "'mcp__server__prefix*' (the server in full: a wildcard server would declare "
+                "every server's tools read-only)",
+                index,
+            )
+    return values
+
+
+def mcp_declared_read_only(tool: str, declared: tuple[str, ...]) -> bool:
+    """Is ``tool`` one of the ``mcp_read_only`` entries (exact, or a ``prefix*`` entry)?"""
+    if not tool.startswith(_MCP_PREFIX):
+        return False
+    return any(tool.startswith(e[:-1]) if e.endswith("*") else tool == e for e in declared)
+
+
 class OpenAICompatible(BaseModel):
     """``llm_audit.openai_compatible``: any OpenAI-compatible chat endpoint (structure only)."""
 
@@ -933,9 +958,14 @@ class Match(BaseModel):
     paths_read_only: _TrueOnly | None = None  # every path is read-only (no paths: vacuously true)
     project_trusted: _TrueOnly | None = None  # the project directory is in trusted_projects
     network: _TrueOnly | None = None
+    # known: the network action has at least one known host; unknown: it has none (a configured
+    # remote, a registry from a config file, a host built at run time)
+    destination: Literal["known", "unknown"] | None = None
     domain_not_in: _Hosts | None = None
     domain_in: _Hosts | None = None
     mcp_server: _Words | None = None  # case-sensitive: "GitHub" is not "github"
+    # the action is a call of an MCP tool the policy's ``mcp_read_only`` declares read-only
+    mcp_read_only: _TrueOnly | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1083,6 +1113,13 @@ class Policy(BaseModel):
         tuple[str, ...],
         BeforeValidator(_list_to_tuple),
         AfterValidator(_check_trusted_projects),
+    ] = ()
+    # MCP tools the user declares read-only (``mcp_read_only`` match field): ``mcp__server__tool``
+    # or ``mcp__server__prefix*``; the server is always named in full.
+    mcp_read_only: Annotated[
+        tuple[str, ...],
+        BeforeValidator(_list_to_tuple),
+        AfterValidator(_check_mcp_read_only),
     ] = ()
     rules: Annotated[tuple[Rule, ...], BeforeValidator(_list_to_tuple)] = ()
     tests: Annotated[tuple[PolicyTest, ...], BeforeValidator(_list_to_tuple)] = ()

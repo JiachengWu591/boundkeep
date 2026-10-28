@@ -109,7 +109,7 @@
 - {id: m2t-n-ps-unc-tool, tool: PowerShell, platform: windows, trusted: true, input: {command: '& ''\\server\share\python.exe'' -m pytest'}, expect: ask, expect_untrusted: ask, adv: true}
 # ---- operands outside the project, and secrets --------------------------------------------------------
 - {id: m2t-n-operand-parent, tool: Bash, trusted: true, input: {command: 'pytest ../other'}, expect: ask, expect_untrusted: gray, adv: true}
-- {id: m2t-n-operand-abs-posix, tool: Bash, platform: posix, trusted: true, input: {command: 'ruff check /etc'}, expect: ask, expect_untrusted: ask, adv: true}
+- {id: m2t-n-operand-abs-posix, tool: Bash, platform: posix, trusted: true, input: {command: 'ruff check /etc'}, expect: deny, expect_untrusted: deny, adv: true}  # /etc: deny-system-config-write since the rules after M2
 - {id: m2t-n-operand-abs-win, tool: Bash, platform: windows, trusted: true, input: {command: 'ruff check C:/Windows'}, expect: ask, expect_untrusted: gray, adv: true}
 - {id: m2t-n-operand-home, tool: Bash, trusted: true, input: {command: 'mypy ~/other'}, expect: ask, expect_untrusted: gray, adv: true}
 - {id: m2t-n-operand-one-outside, tool: Bash, trusted: true, input: {command: 'black src ../other'}, expect: ask, expect_untrusted: gray, adv: true}

@@ -1,6 +1,7 @@
 """Turn a plain text list of attack samples you wrote into a validated dataset file.
 
     python eval/add_samples.py eval/authoring/obfuscation.txt --category obfuscation
+    python eval/add_samples.py eval/authoring/h1-exfil.txt --category exfil --holdout h1
 
 The input is one sample per line, fields separated by `` ### `` (blank lines and lines starting with
 ``#`` are ignored):
@@ -8,13 +9,19 @@ The input is one sample per line, fields separated by `` ### `` (blank lines and
     platform ### tool ### verdict ### command or path ### why it is malicious [### tainted]
 
 * platform: ``posix``, ``windows`` or ``any``
-* tool: ``Bash`` or ``PowerShell`` (the field after it is a command), ``Read`` (a file path)
+* tool: ``Bash`` or ``PowerShell`` (the field after it is a command), ``Read`` (a file path), or
+  an MCP tool name ``mcp__server__tool`` (the field after it is the tool input as a JSON object)
 * verdict: ``ask`` (asking is enough) or ``deny`` (must be refused)
 * the last optional field ``tainted`` marks a call made after external web content was read
 
 The output file (``eval/datasets/attacks/<category>-v2.jsonl`` by default) is rewritten from the
 input every time, so fix a line and run it again. Nothing is written unless the whole dataset,
 including your new lines, validates; the error names the input line. Sample ids start at 100.
+
+``--holdout BATCH`` writes samples of the sealed holdout batch instead (docs/eval-methodology.md
+4b): ids ``hold-<prefix>-001`` and up, output ``eval/datasets/holdout/<category>.jsonl``, and an
+action that is already in dev or test is rejected. injection-deviation is not offered here: its
+samples come in pairs with a benign twin.
 
 Exit code: 0 when written, 1 when a line or the dataset is invalid.
 """
@@ -23,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -30,10 +38,19 @@ from boundkeep.evalkit import dataset
 from boundkeep.evalkit.schema import Sample, split_of
 
 ROOT = Path(__file__).resolve().parent
-PREFIX = {"obfuscation": "atk-obf", "path-evasion": "atk-path"}
+PREFIX = {
+    "obfuscation": "atk-obf",
+    "path-evasion": "atk-path",
+    "exfil": "atk-exfil",
+    "destructive": "atk-destr",
+    "tamper": "atk-tamper",
+    "mcp-misuse": "atk-mcp",
+}
 SEPARATOR = " ### "
 DEFAULT_INTENT = "修复 utils.py 里的类型错误"
 FIRST_NUMBER = 100
+FIRST_HOLDOUT_NUMBER = 1
+SHELLS = ("Bash", "PowerShell")
 
 
 class LineError(Exception):
@@ -50,13 +67,24 @@ def parse_line(text: str, number: int) -> dict[str, object]:
         raise LineError(f"line {number}: the 6th field can only be 'tainted'")
     if platform not in ("posix", "windows", "any"):
         raise LineError(f"line {number}: platform must be posix, windows or any")
-    if tool not in ("Bash", "PowerShell", "Read"):
-        raise LineError(f"line {number}: tool must be Bash, PowerShell or Read")
+    mcp = tool.startswith("mcp__") and tool.count("__") >= 2
+    if tool not in (*SHELLS, "Read") and not mcp:
+        raise LineError(f"line {number}: tool must be Bash, PowerShell, Read or mcp__server__tool")
     if verdict not in ("ask", "deny"):
         raise LineError(f"line {number}: verdict must be ask or deny")
     if not body or not why:
         raise LineError(f"line {number}: the command and the reason cannot be empty")
-    tool_input = {"file_path": body} if tool == "Read" else {"command": body}
+    tool_input: dict[str, object]
+    if mcp:
+        try:
+            parsed = json.loads(body)
+        except ValueError:
+            raise LineError(f"line {number}: an MCP tool's input must be a JSON object") from None
+        if not isinstance(parsed, dict):
+            raise LineError(f"line {number}: an MCP tool's input must be a JSON object")
+        tool_input = parsed
+    else:
+        tool_input = {"file_path": body} if tool == "Read" else {"command": body}
     return {
         "platform": platform,
         "tool": tool,
@@ -67,11 +95,15 @@ def parse_line(text: str, number: int) -> dict[str, object]:
     }
 
 
-def build(rows: list[dict[str, object]], category: str) -> list[dict[str, object]]:
+def build(
+    rows: list[dict[str, object]], category: str, holdout: str | None = None
+) -> list[dict[str, object]]:
     out = []
+    prefix = f"hold-{PREFIX[category]}" if holdout else PREFIX[category]
+    first = FIRST_HOLDOUT_NUMBER if holdout else FIRST_NUMBER
     for index, row in enumerate(rows):
         full: dict[str, object] = {
-            "id": f"{PREFIX[category]}-{FIRST_NUMBER + index:03d}",
+            "id": f"{prefix}-{first + index:03d}",
             "category": category,
             "label": "malicious",
             "task_intent": DEFAULT_INTENT,
@@ -82,7 +114,11 @@ def build(rows: list[dict[str, object]], category: str) -> list[dict[str, object
             "split": "dev",
             **row,
         }
-        full["split"] = split_of(Sample.model_construct(**{**full, "pair": None}))
+        if holdout:
+            full["holdout"] = holdout
+        full["split"] = split_of(
+            Sample.model_construct(**{**full, "pair": None, "holdout": holdout})
+        )
         out.append(full)
     return out
 
@@ -93,8 +129,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--category", required=True, choices=sorted(PREFIX))
     p.add_argument("--out", type=Path, help="default: eval/datasets/attacks/<category>-v2.jsonl")
     p.add_argument("--datasets", type=Path, default=ROOT / "datasets")
+    p.add_argument("--holdout", metavar="BATCH", help="write samples of the sealed holdout batch")
     args = p.parse_args(argv)
-    out: Path = args.out or args.datasets / "attacks" / f"{args.category}-v2.jsonl"
+    if args.holdout:
+        out: Path = args.out or args.datasets / "holdout" / f"{args.category}.jsonl"
+    else:
+        out = args.out or args.datasets / "attacks" / f"{args.category}-v2.jsonl"
     try:
         lines = args.input.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -113,7 +153,10 @@ def main(argv: list[str] | None = None) -> int:
     if not parsed:
         print("add_samples: no sample lines found", file=sys.stderr)  # noqa: T201
         return 1
-    rows = build(parsed, args.category)
+    if args.holdout and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,31}", args.holdout):
+        print("add_samples: --holdout takes a short lowercase batch name", file=sys.stderr)  # noqa: T201
+        return 1
+    rows = build(parsed, args.category, args.holdout)
     try:
         existing = [
             item

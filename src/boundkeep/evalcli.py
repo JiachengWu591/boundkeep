@@ -84,10 +84,13 @@ def review_sheet(rows: list[dict[str, Any]]) -> str:
 
 
 def cmd_import(args: argparse.Namespace) -> int:
+    from boundkeep.evalkit.schema import action_key
+
     stats = importer.ImportStats()
     out = Path(args.out)
     try:
         known = _known_keys(Path(args.datasets))
+        tuned = {action_key(s) for s in _existing(Path(args.datasets)) if s.split != "holdout"}
     except dataset.DatasetError:
         return EXIT_PROBLEM
     rows: list[dict[str, Any]] = []
@@ -111,6 +114,8 @@ def cmd_import(args: argparse.Namespace) -> int:
             keep_intent=not args.no_intent,
             limit=room,
             shape_limit=args.shape_limit,
+            holdout=args.holdout,
+            tuned_actions=tuned,
         )
     if rows:
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -172,16 +177,17 @@ def cmd_promote(args: argparse.Namespace) -> int:
     except dataset.DatasetError as exc:
         console.err(f"boundkeep eval promote: {exc}")
         return EXIT_PROBLEM
-    target = datasets / "benign" / PROMOTED
-    target.parent.mkdir(parents=True, exist_ok=True)
-    ready_ids = {item.sample.id for item in ready}
-    with target.open("a", encoding="utf-8", newline="\n") as handle:
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            if (
-                raw.strip()
-                and not raw.lstrip().startswith("#")
-                and json.loads(raw)["id"] in ready_ids
-            ):
+    # a holdout sample goes to the sealed holdout directory, every other one to benign/
+    targets = {
+        item.sample.id: datasets / ("holdout" if item.sample.holdout else "benign") / PROMOTED
+        for item in ready
+    }
+    ready_ids = set(targets)
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if raw.strip() and not raw.lstrip().startswith("#") and json.loads(raw)["id"] in ready_ids:
+            target = targets[json.loads(raw)["id"]]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write(raw + "\n")
     rest = [
         raw
@@ -191,7 +197,8 @@ def cmd_promote(args: argparse.Namespace) -> int:
         )
     ]
     path.write_text("".join(r + "\n" for r in rest), encoding="utf-8", newline="\n")
-    console.out(f"promoted {len(ready)} sample(s) to {target}; {len(rest)} line(s) stay in {path}")
+    where = ", ".join(sorted({str(t) for t in targets.values()}))
+    console.out(f"promoted {len(ready)} sample(s) to {where}; {len(rest)} line(s) stay in {path}")
     return EXIT_OK
 
 
@@ -225,6 +232,11 @@ def add_parser(sub: Any) -> None:
         help="keep at most this many calls of the same shape (0 = no limit; default 3)",
     )
     q.add_argument("--no-intent", action="store_true", help="do not keep the user's prompt")
+    q.add_argument(
+        "--holdout",
+        metavar="BATCH",
+        help="candidates for the sealed holdout batch BATCH (actions already in dev/test dropped)",
+    )
     q.set_defaults(func=cmd_import)
 
     q = inner.add_parser("confirm", help="mark samples as reviewed (a person's command)")

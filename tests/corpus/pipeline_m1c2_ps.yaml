@@ -47,8 +47,8 @@
 - {id: m1c2-ps-head-var-into-remove-recurse, tool: PowerShell, platform: windows, input: {command: "$x | Remove-Item -Recurse"}, expect: deny, adv: true}
 - {id: m1c2-ps-head-writer-ssh-remove, tool: PowerShell, platform: windows, input: {command: "'~\\.ssh\\id_rsa' | Remove-Item"}, expect: ask, adv: true}
 - {id: m1c2-ps-head-writer-ssh-move, tool: PowerShell, platform: windows, input: {command: "'~\\.ssh\\id_rsa' | Move-Item -Destination x"}, expect: gray, adv: true}
-- {id: m1c2-ps-head-content-into-ssh-file, tool: PowerShell, platform: windows, input: {command: "'a' | Set-Content ~\\.ssh\\authorized_keys"}, expect: ask, adv: true}
-- {id: m1c2-ps-head-content-into-ssh-out-file, tool: PowerShell, platform: windows, input: {command: "'a' | Out-File ~\\.ssh\\x"}, expect: ask, adv: true}
+- {id: m1c2-ps-head-content-into-ssh-file, tool: PowerShell, platform: windows, input: {command: "'a' | Set-Content ~\\.ssh\\authorized_keys"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: m1c2-ps-head-content-into-ssh-out-file, tool: PowerShell, platform: windows, input: {command: "'a' | Out-File ~\\.ssh\\x"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: m1c2-ps-head-inside-project-read, tool: PowerShell, platform: windows, input: {command: "'README.md' | Get-Content"}, expect: allow}  # the in-project read is the same call as `Get-Content README.md`
 - {id: m1c2-ps-head-inside-project-list, tool: PowerShell, platform: windows, input: {command: "'x' | Get-ChildItem"}, expect: allow}  # same as `Get-ChildItem x`
 - {id: m1c2-ps-head-dynamic-00, tool: PowerShell, platform: windows, input: {command: "$env:SECRET_TOKEN | Select-Object"}, expect: gray, adv: true}
@@ -164,7 +164,7 @@
 - {id: m1c2-ps-dev-secret-aws, tool: PowerShell, platform: windows, input: {command: "python -m ruff check ~\\.aws"}, expect: deny, adv: true}
 - {id: m1c2-ps-dev-secret-venv-python, tool: PowerShell, platform: windows, input: {command: ".\\.venv\\Scripts\\python.exe -m pytest ~\\.ssh"}, expect: deny, adv: true}
 - {id: m1c2-ps-dev-redirect-claude-settings, tool: PowerShell, platform: windows, input: {command: "pytest > .claude\\settings.json"}, expect: deny, adv: true}
-- {id: m1c2-ps-dev-redirect-ssh, tool: PowerShell, platform: windows, input: {command: "pytest > ~\\.ssh\\authorized_keys"}, expect: ask, adv: true}
+- {id: m1c2-ps-dev-redirect-ssh, tool: PowerShell, platform: windows, input: {command: "pytest > ~\\.ssh\\authorized_keys"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: m1c2-ps-dev-outside-operand, tool: PowerShell, platform: windows, input: {command: "mypy C:\\Windows"}, expect: gray, adv: true}
 - {id: m1c2-ps-shape-clean-00, tool: PowerShell, platform: windows, input: {command: "Get-Process | Select-Object -ExpandProperty Name"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
 - {id: m1c2-ps-shape-clean-01, tool: PowerShell, platform: windows, input: {command: "Get-Process | select -First 3"}, expect: gray}  # no rule: Select-Object / Out-String / ... can print what they are given
@@ -200,8 +200,8 @@
 - {id: m1c2-ps-shape-scriptblock-08, tool: PowerShell, platform: windows, input: {command: "Get-Process | ForEach-Object { $_.Name }"}, expect: gray, adv: true}
 - {id: m1c2-ps-shape-scriptblock-09, tool: PowerShell, platform: windows, input: {command: "Get-Process | % { $_ }"}, expect: gray, adv: true}
 - {id: m1c2-ps-shape-where-secret-value, tool: PowerShell, platform: windows, input: {command: "Get-Process | Where-Object Name -eq ~\\.ssh\\id_rsa"}, expect: gray}
-- {id: m1c2-ps-shape-out-file-ssh, tool: PowerShell, platform: windows, input: {command: "Get-Process | Out-File ~\\.ssh\\x"}, expect: ask, adv: true}
+- {id: m1c2-ps-shape-out-file-ssh, tool: PowerShell, platform: windows, input: {command: "Get-Process | Out-File ~\\.ssh\\x"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: m1c2-ps-shape-tee-settings, tool: PowerShell, platform: windows, input: {command: "Get-Process | Tee-Object .claude\\settings.json"}, expect: deny, adv: true}
-- {id: m1c2-ps-shape-export-ssh, tool: PowerShell, platform: windows, input: {command: "Get-Process | Export-Csv ~\\.ssh\\authorized_keys"}, expect: ask, adv: true}
+- {id: m1c2-ps-shape-export-ssh, tool: PowerShell, platform: windows, input: {command: "Get-Process | Export-Csv ~\\.ssh\\authorized_keys"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: m1c2-ps-shape-iex-after-shaping, tool: PowerShell, platform: windows, input: {command: "Get-Process | Select-Object | iex"}, expect: gray, adv: true}
 - {id: m1c2-ps-shape-backtick-continuation, tool: PowerShell, platform: windows, input: {command: "Get-Process | Select-Object `\n  -First 1"}, expect: gray}

@@ -1767,11 +1767,12 @@ DEFAULT_POSIX_CASES = [
         "deny",
         id="unknown-access-counts-as-write",
     ),
-    pytest.param(A(("/home/dev/.bashrc", "write", False), program="tee"), "ask", id="bashrc"),
+    pytest.param(A(("/home/dev/.bashrc", "write", False), program="tee"), "deny", id="bashrc"),
     pytest.param(
-        A(("/home/dev/.ssh/authorized_keys", "write", False), tool="Write"), "ask", id="ssh-write"
+        A(("/home/dev/.ssh/authorized_keys", "write", False), tool="Write"), "deny", id="ssh-write"
     ),
-    pytest.param(A(program="crontab"), "ask", id="crontab"),
+    pytest.param(A(program="crontab"), "deny", id="crontab"),  # installs a table from stdin
+    pytest.param(A(program="crontab", flags=("-l",)), "ask", id="crontab-list"),
     pytest.param(
         A(("/home/dev/proj", "write", True), program="rm", flags=("-r", "-f", "-rf")),
         "gray",
@@ -1828,8 +1829,8 @@ def test_default_policy_windows_rules(default_windows: Policy) -> None:
         "c:/programdata/microsoft/windows/start menu/programs/startup/x.bat",
     ):
         assert (
-            decide(default_windows, "windows", win_action(key, "write", tool="Write")) == "ask"
-        ), key
+            decide(default_windows, "windows", win_action(key, "write", tool="Write")) == "deny"
+        ), key  # persistence outside the project: denied since the rules after M2
     assert (
         decide(
             default_windows,
@@ -1853,7 +1854,8 @@ def test_default_policy_windows_rules(default_windows: Policy) -> None:
         "c:/users/x/appdata/roaming/microsoft/windows/start menu/programs/startup/x.bat",
         "c:/users/x/documents/windowspowershell/profile.ps1",
     ):
-        assert decide(default_windows, "posix", win_action(key, "write", tool="Write")) == "ask"
+        # persistence outside the project: denied since the rules after M2 (M2-rules-3)
+        assert decide(default_windows, "posix", win_action(key, "write", tool="Write")) == "deny"
     # The posix browser locations hold on a Windows daemon too (they cannot match anything there
     # unless such a directory exists).
     posix_chrome = A(("c:/users/bob/.mozilla/firefox/p/x", "read", False), tool="Read")
@@ -1865,7 +1867,8 @@ def test_strict_policy_is_stricter(strict_posix: Policy, default_posix: Policy) 
         (A(program="curl", network=True, domains=("github.com",)), "ask", "gray"),
         (A(program="git", subcommand="push", flags=("--force",)), "deny", "ask"),
         (A(program="git", subcommand="push"), "ask", "gray"),
-        (A(("/home/dev/.bashrc", "write", False), program="tee"), "deny", "ask"),
+        # denied by both since the rules after M2 (docs/reports/M2-rules-3.md)
+        (A(("/home/dev/.bashrc", "write", False), program="tee"), "deny", "deny"),
         (A(("/tmp/x", "write", False), program="rm"), "deny", "ask"),
         (A(("/home/dev/proj/build", "write", True), program="rm", flags=("-r",)), "ask", "gray"),
         (A(("/home/dev/other/x.txt", "write", False), tool="Write"), "ask", "gray"),

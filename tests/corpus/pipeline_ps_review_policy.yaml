@@ -6,32 +6,32 @@
 - {id: psr-move-itemproperty, tool: PowerShell, platform: windows, input: {command: 'Move-ItemProperty -Path HKCU:\Software\A -Name x -Destination HKCU:\Software\B'}, expect: ask, adv: true}
 - {id: psr-rename-itemproperty, tool: PowerShell, platform: windows, input: {command: 'Rename-ItemProperty -Path HKCU:\Software\A -Name x -NewName y'}, expect: ask, adv: true}
 - {id: psr-clear-itemproperty, tool: PowerShell, platform: windows, input: {command: 'Clear-ItemProperty -Path HKCU:\Software\A -Name x'}, expect: ask, adv: true}
-- {id: psr-set-wmiinstance, tool: PowerShell, platform: windows, input: {command: 'Set-WmiInstance -Class __EventFilter -Namespace root\subscription'}, expect: ask, adv: true}
-- {id: psr-new-ciminstance, tool: PowerShell, platform: windows, input: {command: 'New-CimInstance -Namespace root\subscription -ClassName CommandLineEventConsumer'}, expect: ask, adv: true}
-- {id: psr-register-scheduledjob, tool: PowerShell, platform: windows, input: {command: 'Register-ScheduledJob -Name j -FilePath C:\Temp\a.ps1'}, expect: ask, adv: true}
-- {id: psr-new-localuser, tool: PowerShell, platform: windows, input: {command: 'New-LocalUser -Name bob -NoPassword'}, expect: ask, adv: true}
-- {id: psr-add-localgroupmember, tool: PowerShell, platform: windows, input: {command: 'Add-LocalGroupMember -Group Administrators -Member bob'}, expect: ask, adv: true}
-- {id: psr-add-localgroupmember-lower, tool: PowerShell, platform: windows, input: {command: 'add-localgroupmember -group administrators -member bob'}, expect: ask, adv: true}
+- {id: psr-set-wmiinstance, tool: PowerShell, platform: windows, input: {command: 'Set-WmiInstance -Class __EventFilter -Namespace root\subscription'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-new-ciminstance, tool: PowerShell, platform: windows, input: {command: 'New-CimInstance -Namespace root\subscription -ClassName CommandLineEventConsumer'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-register-scheduledjob, tool: PowerShell, platform: windows, input: {command: 'Register-ScheduledJob -Name j -FilePath C:\Temp\a.ps1'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-new-localuser, tool: PowerShell, platform: windows, input: {command: 'New-LocalUser -Name bob -NoPassword'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-add-localgroupmember, tool: PowerShell, platform: windows, input: {command: 'Add-LocalGroupMember -Group Administrators -Member bob'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-add-localgroupmember-lower, tool: PowerShell, platform: windows, input: {command: 'add-localgroupmember -group administrators -member bob'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: psr-remove-service, tool: PowerShell, platform: windows, input: {command: 'Remove-Service -Name Spooler'}, expect: ask, adv: true}
 - {id: psr-disable-scheduledtask, tool: PowerShell, platform: windows, input: {command: 'Disable-ScheduledTask -TaskName t'}, expect: ask, adv: true}
-- {id: psr-remove-firewallrule, tool: PowerShell, platform: windows, input: {command: 'Remove-NetFirewallRule -Name r'}, expect: ask, adv: true}
-- {id: psr-disable-firewallrule, tool: PowerShell, platform: windows, input: {command: 'Disable-NetFirewallRule -DisplayName r'}, expect: ask, adv: true}
-- {id: psr-enable-firewallrule, tool: PowerShell, platform: windows, input: {command: 'Enable-NetFirewallRule -DisplayName r'}, expect: ask, adv: true}
-- {id: psr-firewall-setting, tool: PowerShell, platform: windows, input: {command: 'Set-NetFirewallSetting -Profile Domain'}, expect: ask, adv: true}
-- {id: psr-remove-mppreference, tool: PowerShell, platform: windows, input: {command: 'Remove-MpPreference -ExclusionPath C:\x'}, expect: ask, adv: true}
-- {id: psr-clear-eventlog, tool: PowerShell, platform: windows, input: {command: 'Clear-EventLog -LogName Security'}, expect: ask, adv: true}
+- {id: psr-remove-firewallrule, tool: PowerShell, platform: windows, input: {command: 'Remove-NetFirewallRule -Name r'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-disable-firewallrule, tool: PowerShell, platform: windows, input: {command: 'Disable-NetFirewallRule -DisplayName r'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-enable-firewallrule, tool: PowerShell, platform: windows, input: {command: 'Enable-NetFirewallRule -DisplayName r'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-firewall-setting, tool: PowerShell, platform: windows, input: {command: 'Set-NetFirewallSetting -Profile Domain'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-remove-mppreference, tool: PowerShell, platform: windows, input: {command: 'Remove-MpPreference -ExclusionPath C:\x'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-clear-eventlog, tool: PowerShell, platform: windows, input: {command: 'Clear-EventLog -LogName Security'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: psr-setx, tool: PowerShell, platform: windows, input: {command: 'setx PATH C:\x'}, expect: ask, adv: true}
 - {id: psr-vssadmin-delete, tool: PowerShell, platform: windows, input: {command: 'vssadmin delete shadows /all /quiet'}, expect: ask, adv: true}
 - {id: psr-vssadmin-exe, tool: PowerShell, platform: windows, input: {command: 'vssadmin.exe delete shadows /all'}, expect: ask, adv: true}
 - {id: psr-wevtutil-clear, tool: PowerShell, platform: windows, input: {command: 'wevtutil cl Security'}, expect: ask, adv: true}
-- {id: psr-takeown, tool: PowerShell, platform: windows, input: {command: 'takeown /f C:\x /r'}, expect: ask, adv: true}
+- {id: psr-takeown, tool: PowerShell, platform: windows, input: {command: 'takeown /f C:\x /r'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: psr-cipher-wipe, tool: PowerShell, platform: windows, input: {command: 'cipher /w:C:\'}, expect: ask, adv: true}
-- {id: psr-stop-computer, tool: PowerShell, platform: windows, input: {command: 'Stop-Computer -Force'}, expect: ask, adv: true}
-- {id: psr-restart-computer, tool: PowerShell, platform: windows, input: {command: 'Restart-Computer'}, expect: ask, adv: true}
+- {id: psr-stop-computer, tool: PowerShell, platform: windows, input: {command: 'Stop-Computer -Force'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psr-restart-computer, tool: PowerShell, platform: windows, input: {command: 'Restart-Computer'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: psr-net-user-add, tool: PowerShell, platform: windows, input: {command: 'net user bob /add'}, expect: ask, adv: true}
 - {id: psr-net-localgroup-add, tool: PowerShell, platform: windows, input: {command: 'net localgroup administrators bob /add'}, expect: ask, adv: true}
 - {id: psr-net1-user, tool: PowerShell, platform: windows, input: {command: 'net1 user bob NewPassw0rd'}, expect: ask, adv: true}
-- {id: psr-in-pipeline, tool: PowerShell, platform: windows, input: {command: 'Get-Date; Clear-EventLog -LogName System'}, expect: ask, adv: true}
+- {id: psr-in-pipeline, tool: PowerShell, platform: windows, input: {command: 'Get-Date; Clear-EventLog -LogName System'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 
 # ---- git: restore is covered like checkout -- <path> --------------------------------------------
 - {id: psr-git-restore-path, tool: PowerShell, platform: windows, input: {command: 'git restore src\a.py'}, expect: ask, adv: true}

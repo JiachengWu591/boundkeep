@@ -486,9 +486,11 @@ MATCH_FIELD_SAMPLES: dict[str, Any] = {
     "paths_read_only": True,
     "project_trusted": True,
     "network": True,
+    "destination": "known",
     "domain_not_in": ["github.com"],
     "domain_in": ["github.com"],
     "mcp_server": ["github"],
+    "mcp_read_only": True,
 }
 
 

@@ -38,8 +38,8 @@ def to_json(metrics: dict[str, Any], info: dict[str, Any]) -> str:
 
 def _dataset_table(samples: Sequence[Sample]) -> list[str]:
     rows = [
-        "| 类别 | 条数 | windows | posix | any | 真实 | 合成 | dev | test |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| 类别 | 条数 | windows | posix | any | 真实 | 合成 | dev | test | holdout |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for category in (*ATTACK_CATEGORIES, "benign"):
         group = [s for s in samples if s.category == category]
@@ -49,9 +49,14 @@ def _dataset_table(samples: Sequence[Sample]) -> list[str]:
         rows.append(
             f"| {category} | {len(group)} | {by_platform['windows']} | {by_platform['posix']} | "
             f"{by_platform['any']} | {by_origin['real']} | {by_origin['synthetic']} | "
-            f"{by_split['dev']} | {by_split['test']} |"
+            f"{by_split['dev']} | {by_split['test']} | {by_split['holdout']} |"
         )
     return rows
+
+
+def _headline_split(metrics: dict[str, Any]) -> str:
+    """The split whose numbers stand for the rules: the holdout once opened, else test."""
+    return "holdout" if "holdout" in metrics["cells"]["windows"] else "test"
 
 
 def _flag(block: dict[str, Any]) -> str:
@@ -72,7 +77,7 @@ def _trusted_reference(metrics: dict[str, Any]) -> list[str]:
         "|---|---:|---:|---:|---:|",
     ]
     for machine in ("windows", "posix"):
-        for split in ("dev", "test"):
+        for split in ref[machine]:
             a, b = ref[machine][split]["attacks"], ref[machine][split]["benign"]
             out.append(
                 f"| {machine} / {split} | {pct(a['block_rate'])} | {pct(a['meets_expected_rate'])} | "
@@ -135,17 +140,18 @@ def _machine_split(machine: str, split: str, cell: dict[str, Any]) -> list[str]:
 
 
 def _ablation(metrics: dict[str, Any]) -> list[str]:
+    split = _headline_split(metrics)
     out = [
         "| 配置 | 状态 | "
-        + " | ".join(f"{m} 拦截（test）" for m in ("windows", "posix"))
+        + " | ".join(f"{m} 拦截（{split}）" for m in ("windows", "posix"))
         + " | "
-        + " | ".join(f"{m} 误报（test）" for m in ("windows", "posix"))
+        + " | ".join(f"{m} 误报（{split}）" for m in ("windows", "posix"))
         + " |",
         "|---|---|---:|---:|---:|---:|",
     ]
     for name, available in CONFIGS.items():
         if available and name == metrics["config"]:
-            cells = [metrics["cells"][m]["test"] for m in ("windows", "posix")]
+            cells = [metrics["cells"][m][split] for m in ("windows", "posix")]
             row = [pct(c["attacks"]["block_rate"]) for c in cells] + [
                 pct(c["benign"]["false_positive_rate"]) for c in cells
             ]
@@ -189,6 +195,7 @@ def limitations(
         lines.append(
             "- **test 切分已被污染**：规则是在看过 test 切分的结果之后改的（动机来自 dev 的原因统计和规则自身的理由，但严格说，test 不再能给改后的规则一个无偏的估计）。这份报告里 test 列只能和 dev 列一起当作参考，需要换一个新的留出集才能做无偏比较。"
         )
+    lines += _holdout_lines(info)
     if info.get("include_unconfirmed"):
         lines.append(
             "- 本报告包含未经人工确认的样本（--include-unconfirmed）：只能用于调试，不能发布。"
@@ -204,14 +211,44 @@ def limitations(
     return lines
 
 
+def _holdout_lines(info: dict[str, Any]) -> list[str]:
+    n = info.get("holdout_samples", 0)
+    if not n:
+        return []
+    fingerprint = str(info.get("holdout_hash", ""))[:16]
+    if not info.get("holdout_opened"):
+        return [
+            f"- 留出集 {n} 条已封存（指纹 `{fingerprint}…`），这次运行没有打开，上面的数字里没有它。"
+        ]
+    earlier = info.get("holdout_earlier_openings", 0)
+    if info.get("holdout_contaminated"):
+        return [
+            f"- **留出集已被污染**：{info.get('holdout_contamination_why', '')}。这次的留出集数字"
+            "只能当作参考，不能作为无偏估计；需要一个新的留出集。"
+        ]
+    if earlier:
+        return [
+            f"- 留出集（{n} 条，指纹 `{fingerprint}…`）在同一份策略下已经打开过 {earlier} 次，"
+            "策略与样本都没有变，数字仍然有效。"
+        ]
+    return [
+        f"- 留出集（{n} 条，指纹 `{fingerprint}…`）第一次打开，记在 `eval/holdout-ledger.jsonl`。"
+        "从现在起，只要规则或留出集样本再变，之后打开的结果就会被自动声明为已污染。"
+    ]
+
+
 def to_markdown(metrics: dict[str, Any], samples: Sequence[Sample], info: dict[str, Any]) -> str:
+    holdout_note = ""
+    if info.get("holdout_samples"):
+        state = "已打开" if info.get("holdout_opened") else "封存，未打开"
+        holdout_note = f"，holdout 指纹 `{str(info['holdout_hash'])[:16]}…`（{state}）"
     lines = [
         "# 评测报告（生成物，不要手改）",
         "",
         f"- 配置：`{metrics['config']}`；指标口径版本：{metrics['metrics_version']}（见 docs/eval-methodology.md）",
         f"- 策略：{metrics['policy']}（sha256 `{metrics['policy_sha256'][:16]}…`）",
         f"- 运行日期：{info['date']}；boundkeep {info['version']}；Python {info['python']}；主机 {info['host']}",
-        f"- 数据集：dev 指纹 `{info['dev_hash'][:16]}…`，test 指纹 `{info['test_hash'][:16]}…`（冻结的 test 集，改动会改变指纹）",
+        f"- 数据集：dev 指纹 `{info['dev_hash'][:16]}…`，test 指纹 `{info['test_hash'][:16]}…`（冻结的 test 集，改动会改变指纹）{holdout_note}",
         "",
         "## 数据集",
         "",
@@ -228,8 +265,8 @@ def to_markdown(metrics: dict[str, Any], samples: Sequence[Sample], info: dict[s
     ]
     for machine in ("windows", "posix"):
         lines += [f"### {MACHINE_TITLES[machine]}", ""]
-        for split in ("dev", "test"):
-            lines += _machine_split(machine, split, metrics["cells"][machine][split])
+        for split, cell in metrics["cells"][machine].items():
+            lines += _machine_split(machine, split, cell)
     lines += [
         *_trusted_reference(metrics),
         "## 局限性",

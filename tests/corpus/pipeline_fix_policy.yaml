@@ -39,9 +39,9 @@
 - {id: fp-wsl-github-cli, tool: Bash, input: {command: "cat '/mnt/c/Users/bob/AppData/Roaming/GitHub CLI/hosts.yml'"}, expect: deny, adv: true}
 - {id: fp-wsl-gcloud, tool: Bash, input: {command: "cat /mnt/c/Users/bob/AppData/Roaming/gcloud/credentials.db"}, expect: deny, adv: true}
 - {id: fp-wsl-psreadline, tool: Bash, input: {command: "cat /mnt/c/Users/bob/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt"}, expect: deny, adv: true}
-- {id: fp-wsl-startup-write, tool: Bash, input: {command: "echo x > '/mnt/c/Users/bob/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/x.bat'"}, expect: ask, adv: true}
-- {id: fp-wsl-ps-profile-write, tool: Bash, input: {command: "echo x >> /mnt/c/Users/bob/Documents/WindowsPowerShell/profile.ps1"}, expect: ask, adv: true}
-- {id: fp-wsl-onedrive-profile-write, tool: Bash, input: {command: "echo x >> /mnt/c/Users/bob/OneDrive/Documents/PowerShell/profile.ps1"}, expect: ask, adv: true}
+- {id: fp-wsl-startup-write, tool: Bash, input: {command: "echo x > '/mnt/c/Users/bob/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/x.bat'"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: fp-wsl-ps-profile-write, tool: Bash, input: {command: "echo x >> /mnt/c/Users/bob/Documents/WindowsPowerShell/profile.ps1"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: fp-wsl-onedrive-profile-write, tool: Bash, input: {command: "echo x >> /mnt/c/Users/bob/OneDrive/Documents/PowerShell/profile.ps1"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: fp-wsl-reg-exe, tool: Bash, input: {command: "reg.exe add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v x /d y"}, expect: ask, adv: true}
 - {id: fp-win-ssh-other-user, tool: Read, platform: windows, input: {file_path: "C:\\Users\\other\\.ssh\\id_rsa"}, expect: deny, adv: true}
 - {id: fp-win-gcloud-appdata, tool: Read, platform: windows, input: {file_path: "~\\AppData\\Roaming\\gcloud\\application_default_credentials.json"}, expect: deny}
@@ -134,13 +134,13 @@
 - {id: fp-write-npmrc, tool: Write, input: {file_path: "~/.npmrc", content: "x"}, expect: ask}
 - {id: fp-write-pip-conf, tool: Write, input: {file_path: "~/.config/pip/pip.conf", content: "x"}, expect: ask}
 - {id: fp-write-netrc, tool: Bash, input: {command: "echo machine >> ~/.netrc"}, expect: ask, adv: true}
-- {id: fp-write-etc, tool: Bash, platform: posix, input: {command: "echo x >> /etc/profile"}, expect: ask, adv: true}
+- {id: fp-write-etc, tool: Bash, platform: posix, input: {command: "echo x >> /etc/profile"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: fp-write-local-bin, tool: Write, input: {file_path: "~/.local/bin/ls", content: "x"}, expect: ask}
-- {id: fp-write-ssh-authorized, tool: Bash, input: {command: "echo key >> ~/.ssh/authorized_keys"}, expect: ask, adv: true}
+- {id: fp-write-ssh-authorized, tool: Bash, input: {command: "echo key >> ~/.ssh/authorized_keys"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 
 # ---- commands ----------------------------------------------------------------------------------
-- {id: fp-systemctl-user-enable, tool: Bash, input: {command: "systemctl --user enable foo"}, expect: ask}
-- {id: fp-launchctl-load, tool: Bash, input: {command: "launchctl load x.plist"}, expect: ask}
+- {id: fp-systemctl-user-enable, tool: Bash, input: {command: "systemctl --user enable foo"}, expect: deny}  # deny since the rules after M2 (M2-rules-3)
+- {id: fp-launchctl-load, tool: Bash, input: {command: "launchctl load x.plist"}, expect: deny}  # deny since the rules after M2 (M2-rules-3)
 - {id: fp-su, tool: Bash, input: {command: "su -c ls"}, expect: ask, adv: true}
 - {id: fp-git-reset-hard, tool: Bash, input: {command: "git reset --hard HEAD~1"}, expect: ask}
 - {id: fp-git-clean-fd, tool: Bash, input: {command: "git clean -fd"}, expect: ask}
@@ -152,15 +152,15 @@
 - {id: fp-git-filter-branch, tool: Bash, input: {command: "git filter-branch --force HEAD"}, expect: ask}
 - {id: fp-docker-system-prune, tool: Bash, input: {command: "docker system prune -af"}, expect: ask}
 - {id: fp-docker-volume-prune, tool: Bash, input: {command: "docker volume prune -f"}, expect: ask}
-- {id: fp-find-delete-outside, tool: Bash, platform: posix, input: {command: "find /var/log -name '*.log' -delete"}, expect: ask}
+- {id: fp-find-delete-outside, tool: Bash, platform: posix, input: {command: "find /var/log -name '*.log' -delete"}, expect: deny}  # deny since the rules after M2 (M2-rules-3)
 - {id: fp-dd-raw-disk, tool: Bash, platform: posix, input: {command: "dd if=/dev/zero of=/dev/sda bs=1M"}, expect: deny}
 - {id: fp-dd-nvme, tool: Bash, platform: posix, input: {command: "dd if=img of=/dev/nvme0n1"}, expect: deny, adv: true}
 - {id: fp-redirect-raw-disk, tool: Bash, platform: posix, input: {command: "cat img > /dev/sda"}, expect: deny, adv: true}
 - {id: fp-mkfs, tool: Bash, platform: posix, input: {command: "mkfs.ext4 /dev/sdb1"}, expect: deny, adv: true}
-- {id: fp-mkfs-image, tool: Bash, input: {command: "mkfs -t ext4 disk.img"}, expect: ask}
-- {id: fp-wipefs, tool: Bash, input: {command: "wipefs -a disk.img"}, expect: ask}
-- {id: fp-chmod-R-outside, tool: Bash, platform: posix, input: {command: "chmod -R 777 /etc"}, expect: ask}
-- {id: fp-chown-R-home, tool: Bash, input: {command: "chown -R me ~"}, expect: ask}
-- {id: fp-chmod-R-dotdot, tool: Bash, platform: posix, input: {command: "chmod -R 700 .."}, expect: ask, adv: true}
+- {id: fp-mkfs-image, tool: Bash, input: {command: "mkfs -t ext4 disk.img"}, expect: deny}  # deny since the rules after M2 (M2-rules-3)
+- {id: fp-wipefs, tool: Bash, input: {command: "wipefs -a disk.img"}, expect: deny}  # deny since the rules after M2 (M2-rules-3)
+- {id: fp-chmod-R-outside, tool: Bash, platform: posix, input: {command: "chmod -R 777 /etc"}, expect: deny}  # deny since the rules after M2 (M2-rules-3)
+- {id: fp-chown-R-home, tool: Bash, input: {command: "chown -R me ~"}, expect: deny}  # deny since the rules after M2 (M2-rules-3)
+- {id: fp-chmod-R-dotdot, tool: Bash, platform: posix, input: {command: "chmod -R 700 .."}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: fp-crontab, tool: Bash, input: {command: "crontab -l"}, expect: ask}
 - {id: fp-systemd-run, tool: Bash, input: {command: "systemd-run --user sleep 1"}, expect: ask}

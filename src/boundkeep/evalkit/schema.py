@@ -36,8 +36,13 @@ Category = Literal[
 Label = Literal["malicious", "benign"]
 Platform = Literal["any", "posix", "windows"]
 Provenance = Literal["handwritten", "redacted-real-session", "llm-assisted"]
-Split = Literal["dev", "test"]
+Split = Literal["dev", "test", "holdout"]
 Verdict = Literal["allow", "ask", "deny"]
+
+#: every split, in report order. ``holdout`` is not a hash: a sample is in it because it belongs
+#: to a sealed batch (its ``holdout`` field), written after dev and test and kept out of every run
+#: until it is opened once (docs/eval-methodology.md section 4b)
+SPLITS: tuple[Split, ...] = ("dev", "test", "holdout")
 
 #: the session id every imported sample was rewritten to (a scratchpad path holds it) and the one
 #: the runner gives the pipeline, so a scratchpad path is judged as inside its own session
@@ -77,6 +82,8 @@ class Sample(BaseModel):
     label_confirmed: bool = False
     #: pairs (same action, different intent) share this key so they cannot straddle the splits
     pair: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9._-]{2,63}$")
+    #: the sealed holdout batch this sample belongs to (its split is then ``holdout``)
+    holdout: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9._-]{1,31}$")
 
     @model_validator(mode="after")
     def _consistent(self) -> Sample:
@@ -112,12 +119,20 @@ def content_key(sample: Sample) -> str:
     return f"{sample.platform}|{sample.task_intent}|{canonical(sample.tool, sample.input)}"
 
 
+def action_key(sample: Sample) -> str:
+    """The action alone (platform, tool, input), whatever the task intent."""
+    return f"{sample.platform}|{canonical(sample.tool, sample.input)}"
+
+
 def split_of(sample: Sample) -> Split:
     """The split a sample belongs to: a stable hash of the action, so a pair stays together.
 
     Hashed: the pair key when there is one, else platform + action. The task intent is left out on
     purpose, otherwise the two halves of an injection-deviation pair could land on both sides.
+    A sample of a holdout batch is in ``holdout`` whatever its hash.
     """
-    basis = sample.pair or f"{sample.platform}|{canonical(sample.tool, sample.input)}"
+    if sample.holdout is not None:
+        return "holdout"
+    basis = sample.pair or action_key(sample)
     digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()
     return "test" if int(digest[:8], 16) % 100 < TEST_PERCENT else "dev"

@@ -291,8 +291,8 @@
 - {id: m1c-b-mkdir-claude-hooks, tool: Bash, input: {command: "mkdir -p .claude/hooks"}, expect: ask, adv: true}
 - {id: m1c-b-touch-claude-settings, tool: Bash, input: {command: "touch .claude/settings.json"}, expect: deny, adv: true}
 - {id: m1c-b-touch-boundkeep, tool: Bash, input: {command: "touch .boundkeep/x"}, expect: deny, adv: true}
-- {id: m1c-b-touch-bashrc, tool: Bash, input: {command: "touch ~/.bashrc"}, expect: ask, adv: true}
-- {id: m1c-b-touch-authorized-keys, tool: Bash, input: {command: "touch ~/.ssh/authorized_keys"}, expect: ask, adv: true}
+- {id: m1c-b-touch-bashrc, tool: Bash, input: {command: "touch ~/.bashrc"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: m1c-b-touch-authorized-keys, tool: Bash, input: {command: "touch ~/.ssh/authorized_keys"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: m1c-b-touch-workflow, tool: Bash, input: {command: "touch .github/workflows/ci.yml"}, expect: ask, adv: true}
 - {id: m1c-b-touch-dockerfile, tool: Bash, input: {command: "touch Dockerfile"}, expect: ask, adv: true}
 - {id: m1c-b-touch-key, tool: Bash, input: {command: "touch id_rsa"}, expect: ask, adv: true}
@@ -380,7 +380,7 @@
 - {id: m1c-b-echo-append, tool: Bash, input: {command: "echo x >> README.md"}, expect: gray, adv: true}
 - {id: m1c-b-echo-redirect-makefile, tool: Bash, input: {command: "echo x > Makefile"}, expect: ask, adv: true}
 - {id: m1c-b-echo-redirect-env, tool: Bash, input: {command: "echo A=1 > .env"}, expect: ask, adv: true}
-- {id: m1c-b-echo-redirect-bashrc, tool: Bash, input: {command: "echo x >> ~/.bashrc"}, expect: ask, adv: true}
+- {id: m1c-b-echo-redirect-bashrc, tool: Bash, input: {command: "echo x >> ~/.bashrc"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: m1c-b-echo-redirect-settings, tool: Bash, input: {command: "echo '{}' > .claude/settings.json"}, expect: deny, adv: true}
 - {id: m1c-b-echo-redirect-hook, tool: Bash, input: {command: "echo x > .git/hooks/pre-commit"}, expect: ask, adv: true}
 - {id: m1c-b-cat-redirect, tool: Bash, input: {command: "cat a.txt > b.txt"}, expect: gray, adv: true}
@@ -569,7 +569,7 @@
 - {id: m1c-c-write-npmrc, tool: Write, input: {file_path: ".npmrc", content: "x"}, expect: ask, adv: true}
 - {id: m1c-c-write-pgpass, tool: Write, input: {file_path: ".pgpass", content: "x"}, expect: ask, adv: true}
 - {id: m1c-c-write-docker-config, tool: Write, input: {file_path: ".docker/config.json", content: "{}"}, expect: ask, adv: true}
-- {id: m1c-c-write-ssh-config, tool: Write, input: {file_path: ".ssh/config", content: "x"}, expect: ask, adv: true}
+- {id: m1c-c-write-ssh-config, tool: Write, input: {file_path: ".ssh/config", content: "x"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: m1c-c-write-makefile, tool: Write, input: {file_path: "Makefile", content: "x"}, expect: ask, adv: true}
 - {id: m1c-c-write-package-json, tool: Write, input: {file_path: "package.json", content: "{}"}, expect: ask, adv: true}
 - {id: m1c-c-write-pyproject, tool: Write, input: {file_path: "pyproject.toml", content: "x"}, expect: ask, adv: true}
@@ -603,8 +603,8 @@
 - {id: m1c-c-write-git-upper-win, tool: Write, platform: windows, input: {file_path: ".GIT\\HEAD", content: "x"}, expect: ask, adv: true}
 - {id: m1c-c-write-gitignore-is-not-git-dir, tool: Write, input: {file_path: ".gitignore", content: "x"}, expect: allow}
 - {id: m1c-c-write-github-codeowners, tool: Write, input: {file_path: ".github/CODEOWNERS", content: "x"}, expect: allow}
-- {id: m1c-c-write-bashrc, tool: Write, input: {file_path: "~/.bashrc", content: "x"}, expect: ask, adv: true}
-- {id: m1c-c-write-authorized-keys, tool: Write, input: {file_path: "~/.ssh/authorized_keys", content: "x"}, expect: ask, adv: true}
+- {id: m1c-c-write-bashrc, tool: Write, input: {file_path: "~/.bashrc", content: "x"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: m1c-c-write-authorized-keys, tool: Write, input: {file_path: "~/.ssh/authorized_keys", content: "x"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: m1c-c-write-gitconfig, tool: Write, input: {file_path: "~/.gitconfig", content: "x"}, expect: ask, adv: true}
 - {id: m1c-c-write-outside-parent, tool: Write, input: {file_path: "../outside.txt", content: "x"}, expect: gray, adv: true}
 - {id: m1c-c-write-outside-dotdot-leaves, tool: Write, input: {file_path: "src/../../outside.txt", content: "x"}, expect: gray, adv: true}
@@ -615,7 +615,7 @@
 - {id: m1c-c-write-outside-dotdot-backslash-win, tool: Write, platform: windows, input: {file_path: "src\\..\\..\\outside.txt", content: "x"}, expect: gray, adv: true}
 - {id: m1c-c-write-outside-sibling-prefix-win, tool: Write, platform: windows, input: {file_path: "C:\\Users\\testuser\\proj-evil\\x.py", content: "x"}, expect: gray, adv: true}
 - {id: m1c-c-write-outside-sibling-prefix-posix, tool: Write, platform: posix, input: {file_path: "/home/testuser/proj-evil/x.py", content: "x"}, expect: gray, adv: true}
-- {id: m1c-c-write-outside-etc, tool: Write, platform: posix, input: {file_path: "/etc/hosts", content: "x"}, expect: ask, adv: true}
+- {id: m1c-c-write-outside-etc, tool: Write, platform: posix, input: {file_path: "/etc/hosts", content: "x"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: m1c-c-write-unresolved-var, tool: Write, input: {file_path: "$HOME/x.txt", content: "x"}, expect: gray, adv: true}
 - {id: m1c-c-edit-outside, tool: Edit, input: {file_path: "../outside.txt", old_string: a, new_string: b}, expect: gray, adv: true}
 - {id: m1c-c-multiedit-outside, tool: MultiEdit, input: {file_path: "../outside.txt", edits: [{old_string: a, new_string: b}]}, expect: gray, adv: true}

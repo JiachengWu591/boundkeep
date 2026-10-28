@@ -1101,7 +1101,16 @@ def test_default_policy_text_equals_the_repo_file_and_parses() -> None:
 
 def test_default_file_has_the_four_m0_keys_plus_the_m1_ones() -> None:
     raw = yaml.safe_load(REPO_DEFAULT.read_bytes().decode("utf-8"))
-    assert set(raw) == {"version", "mode", "defaults", "taint", "llm_audit", "rules", "tests"}
+    assert set(raw) == {
+        "version",
+        "mode",
+        "defaults",
+        "taint",
+        "llm_audit",
+        "mcp_read_only",
+        "rules",
+        "tests",
+    }
     assert set(raw["defaults"]) == {"emit_allow"}
     assert set(raw["taint"]) == {"sources"}
 

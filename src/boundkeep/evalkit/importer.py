@@ -36,7 +36,7 @@ from typing import Any
 
 from boundkeep.evalkit import redact, schema
 from boundkeep.evalkit.dataset import inert_problems
-from boundkeep.evalkit.schema import Sample, content_key, split_of
+from boundkeep.evalkit.schema import Sample, action_key, content_key, split_of
 
 #: built-in tools whose calls become samples; ``mcp__*`` tools are kept except the host's own
 KEPT_TOOLS = frozenset(
@@ -479,10 +479,14 @@ def import_session(
     keep_intent: bool = True,
     limit: int | None = None,
     shape_limit: int = 3,
+    holdout: str | None = None,
+    tuned_actions: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Candidate benign samples from one session file (also updates ``stats``).
 
     ``known``: event keys already present (in the datasets or from earlier files); extended here.
+    ``holdout``: the sealed batch the candidates are for (ids ``hold-real-...``); an action that is
+    already in dev or test (``tuned_actions``, whatever its task intent) is dropped.
     """
     stats.files += 1
     entries = _entries(path)
@@ -526,9 +530,13 @@ def import_session(
             row = _build(name, tool_input, intent, machine, stats, keep_intent)
             if row is None:
                 continue
-            row["id"] = f"ben-real-{tag}-{call_index:04d}"
+            row["id"] = f"{'hold' if holdout else 'ben'}-real-{tag}-{call_index:04d}"
+            if holdout:
+                row["holdout"] = holdout
             row["split"] = "dev"
-            row["split"] = split_of(Sample.model_construct(**{**row, "pair": None}))
+            row["split"] = split_of(
+                Sample.model_construct(**{**row, "pair": None, "holdout": holdout})
+            )
             try:
                 sample = Sample.model_validate(row)
             except ValueError:
@@ -540,6 +548,9 @@ def import_session(
             key = content_key(sample)
             if key in seen:
                 stats.drop("duplicate")
+                continue
+            if holdout and tuned_actions is not None and action_key(sample) in tuned_actions:
+                stats.drop("already-in-dev-or-test")
                 continue
             shape = call_shape(name, row["input"])
             if shape_limit and stats.shapes[shape] >= shape_limit:

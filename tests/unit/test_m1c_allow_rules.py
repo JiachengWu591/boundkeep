@@ -58,6 +58,7 @@ EXPECTED_ALLOW_IDS = {
     "allow-git-stash",
     "allow-git-ls-files",  # tests/unit/test_info_commands_allow.py
     "allow-version-probe",
+    "allow-declared-read-only-mcp",  # tests/unit/test_m2_rules3.py: empty declaration by default
     "allow-ps-inspect-inside-project",
     "allow-ps-list-here",
     "allow-ps-no-path-commands",
@@ -202,6 +203,11 @@ def test_strict_allow_rules_are_a_subset_of_defaults() -> None:
 _TWIN_EXCEPTIONS = {
     "ask-devtools-path-outside-project": "ask-read-outside-project",
     "net-allowlist": "net-always-ask",
+    "net-unknown-destination": "net-always-ask",
+    # strict reads any path outside the project with one rule (no tool filter: MCP paths too)
+    "ask-mcp-path-outside-project": "ask-read-outside-project",
+    # strict denies ~/.local/bin and ~/bin with the startup files
+    "ask-user-path-dirs-write": "protect-shell-startup-files",
     # strict reads outside the project with one rule for every program
     "ask-shell-read-outside-project": "ask-read-outside-project",
     "ask-git-read-outside-project": "ask-read-outside-project",
@@ -922,8 +928,8 @@ PROTECTED_WRITES = [
     (".git/modules/sub/hooks/post-commit", "ask"),
     (".git/modules/sub/config", "ask"),
     ("vendor/lib/.git/hooks/pre-push", "ask"),
-    ("~/.bashrc", "ask"),
-    ("~/.ssh/authorized_keys", "ask"),
+    ("~/.bashrc", "deny"),  # denied since the rules after M2
+    ("~/.ssh/authorized_keys", "deny"),
     ("~/.gitconfig", "ask"),
     ("../outside.txt", "gray"),
     ("src/../../outside.txt", "gray"),
@@ -991,15 +997,12 @@ def test_windows_spellings_of_the_same_paths(target: str, expected: str) -> None
         ("/home/testuser/PROJ/src/app.py", "gray"),  # POSIX paths are case-sensitive
         ("/home/testuser/proj/.env", "ask"),
         ("/home/testuser/proj/.git/hooks/pre-commit", "ask"),
-        ("/etc/hosts", "gray"),
+        ("/etc/hosts", "deny"),  # system configuration: denied since the rules after M2
     ],
 )
 def test_posix_spellings_of_the_same_paths(target: str, expected: str) -> None:
     got = _decide("default", "posix", "Write", _tool_input("Write", target))
-    if target == "/etc/hosts":
-        assert got in ("gray", "ask")
-    else:
-        assert got == expected, target
+    assert got == expected, target
 
 
 NOT_ALLOWED_BASH = [
@@ -1549,6 +1552,10 @@ def test_every_allow_rule_has_embedded_positive_and_negative_tests(rule_id: str)
         # the shipped policy trusts no project, so no embedded test can reach this rule; its
         # positives and negatives are tests/corpus/pipeline_m1c2_trusted.yaml
         pytest.skip("needs a trusted project: see test_m1c2_trusted_policy.py")
+    if rule_id == "allow-declared-read-only-mcp":
+        # the shipped policy declares no MCP tool read-only; positives and negatives are in
+        # tests/unit/test_m2_rules3.py with a declaration
+        pytest.skip("needs a declared MCP tool: see test_m2_rules3.py")
     rule = _rule("default", rule_id)
     if rule.tool == ("PowerShell",) and not _ps_ready():
         pytest.skip("PowerShell embedded tests need the real parser helper (Windows only)")

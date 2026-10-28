@@ -45,6 +45,15 @@ llm_audit:
 taint:
   sources: [WebFetch, WebSearch, "mcp__*"]
 
+# MCP tools you declare read-only: "mcp__server__tool" or "mcp__server__prefix*" (the server in
+# full). Calls of a declared tool can be allowed by allow-declared-read-only-mcp below when
+# nothing else about the call is unclear; every other MCP call asks. Empty by default.
+#   mcp_read_only:
+#     - "mcp__github__get_*"
+#     - "mcp__github__list_*"
+#     - "mcp__context7__get_library_docs"
+mcp_read_only: []
+
 rules:
   # ---- protecting the guard itself -----------------------------------------------------------
   - id: protect-guard-config
@@ -823,7 +832,9 @@ rules:
   # ---- persistence and remote access (write) -------------------------------------------------
   - id: protect-windows-persistence
     # Anything placed in a PowerShell profile or a Startup folder runs the next time the user logs
-    # in or opens a shell, with the user's rights and without anyone launching it. Writes need a person's eyes.
+    # in or opens a shell, with the user's rights and without anyone launching it. Denied since the
+    # rules after M2 (docs/reports/M2-rules-3.md): a coding task does not need it, and one confirm
+    # clicked through in a hurry leaves code running long after the session; the user does it.
     # Documents may be redirected by OneDrive: the **/documents/... patterns cover that, and
     # the home-independent ones cover a Windows drive seen from WSL. [to be verified on a real
     # OneDrive-redirected machine]
@@ -841,8 +852,44 @@ rules:
         - "**/windows/system32/tasks/**"
         - "~/.config/powershell/**"
       access: write
-    action: ask
+    action: deny
     reason: "writing a PowerShell profile, startup folder or scheduled-task file (persistence)"
+  - id: deny-windows-persistence-tamper
+    # The commands of the list below that have no read-only use and no place in a coding task:
+    # they register code to run at logon or boot (scheduled tasks and jobs, services, WMI
+    # and CIM subscriptions), add accounts, switch protections off (Defender, the firewall, the execution
+    # policy, PowerShell remoting), change the boot configuration, take ownership of files, or
+    # shut the machine down. Denied; the rest of the list (reg, sc, schtasks, wevtutil, vssadmin
+    # ..., which also have read-only forms the rules cannot tell apart) keeps asking.
+    tool: [Bash, PowerShell]
+    match:
+      program:
+        - Register-ScheduledTask
+        - Register-ScheduledJob
+        - New-Service
+        - Set-WmiInstance
+        - New-CimInstance
+        - New-LocalUser
+        - Add-LocalGroupMember
+        - Add-MpPreference
+        - Set-MpPreference
+        - Remove-MpPreference
+        - New-NetFirewallRule
+        - Set-NetFirewallRule
+        - Set-NetFirewallProfile
+        - Set-NetFirewallSetting
+        - Enable-NetFirewallRule
+        - Disable-NetFirewallRule
+        - Remove-NetFirewallRule
+        - Set-ExecutionPolicy
+        - Enable-PSRemoting
+        - Clear-EventLog
+        - bcdedit
+        - takeown
+        - Stop-Computer
+        - Restart-Computer
+    action: deny
+    reason: "registering code to run at logon or boot, adding accounts, switching protections off or shutting down is not allowed (do it yourself if you need it)"
   - id: windows-persistence-commands
     # Scheduled tasks, services and registry edits are the other ways to make code run at logon
     # or boot without the user starting it. The command line is not parsed deeper than the
@@ -920,9 +967,11 @@ rules:
     action: ask
     reason: "net changes local accounts, shares and services"
   - id: protect-shell-startup-files
-    # Shell startup files, autostart entries, user services, launch agents and directories early in
-    # PATH (~/.local/bin, ~/bin) run on every login or new shell, or in place of a real program. A
-    # line or a file added there is code that survives the session, so writes ask.
+    # Shell startup files, autostart entries, user services and launch agents run on every login or
+    # new shell. A line or a file added there is code that survives the session: denied since the
+    # rules after M2 (a coding task does not need it; the user edits these files). The PATH
+    # directories ~/.local/bin and ~/bin are in ask-user-path-dirs-write: installing a helper
+    # script there is an ordinary request.
     match:
       path_glob:
         - "~/.bashrc"
@@ -944,16 +993,24 @@ rules:
         - "~/.config/systemd/user/**"
         - "~/.config/environment.d/**"
         - "~/Library/LaunchAgents/**"
+      access: write
+    action: deny
+    reason: "writing a shell startup file, autostart entry or user service (persistence) is not allowed"
+  - id: ask-user-path-dirs-write
+    # Directories early in PATH: a file there runs in place of a real program of the same name,
+    # so a write asks (installing a helper script is an ordinary request, so not a deny).
+    match:
+      path_glob:
         - "~/.local/bin/**"
         - "~/bin/**"
       access: write
     action: ask
-    reason: "writing a shell startup file, autostart entry or PATH directory (persistence)"
-  - id: ask-system-config-write
-    # System configuration (/etc: profile scripts, cron, systemd, sudoers, ld.so.preload; launch
-    # daemons; cron spool; /usr/local/bin; the boot partition) changes every user's machine and
-    # survives reboots. It normally needs root, so a write that gets this far is either a mistake
-    # or something a person should confirm.
+    reason: "writing into a PATH directory (~/.local/bin, ~/bin) can shadow a real program"
+  - id: deny-system-config-write
+    # System configuration (/etc: profile scripts, cron, systemd, sudoers, ld.so.preload, hosts,
+    # fstab; launch daemons; cron spool; /usr/local/bin; the boot partition) changes every user's
+    # machine and survives reboots. It normally needs root; a coding task does not touch it.
+    # Denied since the rules after M2 (was ask).
     match:
       path_glob:
         - "/etc/**"
@@ -964,8 +1021,41 @@ rules:
         - "/usr/local/sbin/**"
         - "/boot/**"
       access: write
-    action: ask
-    reason: "writing system configuration (/etc, launch daemons, cron) affects the whole machine"
+    action: deny
+    reason: "writing system configuration (/etc, launch daemons, cron) affects the whole machine and is not allowed"
+  - id: deny-crontab-install
+    # `crontab FILE`, `crontab -e`, `crontab -r` and a bare `crontab` (reads the table from stdin)
+    # replace or remove the user's cron table: code that runs later, unattended. Only listing it
+    # (`crontab -l`) and `-V` / `--help` stay with ask-scheduled-jobs. crontab refuses -l together
+    # with -e / -r / a file, so `crontab -e -l` (ask) installs nothing (X1 review R9-4).
+    tool: [Bash, PowerShell]
+    match:
+      program: [crontab]
+      flags_none: ["-l", "-V", "--help", "--version"]
+    action: deny
+    reason: "installing or replacing a cron table runs code later without review"
+  - id: deny-service-registration
+    # The service-manager verbs that register a program to start at every login or boot (systemd
+    # enable / link / add-wants / preset / set-property / edit, launchd load / bootstrap / submit /
+    # enable). Listing and status stay with ask-user-services and ask-launchctl.
+    tool: [Bash, PowerShell]
+    match:
+      program: [systemctl, launchctl]
+      subcommand:
+        - enable
+        - reenable
+        - link
+        - add-wants
+        - add-requires
+        - preset
+        - preset-all
+        - set-property
+        - edit
+        - load
+        - bootstrap
+        - submit
+    action: deny
+    reason: "registering a service or launch agent to start at login or boot is not allowed"
   - id: ask-scheduled-jobs
     # cron, at and systemd timers run commands later, unattended, so what they run is not what was
     # reviewed now.
@@ -997,14 +1087,16 @@ rules:
       program: [launchctl]
     action: ask
     reason: "launchctl registers code to run at login or boot"
-  - id: ask-ssh-write
+  - id: deny-ssh-write
     # authorized_keys grants remote login, config can redirect connections through another
     # host, known_hosts can hide a changed server. Writing here changes who can log in, or where.
+    # Denied since the rules after M2 (was ask): ssh itself updates known_hosts, the agent never
+    # needs to write here.
     match:
       path_glob:
         - "**/.ssh/**"
       access: write
-    action: ask
+    action: deny
     reason: "writing under .ssh changes who can log in or where connections go"
   - id: ask-privilege-escalation
     # su, sudo, doas and pkexec run what follows with other users' rights (usually root). Where the
@@ -1122,10 +1214,11 @@ rules:
       subcommand: prune
     action: ask
     reason: "docker prune deletes containers, images or volumes"
-  - id: ask-find-delete
+  - id: deny-find-delete-outside-project
     # `find ... -delete` removes every match without a prompt or a trash can, and a wrong
     # expression or a wrong starting directory removes far more than intended. Outside the project (or
-    # where that cannot be shown) it asks; inside, a cleanup such as *.pyc is routine.
+    # where that cannot be shown) it is a recursive delete like rm-outside-project: denied since the
+    # rules after M2 (was ask). Inside, a cleanup such as *.pyc is routine.
     tool: [Bash, PowerShell]
     match:
       program: find
@@ -1133,12 +1226,13 @@ rules:
       path_glob: ["**"]
       access: write
       path_outside_project: true
-    action: ask
-    reason: "find -delete removes everything it matches"
-  - id: ask-disk-tools
+    action: deny
+    reason: "find -delete outside the project removes everything it matches"
+  - id: deny-disk-tools
     # Formatting, partitioning and wiping tools destroy a filesystem or a partition table in one
     # command. The raw-device rule above already refuses named devices; this one catches the tool
     # itself (mkfs on an image file, a variable that expands to a device, diskpart scripts).
+    # Denied since the rules after M2 (was ask), as in the strict policy.
     tool: [Bash, PowerShell]
     match:
       program:
@@ -1165,30 +1259,55 @@ rules:
         - Clear-Disk
         - Initialize-Disk
         - Remove-Partition
-    action: ask
+    action: deny
     reason: "formatting and partitioning tools destroy filesystems"
-  - id: ask-recursive-permission-change
+  - id: deny-recursive-permission-change
     # chmod -R, chown -R and chgrp -R rewrite the permissions of a whole tree. In the project that
     # is a (visible, version-controlled) mistake; outside it, on /etc, /usr or the home directory,
-    # it can lock the user out or open every file to everyone. A path not shown to be inside the project counts as outside.
+    # it can lock the user out or open every file to everyone, and the old modes are gone. A path
+    # not shown to be inside the project counts as outside. Denied since the rules after M2 (was ask).
     tool: [Bash, PowerShell]
     match:
       program: [chmod, chown, chgrp]
       flags_any: ["-R", "--recursive"]
       path_outside_project: true
-    action: ask
-    reason: "recursive permission or ownership change needs confirmation"
+    action: deny
+    reason: "recursive permission or ownership change outside the project is not allowed"
   # ---- network -------------------------------------------------------------------------------
   - id: net-allowlist
     # Anything that talks to a host outside a short list can carry data out (an upload, a query
     # string, a clone of a hostile repository) or bring code in. The list holds the package and
-    # source hosts a coding task usually needs; everything else asks, and so does a network
-    # command whose destination could not be determined.
+    # source hosts a coding task usually needs (a host includes its subdomains): Python, Node,
+    # Rust, Go, .NET and GitHub with its content hosts. Being on the list allows nothing by itself:
+    # the command still needs an allow rule (or, later, the LLM audit); off the list it always asks.
+    # Uploads to the user's own servers (artifacts, build notifications) ask too: the rules cannot
+    # tell them from exfiltration, only the task can. A command whose destination is not known is
+    # net-unknown-destination's.
     match:
       network: true
-      domain_not_in: ["pypi.org", "files.pythonhosted.org", "github.com", "registry.npmjs.org"]
+      destination: known
+      domain_not_in:
+        - "pypi.org"
+        - "files.pythonhosted.org"
+        - "github.com"
+        - "githubusercontent.com"
+        - "registry.npmjs.org"
+        - "registry.yarnpkg.com"
+        - "crates.io"
+        - "proxy.golang.org"
+        - "sum.golang.org"
+        - "api.nuget.org"
     action: ask
     reason: "network access to a host outside the allowlist"
+  - id: net-unknown-destination
+    # A network command whose destination could not be determined: a configured git remote or
+    # package registry (`git fetch`, `npm ci`, `cargo build`, `uv sync`), a host built at run time,
+    # a URL in a variable. Where it goes is decided by files the rules do not read, so it asks.
+    match:
+      network: true
+      destination: unknown
+    action: ask
+    reason: "the destination of this network command could not be determined (a configured remote or registry, or a host built at run time)"
   # ---- reading outside the project, for the programs of the allow rules below -------------------
   - id: ask-shell-read-outside-project
     # The allow rules for head, tail, wc and grep (also egrep, fgrep) and for Get-ChildItem work
@@ -1892,10 +2011,61 @@ rules:
         - "--extension-pkg-allow-list"
         - "--extension-pkg-whitelist"
     action: allow
+  # ---- MCP tools the user declared read-only (top-level key mcp_read_only, empty by default) ----
+  - id: ask-mcp-path-outside-project
+    # An MCP call's absolute paths are the server's files on this machine. A declared read-only
+    # tool may read inside the project; a path elsewhere (or not shown to be inside) asks. The
+    # protected names (secrets, credentials, agent state, startup files) are refused anyway by
+    # their own rules, which have no tool filter.
+    tool: ["mcp__*"]
+    match:
+      path_outside_project: true
+    action: ask
+    reason: "an MCP tool given a path that is not inside the project directory"
+  - id: allow-declared-read-only-mcp
+    # A call of an MCP tool that the user listed in mcp_read_only, when nothing about the call is
+    # unclear: no command argument, no SQL that may write (mcp-sql-not-read-only), no URL that
+    # could not be read; its local paths only read (the guard above asks outside the project);
+    # a URL to a host off the allowlist still asks (net-allowlist). The declaration is the user's:
+    # the agent cannot write the policy file. Arguments are sent to the server as they are, so a
+    # read-only tool that talks to a remote service can still carry them there; declare only
+    # tools whose server you trust with what the agent may put into a query.
+    tool: ["mcp__*"]
+    match:
+      mcp_read_only: true
+      paths_read_only: true
+    action: allow
 
 # Regression tests, run by `boundkeep test` through the whole pipeline (normalizer included).
 # `expect: gray` means "the rule layer must not decide": it guards against rules that are too broad.
 tests:
+  # ---- rules after M2 (docs/reports/M2-rules-3.md): MCP arguments, network destination, persistence and delete.
+  - { tool: mcp__filesystem__read_file, input: { path: "~/.aws/credentials" }, expect: deny }   # an absolute or ~ path meets the path rules
+  - { tool: mcp__filesystem__write_file, input: { path: "~/.bashrc", content: "x" }, expect: deny }
+  - { tool: mcp__filesystem__move_file, input: { source: "~/.ssh/id_rsa", destination: "/tmp/x" }, expect: deny }
+  - { tool: mcp__filesystem__read_file, input: { path: "src/main.py" }, expect: gray }   # relative: may be a remote path, the call stays gray
+  - { tool: mcp__shell__run_command, input: { command: "rm -rf ~" }, expect: deny }   # a command argument is parsed for deny / ask
+  - { tool: mcp__shell__run_command, input: { command: "git status" }, expect: gray }   # ... and never allows
+  - { tool: mcp__shell__run_command, input: { command: "rm", args: ["-rf", "~"] }, expect: deny }
+  - { tool: mcp__browser__navigate, input: { url: "https://c.example.invalid/x" }, expect: ask }   # net-allowlist
+  - { tool: mcp__github__get_issue, input: { owner: "example", repo: "proj", issue_number: 1 }, expect: gray }   # nothing is declared read-only by default
+  - { tool: Bash, input: { command: "crontab -l" }, expect: ask }
+  - { tool: Bash, input: { command: "crontab -e" }, expect: deny }
+  - { tool: Bash, input: { command: "crontab jobs.txt" }, expect: deny }
+  - { tool: Bash, input: { command: "systemctl --user status foo" }, expect: ask }
+  - { tool: Bash, input: { command: "systemctl --user link ./foo.service" }, expect: deny }
+  - { tool: Bash, input: { command: "launchctl list" }, expect: ask }
+  - { tool: Bash, input: { command: "find ~/cache -name '*.tmp' -delete" }, expect: deny }
+  - { tool: Bash, input: { command: "find . -name '*.pyc' -delete" }, expect: gray }   # inside the project: not denied
+  - { tool: Bash, input: { command: "chmod -R 755 ~/tools" }, expect: deny }
+  - { tool: Bash, input: { command: "chmod -R u+x scripts" }, expect: gray }   # inside the project: not denied
+  - { tool: Bash, input: { command: "mkfs.ext4 disk.img" }, expect: deny }
+  - { tool: Write, input: { file_path: "~/.local/bin/x", content: "x" }, expect: ask }   # ask-user-path-dirs-write
+  - { tool: Write, platform: [posix], input: { file_path: "/etc/hosts", content: "x" }, expect: deny }
+  - { tool: Bash, input: { command: "uv sync" }, expect: ask }   # net-unknown-destination
+  - { tool: Bash, input: { command: "curl -sS https://raw.githubusercontent.com/example/proj/main/README.md" }, expect: gray }   # on the allowlist: no rule decides
+  - { tool: PowerShell, platform: [windows], input: { command: "Register-ScheduledTask -TaskName t -Action $a" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-ExecutionPolicy RemoteSigned -Scope CurrentUser" }, expect: deny }
   - { tool: Bash,  input: { command: "rm -rf /" },                    expect: deny }
   - { tool: Read,  input: { file_path: "~/.ssh/id_rsa" },             expect: deny }
   - { tool: Bash,  input: { command: "git push --force origin main" }, expect: ask }
@@ -1930,14 +2100,14 @@ tests:
   - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "echo {} > .claude/settings.local.json" }, expect: deny }
   - { tool: Write, platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { file_path: "/home/dev/proj/.claude/settings.json.bak", content: "x" }, expect: allow }   # not a settings*.json file: an ordinary project write
   # Persistence and configuration that makes code run later.
-  - { tool: Bash,  input: { command: "echo 'x' >> ~/.bashrc" },       expect: ask }
-  - { tool: Write, platform: [windows], input: { file_path: "~\\Documents\\WindowsPowerShell\\profile.ps1", content: "x" }, expect: ask }
+  - { tool: Bash,  input: { command: "echo 'x' >> ~/.bashrc" },       expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: Write, platform: [windows], input: { file_path: "~\\Documents\\WindowsPowerShell\\profile.ps1", content: "x" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
   - { tool: Write, input: { file_path: ".git/hooks/pre-commit", content: "x" }, expect: ask }
   - { tool: Write, input: { file_path: ".github/workflows/ci.yml", content: "x" }, expect: ask }
   - { tool: Write, input: { file_path: "CLAUDE.md", content: "x" },   expect: ask }
   - { tool: Write, input: { file_path: "~/.gitconfig", content: "x" }, expect: ask }
-  - { tool: Bash,  input: { command: "systemctl --user enable --now foo" }, expect: ask }
-  - { tool: Bash,  input: { command: "launchctl load ~/Library/LaunchAgents/x.plist" }, expect: ask }
+  - { tool: Bash,  input: { command: "systemctl --user enable --now foo" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: Bash,  input: { command: "launchctl load ~/Library/LaunchAgents/x.plist" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
   # Destructive and network commands.
   - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "rm -rf ../other" },  expect: deny }
   - { tool: Bash,  platform: [posix], cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "rm -rf build" },     expect: gray }
@@ -1960,27 +2130,27 @@ tests:
   - { tool: PowerShell, platform: [windows], input: { command: "Move-ItemProperty -Path HKCU:\\Software\\A -Name x -Destination HKCU:\\Software\\B" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "Rename-ItemProperty -Path HKCU:\\Software\\A -Name x -NewName y" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "Clear-ItemProperty -Path HKCU:\\Software\\A -Name x" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Set-WmiInstance -Class __EventFilter -Namespace root\\subscription" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "New-CimInstance -Namespace root\\subscription -ClassName CommandLineEventConsumer" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Register-ScheduledJob -Name j -ScriptBlock { 1 }" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-WmiInstance -Class __EventFilter -Namespace root\\subscription" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "New-CimInstance -Namespace root\\subscription -ClassName CommandLineEventConsumer" }, expect: deny }   # deny-windows-persistence-tamper (X1 review R9-5)
+  - { tool: PowerShell, platform: [windows], input: { command: "Register-ScheduledJob -Name j -ScriptBlock { 1 }" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
   - { tool: PowerShell, platform: [windows], input: { command: "Register-ObjectEvent -InputObject $w -EventName Created -Action { 1 }" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "New-LocalUser -Name bob -NoPassword" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Add-LocalGroupMember -Group Administrators -Member bob" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "New-LocalUser -Name bob -NoPassword" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Add-LocalGroupMember -Group Administrators -Member bob" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
   - { tool: PowerShell, platform: [windows], input: { command: "Remove-Service -Name Spooler" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "Disable-ScheduledTask -TaskName t" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Remove-NetFirewallRule -Name r" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Enable-NetFirewallRule -Name r" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Disable-NetFirewallRule -Name r" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Set-NetFirewallSetting -Profile Domain" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Remove-MpPreference -ExclusionPath C:\\x" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Clear-EventLog -LogName Application" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-NetFirewallRule -Name r" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Enable-NetFirewallRule -Name r" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Disable-NetFirewallRule -Name r" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Set-NetFirewallSetting -Profile Domain" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Remove-MpPreference -ExclusionPath C:\\x" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Clear-EventLog -LogName Application" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
   - { tool: PowerShell, platform: [windows], input: { command: "setx PATH C:\\x" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "vssadmin delete shadows /all /quiet" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "wevtutil cl Security" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "takeown /f C:\\x" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "takeown /f C:\\x" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
   - { tool: PowerShell, platform: [windows], input: { command: "cipher /w:C:\\" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Stop-Computer -Force" }, expect: ask }
-  - { tool: PowerShell, platform: [windows], input: { command: "Restart-Computer" }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Stop-Computer -Force" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: PowerShell, platform: [windows], input: { command: "Restart-Computer" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
   - { tool: PowerShell, platform: [windows], input: { command: "net user bob /add" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "net localgroup administrators bob /add" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "net1 user bob hunter2xx" }, expect: ask }
@@ -2338,8 +2508,8 @@ tests:
   - { tool: Write, input: { file_path: ".git/config", content: "x" }, expect: ask }
   - { tool: Write, input: { file_path: ".git/HEAD", content: "x" }, expect: ask }
   - { tool: Write, input: { file_path: ".git/modules/sub/hooks/post-commit", content: "x" }, expect: ask }
-  - { tool: Write, input: { file_path: "~/.bashrc", content: "x" }, expect: ask }
-  - { tool: Write, input: { file_path: "~/.ssh/authorized_keys", content: "x" }, expect: ask }
+  - { tool: Write, input: { file_path: "~/.bashrc", content: "x" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
+  - { tool: Write, input: { file_path: "~/.ssh/authorized_keys", content: "x" }, expect: deny }   # denied since the rules after M2 (M2-rules-3)
   - { tool: Write, platform: [windows], input: { file_path: "src\\..\\..\\outside.txt", content: "x" }, expect: gray }
   - { tool: Write, platform: [windows], input: { file_path: "C:\\Users\\testuser\\proj\\src\\app.py", content: "x" }, expect: allow }
   - { tool: Write, platform: [windows], input: { file_path: "C:\\Users\\testuser\\other\\x.txt", content: "x" }, expect: gray }

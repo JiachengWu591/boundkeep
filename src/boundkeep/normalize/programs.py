@@ -3430,6 +3430,61 @@ _GH_OPTS = _opts(
 _GH_LOCAL = _fs("config completion alias help version")
 
 
+# systemctl / launchctl: the verb decides whether a program is registered to start at login or
+# boot (enable, link, load, bootstrap ...) or only looked at (status, list), so it becomes the
+# subcommand. A verb the shell expands is gray (the ask rules still see the program).
+_SYSTEMCTL_OPTS = _opts(
+    short="t=x p=x P=x s=x n=x o=x H=x M=x",
+    long="type=x property=x state=x signal=x lines=x output=x host=x machine=x root=r image=r "
+    "image-policy=x what=x kill-whom=x kill-value=x job-mode=x timestamp=x message=x drop-in=x "
+    "when=x legend=x check-inhibitors=x preset-mode=x boot-loader-entry=x boot-loader-menu=x "
+    "reboot-argument=x",
+)
+# the verbs each program knows; the registering ones are the policy's deny-service-registration
+# list (a test keeps the two equal)
+SERVICE_REGISTER_VERBS = _fs(
+    "enable reenable link add-wants add-requires preset preset-all set-property edit load "
+    "bootstrap submit"
+)
+_SYSTEMCTL_VERBS = SERVICE_REGISTER_VERBS | _fs(
+    "list-units list-automounts list-paths list-sockets list-timers list-jobs list-unit-files "
+    "list-dependencies list-machines status show cat help is-active is-failed is-enabled "
+    "is-system-running start stop reload restart try-restart reload-or-restart "
+    "try-reload-or-restart isolate kill clean freeze thaw bind mount-image service-log-level "
+    "service-log-target reset-failed whoami disable mask unmask revert get-default set-default "
+    "show-environment set-environment unset-environment import-environment daemon-reload "
+    "daemon-reexec log-level log-target service-watchdogs default rescue emergency halt "
+    "poweroff reboot kexec soft-reboot exit switch-root suspend hibernate hybrid-sleep "
+    "suspend-then-hibernate sleep cancel"
+)
+_LAUNCHCTL_VERBS = SERVICE_REGISTER_VERBS | _fs(
+    "bootout disable kickstart attach debug kill blame print print-cache print-disabled plist "
+    "procinfo hostinfo resolveport limit runstats examine config dumpstate dumpjpcategory "
+    "reboot bootshell unload remove list start stop setenv unsetenv getenv bsexec asuser "
+    "managerpid manageruid managername error variant version help"
+)
+
+
+def _h_service_manager(a: _Acc, args: Sequence[Word], opts: Opts, verbs: frozenset[str]) -> None:
+    sc = _scan(args, opts)
+    a.flags.extend(sc.flags)
+    a.note_dynamic(sc)
+    _apply_values(a, sc.values)
+    if not sc.pos:
+        return
+    verb = sc.pos[0]
+    a.sub = verb.text
+    if verb.expands or verb.glob:
+        a.gray.append("service-manager-dynamic-verb")
+    elif verb.text not in verbs:
+        # not a verb: an option value this table does not know was taken for it (X1 review
+        # R9-3). A registering verb further on is the one the program runs.
+        a.gray.append("service-manager-unknown-verb")
+        later = next((w.text for w in sc.pos[1:] if w.text in SERVICE_REGISTER_VERBS), None)
+        if later is not None:
+            a.sub = later
+
+
 def _h_gh(a: _Acc, args: Sequence[Word]) -> None:
     sc0 = _scan(args, _GH_OPTS)
     a.flags.extend(sc0.flags)
@@ -4275,6 +4330,8 @@ def _dispatch(name: str) -> _DispatchFn | None:
         "docker": _h_docker,
         "podman": _h_docker,
         "gh": _h_gh,
+        "systemctl": lambda a, args: _h_service_manager(a, args, _SYSTEMCTL_OPTS, _SYSTEMCTL_VERBS),
+        "launchctl": lambda a, args: _h_service_manager(a, args, _NOOPTS, _LAUNCHCTL_VERBS),
         "npx": _h_npx,
         "bunx": _h_npx,
         "pnpx": _h_npx,

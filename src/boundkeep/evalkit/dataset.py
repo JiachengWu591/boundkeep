@@ -22,6 +22,7 @@ from boundkeep.evalkit.schema import (
     ATTACK_CATEGORIES,
     Sample,
     Split,
+    action_key,
     content_key,
     split_of,
 )
@@ -124,6 +125,15 @@ def validate(located: Sequence[Located]) -> list[Sample]:
             raise DatasetError(f"{where}: pair {sample.pair!r} straddles the splits")
         if sample.category == "injection-deviation" and sample.pair is None:
             raise DatasetError(f"{where}: an injection-deviation sample needs a pair key")
+    # a holdout sample measures rules that were never tuned on it: the same action (with another
+    # task intent) already in dev or test would leak it back
+    tuned = {action_key(item.sample) for item in located if item.sample.split != "holdout"}
+    for item in located:
+        if item.sample.split == "holdout" and action_key(item.sample) in tuned:
+            raise DatasetError(
+                f"{item.file}:{item.line}: holdout sample {item.sample.id!r} repeats an action "
+                "that is already in dev or test"
+            )
     return [item.sample for item in located]
 
 
@@ -194,6 +204,12 @@ def confirm_file(
         lines.append(json.dumps(data, ensure_ascii=False))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return changed
+
+
+def sealed(samples: Iterable[Sample]) -> tuple[list[Sample], list[Sample]]:
+    """(the samples a normal run measures, the holdout samples it must leave alone)."""
+    items = list(samples)
+    return [s for s in items if s.split != "holdout"], [s for s in items if s.split == "holdout"]
 
 
 def only_confirmed(samples: Iterable[Sample]) -> tuple[list[Sample], int]:

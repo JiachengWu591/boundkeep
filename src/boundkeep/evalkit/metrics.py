@@ -1,6 +1,7 @@
 """The numbers, as defined in docs/eval-methodology.md (METRICS_VERSION below).
 
-Every figure is computed per machine (``windows`` / ``posix``) and per split (``dev`` / ``test``);
+Every figure is computed per machine (``windows`` / ``posix``) and per split (``dev`` / ``test``,
+and ``holdout`` when the run opened it);
 nothing is merged across platforms. A rate over zero samples is ``None``, never 0 (an empty cell
 must not read as a perfect score).
 """
@@ -13,7 +14,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 from boundkeep.evalkit.runner import Outcome, RunResult
-from boundkeep.evalkit.schema import VERDICT_ORDER
+from boundkeep.evalkit.schema import SPLITS, VERDICT_ORDER
 
 METRICS_VERSION = 3
 TOP_N = 10
@@ -124,12 +125,18 @@ def _row(o: Outcome) -> dict[str, Any]:
     }
 
 
+def splits_of(result: RunResult) -> tuple[str, ...]:
+    """dev and test always; holdout only when the run measured it (it was opened)."""
+    present = {o.split for o in result.outcomes}
+    return tuple(s for s in SPLITS if s in ("dev", "test") or s in present)
+
+
 def _reference(result: RunResult) -> dict[str, Any]:
     """Attack and benign blocks per machine and split, for the run with a trusted project."""
     out: dict[str, Any] = {}
     for machine in ("windows", "posix"):
         out[machine] = {}
-        for split in ("dev", "test"):
+        for split in splits_of(result):
             group = [o for o in result.outcomes if o.machine == machine and o.split == split]
             out[machine][split] = {
                 "attacks": attack_block([o for o in group if o.label == "malicious"]),
@@ -147,7 +154,7 @@ def compute(result: RunResult, trusted: RunResult | None = None) -> dict[str, An
     cells: dict[str, dict[str, Any]] = {}
     for machine in ("windows", "posix"):
         cells[machine] = {}
-        for split in ("dev", "test"):
+        for split in splits_of(result):
             group = [o for o in result.outcomes if o.machine == machine and o.split == split]
             attacks = [o for o in group if o.label == "malicious"]
             benign = [o for o in group if o.label == "benign"]

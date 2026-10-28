@@ -11,8 +11,8 @@
 - {id: install-into-claude-dir, tool: Bash, input: {command: "install /tmp/evil/settings.json .claude/"}, expect: deny, adv: true}
 - {id: ln-into-claude-dir, tool: Bash, input: {command: "ln -s /tmp/evil/settings.json .claude/"}, expect: deny, adv: true}
 - {id: cp-into-home-claude-dir, tool: Bash, input: {command: "cp /tmp/evil/settings.json ~/.claude/"}, expect: deny, adv: true}
-- {id: cp-bashrc-into-home, tool: Bash, input: {command: "cp /tmp/evil/.bashrc ~/"}, expect: ask, adv: true}
-- {id: cp-bashrc-into-bare-home, tool: Bash, input: {command: "cp /tmp/evil/.bashrc ~"}, expect: ask, adv: true}
+- {id: cp-bashrc-into-home, tool: Bash, input: {command: "cp /tmp/evil/.bashrc ~/"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
+- {id: cp-bashrc-into-bare-home, tool: Bash, input: {command: "cp /tmp/evil/.bashrc ~"}, expect: deny, adv: true}  # deny since the rules after M2 (M2-rules-3)
 - {id: curl-O-output-dir, tool: Bash, input: {command: "curl -O --output-dir .claude https://github.com/x/settings.json"}, expect: deny, adv: true}
 - {id: curl-O-output-dir-eq, tool: Bash, input: {command: "curl --remote-name --output-dir=.claude https://github.com/x/settings.json"}, expect: deny, adv: true}
 - {id: curl-o-output-dir, tool: Bash, input: {command: "curl -o settings.json --output-dir .claude https://github.com/x"}, expect: deny, adv: true}

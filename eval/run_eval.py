@@ -7,6 +7,10 @@ eval/results/<config>.json.
     python eval/run_eval.py --config rules-only            # run and write the report
     python eval/run_eval.py --check                         # validate the datasets, show counts
     python eval/run_eval.py --stamp eval/datasets/x.jsonl   # fill in / correct the splits
+    python eval/run_eval.py --config rules-only --open-holdout   # measure the sealed holdout too
+
+The holdout split (eval/datasets/holdout/) is left out of every run unless --open-holdout is
+given; each opening is appended to eval/holdout-ledger.jsonl (docs/eval-methodology.md 4b).
     python eval/run_eval.py --config rules-only --policy policies/strict.yaml --out-dir %TEMP%\\ev
 
 Exit code: 0 on success, 1 when a dataset or an option is invalid.
@@ -21,7 +25,7 @@ import sys
 from pathlib import Path
 
 from boundkeep import __version__
-from boundkeep.evalkit import dataset, metrics, report, runner
+from boundkeep.evalkit import dataset, holdout, metrics, report, runner
 
 ROOT = Path(__file__).resolve().parent
 
@@ -44,6 +48,13 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="the rules were changed after the test split had been looked at: say so in the report",
     )
+    p.add_argument(
+        "--open-holdout",
+        action="store_true",
+        help="also measure the sealed holdout split; the opening is recorded in the ledger and "
+        "a later opening under other rules is declared contaminated",
+    )
+    p.add_argument("--ledger", type=Path, default=ROOT / "holdout-ledger.jsonl")
     p.add_argument("--stamp", type=Path, nargs="+", help="set the split of every sample in FILE")
     return p
 
@@ -69,30 +80,57 @@ def main(argv: list[str] | None = None) -> int:
     counts = dataset.counts(samples)
     dev_hash = dataset.split_hash(samples, "dev")
     test_hash = dataset.split_hash(samples, "test")
+    holdout_hash = dataset.split_hash(samples, "holdout")
     print(  # noqa: T201
         f"{len(samples)} samples: {dict(counts['label'])}, splits {dict(counts['split'])}, "
-        f"dev {dev_hash[:16]}, test {test_hash[:16]}; {left_out} unconfirmed left out"
+        f"dev {dev_hash[:16]}, test {test_hash[:16]}, holdout {holdout_hash[:16]}; "
+        f"{left_out} unconfirmed left out"
     )
     if args.check:
         return 0
     if not runner.CONFIGS[args.config]:
         print(f"eval: configuration {args.config} cannot run yet", file=sys.stderr)  # noqa: T201
         return 1
-    result = runner.run(samples, config=args.config, policy_file=args.policy)
-    trusted = runner.run(samples, config=args.config, policy_file=args.policy, trusted=True)
+    measured, held = dataset.sealed(samples)
+    if args.open_holdout:
+        if not held:
+            print("eval: --open-holdout, but there is no holdout sample", file=sys.stderr)  # noqa: T201
+            return 1
+        measured = samples
+    date = args.date or datetime.datetime.now(datetime.UTC).date().isoformat()
+    _, policy_sha = runner.policy_fingerprint(args.policy)
+    seal = holdout.status(args.ledger, holdout_hash, policy_sha)
+    result = runner.run(measured, config=args.config, policy_file=args.policy)
+    trusted = runner.run(measured, config=args.config, policy_file=args.policy, trusted=True)
     computed = metrics.compute(result, trusted)
     info = {
-        "date": args.date or datetime.datetime.now(datetime.UTC).date().isoformat(),
+        "date": date,
         "version": __version__,
         "python": platform.python_version(),
         "host": platform.system(),
-        "dev_hash": dataset.split_hash(samples, "dev"),
-        "test_hash": dataset.split_hash(samples, "test"),
-        "samples": len(samples),
+        "dev_hash": dev_hash,
+        "test_hash": test_hash,
+        "holdout_hash": holdout_hash,
+        "holdout_samples": len(held),
+        "holdout_opened": bool(args.open_holdout),
+        "holdout_earlier_openings": len(seal.openings),
+        "holdout_contaminated": bool(args.open_holdout and seal.contaminated),
+        "holdout_contamination_why": seal.why if args.open_holdout else "",
+        "samples": len(measured),
         "left_out_unconfirmed": left_out,
         "include_unconfirmed": bool(args.include_unconfirmed),
         "test_contaminated": bool(args.test_contaminated),
     }
+    if args.open_holdout:
+        # recorded before anything is written: whoever reads the report has seen the holdout
+        holdout.record(
+            args.ledger,
+            date=date,
+            holdout_hash=holdout_hash,
+            policy_sha256=policy_sha,
+            samples=len(held),
+            config=args.config,
+        )
     out_dir: Path = args.out_dir
     (out_dir / "results").mkdir(parents=True, exist_ok=True)
     (out_dir / "results" / f"{args.config}.json").write_text(
