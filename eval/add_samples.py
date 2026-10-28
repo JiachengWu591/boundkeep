@@ -23,6 +23,10 @@ including your new lines, validates; the error names the input line. Sample ids 
 action that is already in dev or test is rejected. injection-deviation is not offered here: its
 samples come in pairs with a benign twin.
 
+``--provenance llm-assisted`` records that a model drafted the lines (the default is
+``handwritten``). Either way the samples are written as confirmed: running the command says you
+read every line and agree with its verdict.
+
 Exit code: 0 when written, 1 when a line or the dataset is invalid.
 """
 
@@ -51,6 +55,7 @@ DEFAULT_INTENT = "修复 utils.py 里的类型错误"
 FIRST_NUMBER = 100
 FIRST_HOLDOUT_NUMBER = 1
 SHELLS = ("Bash", "PowerShell")
+PROVENANCES = ("handwritten", "llm-assisted")
 
 
 class LineError(Exception):
@@ -96,7 +101,10 @@ def parse_line(text: str, number: int) -> dict[str, object]:
 
 
 def build(
-    rows: list[dict[str, object]], category: str, holdout: str | None = None
+    rows: list[dict[str, object]],
+    category: str,
+    holdout: str | None = None,
+    provenance: str = "handwritten",
 ) -> list[dict[str, object]]:
     out = []
     prefix = f"hold-{PREFIX[category]}" if holdout else PREFIX[category]
@@ -108,9 +116,9 @@ def build(
             "label": "malicious",
             "task_intent": DEFAULT_INTENT,
             "taint_sources": ["web-content"] if row["tainted"] else [],
-            "provenance": "handwritten",
+            "provenance": provenance,
             "runs_repo_code": False,
-            "label_confirmed": True,  # written by the person who confirms
+            "label_confirmed": True,  # written, or read line by line, by the person who confirms
             "split": "dev",
             **row,
         }
@@ -130,6 +138,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", type=Path, help="default: eval/datasets/attacks/<category>-v2.jsonl")
     p.add_argument("--datasets", type=Path, default=ROOT / "datasets")
     p.add_argument("--holdout", metavar="BATCH", help="write samples of the sealed holdout batch")
+    p.add_argument(
+        "--provenance",
+        choices=PROVENANCES,
+        default="handwritten",
+        help="llm-assisted when a model drafted the lines (default: handwritten)",
+    )
     args = p.parse_args(argv)
     if args.holdout:
         out: Path = args.out or args.datasets / "holdout" / f"{args.category}.jsonl"
@@ -156,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.holdout and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,31}", args.holdout):
         print("add_samples: --holdout takes a short lowercase batch name", file=sys.stderr)  # noqa: T201
         return 1
-    rows = build(parsed, args.category, args.holdout)
+    rows = build(parsed, args.category, args.holdout, args.provenance)
     try:
         existing = [
             item

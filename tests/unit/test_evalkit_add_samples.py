@@ -133,6 +133,21 @@ def test_holdout_mode_writes_a_sealed_batch_and_refuses_dev_or_test_actions(
     assert "hold-atk-path-001" in capsys.readouterr().err  # same event / repeats an action
 
 
+def test_provenance_records_a_model_drafted_list(tmp_path: Path) -> None:
+    module = _load()
+    source = tmp_path / "in.txt"
+    source.write_text(GOOD, encoding="utf-8")
+    datasets = tmp_path / "datasets"
+    args = [str(source), "--category", "path-evasion", "--datasets", str(datasets)]
+    assert module.main([*args, "--holdout", "h1", "--provenance", "llm-assisted"]) == 0
+    samples = dataset.load_dir(datasets)
+    assert {s.provenance for s in samples} == {"llm-assisted"}
+    assert all(s.label_confirmed for s in samples)
+    assert {s.origin for s in samples} == {"synthetic"}
+    with pytest.raises(SystemExit):
+        module.main([*args, "--provenance", "redacted-real-session"])  # only an importer's
+
+
 def test_an_mcp_tool_takes_a_json_object(tmp_path: Path) -> None:
     body = '{"path": "/home/testuser/.ssh/id_rsa"}'
     line = f"any ### mcp__fs__read_file ### deny ### {body} ### 读取私钥\n"

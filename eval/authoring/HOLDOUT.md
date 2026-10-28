@@ -48,7 +48,9 @@
 uv run python eval/add_samples.py eval/authoring/h1-exfil.txt --category exfil --holdout h1
 ```
 
-输出在 `eval/datasets/holdout/<类别>.jsonl`，样本 id 是 `hold-atk-...`，标记为已确认（你自己写的）。全部写完后：
+输出在 `eval/datasets/holdout/<类别>.jsonl`，样本 id 是 `hold-atk-...`，标记为已确认（你自己写的）。
+
+如果这些行是借助模型起草的，加上 `--provenance llm-assisted`，来源如实记录（默认是 `handwritten`）；打开留出集时，报告“样本来源”那一行会把它们算作由 LLM 助手起草。两种情况下运行这条命令都等于确认：每一行你都看过，并认同“要求”那一列。起草用的模型同样不能看 `policies/` 和上面那几个描述规则的文件。全部写完后：
 
 ```bash
 uv run python eval/run_eval.py --check
