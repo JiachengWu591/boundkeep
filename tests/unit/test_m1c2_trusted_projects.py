@@ -483,6 +483,8 @@ MATCH_FIELD_SAMPLES: dict[str, Any] = {
     "path_outside_project": True,
     "path_inside_project": True,
     "path_in_scratchpad": True,
+    "path_in_session_tool_results": True,
+    "except_session_tool_results": None,  # only valid together with path_glob, covered below
     "paths_read_only": True,
     "project_trusted": True,
     "network": True,

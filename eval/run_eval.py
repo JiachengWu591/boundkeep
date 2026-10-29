@@ -114,8 +114,10 @@ def main(argv: list[str] | None = None) -> int:
         "holdout_samples": len(held),
         "holdout_opened": bool(args.open_holdout),
         "holdout_earlier_openings": len(seal.openings),
-        "holdout_contaminated": bool(args.open_holdout and seal.contaminated),
-        "holdout_contamination_why": seal.why if args.open_holdout else "",
+        # from the ledger whether or not this run opens it: a report must not call an opened
+        # holdout "sealed", nor hide that the rules changed after it was seen
+        "holdout_contaminated": seal.contaminated,
+        "holdout_contamination_why": seal.why,
         "samples": len(measured),
         "left_out_unconfirmed": left_out,
         "include_unconfirmed": bool(args.include_unconfirmed),

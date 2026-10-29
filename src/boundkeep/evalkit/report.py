@@ -216,11 +216,23 @@ def _holdout_lines(info: dict[str, Any]) -> list[str]:
     if not n:
         return []
     fingerprint = str(info.get("holdout_hash", ""))[:16]
-    if not info.get("holdout_opened"):
-        return [
-            f"- 留出集 {n} 条已封存（指纹 `{fingerprint}…`），这次运行没有打开，上面的数字里没有它。"
-        ]
     earlier = info.get("holdout_earlier_openings", 0)
+    if not info.get("holdout_opened"):
+        if not earlier:
+            return [
+                f"- 留出集 {n} 条已封存（指纹 `{fingerprint}…`），这次运行没有打开，"
+                "上面的数字里没有它。"
+            ]
+        line = (
+            f"- 留出集（{n} 条，指纹 `{fingerprint}…`）已经打开过 {earlier} 次"
+            "（`eval/holdout-ledger.jsonl`），这次运行没有打开，上面的数字里没有它。"
+        )
+        if info.get("holdout_contaminated"):
+            line += (
+                f"**它已被污染**：{info.get('holdout_contamination_why', '')}；"
+                "再打开得到的数字不是无偏估计，需要一个新的留出集。"
+            )
+        return [line]
     if info.get("holdout_contaminated"):
         return [
             f"- **留出集已被污染**：{info.get('holdout_contamination_why', '')}。这次的留出集数字"
@@ -240,7 +252,13 @@ def _holdout_lines(info: dict[str, Any]) -> list[str]:
 def to_markdown(metrics: dict[str, Any], samples: Sequence[Sample], info: dict[str, Any]) -> str:
     holdout_note = ""
     if info.get("holdout_samples"):
-        state = "已打开" if info.get("holdout_opened") else "封存，未打开"
+        if info.get("holdout_opened"):
+            state = "已打开"
+        elif info.get("holdout_earlier_openings"):
+            state = "以前打开过，已污染" if info.get("holdout_contaminated") else "以前打开过"
+            state += "，这次未打开"
+        else:
+            state = "封存，未打开"
         holdout_note = f"，holdout 指纹 `{str(info['holdout_hash'])[:16]}…`（{state}）"
     lines = [
         "# 评测报告（生成物，不要手改）",

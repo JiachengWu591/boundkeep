@@ -166,6 +166,29 @@ def test_opening_the_holdout_is_recorded_and_a_later_rule_change_contaminates_it
     assert "policy changed" in text
     assert len(holdout.read(ledger)) == 3
 
+    # a later run that does not open it still says it was opened, and that it is contaminated
+    assert run_eval.main([*args, "--policy", str(policy)]) == 0
+    text = (out / "report.md").read_text(encoding="utf-8")
+    assert "已封存" not in text
+    assert "已经打开过 3 次" in text
+    assert "它已被污染" in text
+    assert "以前打开过，已污染，这次未打开" in text  # noqa: RUF001 - the report's own commas
+    assert len(holdout.read(ledger)) == 3  # not opened: nothing recorded
+
+
+def test_a_run_that_does_not_open_it_under_the_same_rules_is_not_contaminated(
+    tmp_path: Path,
+) -> None:
+    run_eval = _load_run_eval()
+    data, out, ledger = _datasets(tmp_path), tmp_path / "out", tmp_path / "ledger.jsonl"
+    args = ["--datasets", str(data), "--out-dir", str(out), "--ledger", str(ledger)]
+    assert run_eval.main([*args, "--open-holdout", "--date", "2026-01-01"]) == 0
+    assert run_eval.main([*args, "--date", "2026-01-02"]) == 0
+    text = (out / "report.md").read_text(encoding="utf-8")
+    assert "已经打开过 1 次" in text
+    assert "它已被污染" not in text
+    assert "以前打开过，这次未打开" in text  # noqa: RUF001 - the report's own commas
+
 
 def test_changing_the_holdout_samples_after_opening_contaminates_it(tmp_path: Path) -> None:
     ledger = tmp_path / "ledger.jsonl"

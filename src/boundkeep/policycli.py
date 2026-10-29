@@ -81,7 +81,8 @@ def _run_one(
         "tool_input": tool_input,
         "cwd": cwd or fake["project"],
         "project_dir": project or fake["project"],
-        # not a UUID, so no path is ever in "the session scratchpad" unless a test asks for one
+        # not a UUID, so no path is ever in "the session scratchpad" (or the session's tool-results
+        # directory) unless a test asks for one
         "session_id": session_id or "policy-test",
     }
     runtime, _problem = _runtime(policy, fake["env"], fake["home"])
@@ -264,10 +265,11 @@ def cmd_explain(args: argparse.Namespace) -> int:
         for ref in action.paths:
             unsure = " uncertain" if ref.uncertain else ""
             scratch = " in_scratchpad" if ref.in_scratchpad else ""
+            results = " in_session_tool_results" if ref.in_session_tool_results else ""
             console.out(
                 f"    path: {printable(repr(ref.raw), _PATH_CHARS)} -> "
                 f"{printable(ref.key, _PATH_CHARS)} [{ref.access}] "
-                f"inside_project={ref.inside_project}{unsure}{scratch}"
+                f"inside_project={ref.inside_project}{unsure}{scratch}{results}"
             )
         if action.domains or action.network:
             hosts = ", ".join(action.domains) or "-"

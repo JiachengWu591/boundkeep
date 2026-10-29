@@ -17,9 +17,13 @@ Key format (what ``path_glob`` and ``inside_project`` compare):
 * A relative path with no usable ``cwd`` keeps a relative key (``a/b``, ``../x``) and is
   ``uncertain``. An unresolved variable stays in the key verbatim (``$foo/x`` after casefolding).
 
-``Scratchpad`` (``scratchpad_for``) says whether a path is inside the CURRENT session's scratchpad,
-``<temp dir>/claude/<one segment>/<session id>/scratchpad`` (match field ``path_in_scratchpad``);
-the temp directory comes from the ``env`` / ``home`` passed in, never from the real machine.
+``SessionDir`` says whether a path is inside one directory of the CURRENT session:
+``scratchpad_for`` gives ``<temp dir>/claude/<one segment>/<session id>/scratchpad`` (match field
+``path_in_scratchpad``), ``tool_results_for`` gives
+``<home>/.claude/projects/<one segment>/<session id>/tool-results``, where Claude Code saves a tool
+output too long for the conversation and tells the agent to read it (match fields
+``path_in_session_tool_results`` and ``except_session_tool_results``). The temp directory and the
+home come from the ``env`` / ``home`` passed in, never from the real machine.
 
 Direction rule: this module only ever produces *information*. ``inside_project`` answers ``True``
 only when the path is definitely inside; everything doubtful is ``None`` and a definite outsider is
@@ -49,7 +53,7 @@ from boundkeep.normalize.model import Flavor, Platform
 __all__ = [
     "GlobResult",
     "NormPath",
-    "Scratchpad",
+    "SessionDir",
     "expand_glob",
     "expanded_text",
     "inside_project",
@@ -58,7 +62,9 @@ __all__ = [
     "normalize_path",
     "resolve_on_disk",
     "scratch_plain",
+    "scratchpad_for",
     "temp_dir_text",
+    "tool_results_for",
 ]
 
 Dialect = Literal["bash", "powershell", "tool"]
@@ -284,14 +290,21 @@ def key_of_home(home: str) -> str:
 
 
 # --------------------------------------------------------------------------------------------
-# The session scratchpad
+# The session's own directories: the scratchpad and the tool-results directory
 # --------------------------------------------------------------------------------------------
 
 # Claude Code's session ids are UUIDs and so is the name of the session's directory below
-# ``<temp>/claude/<project slug>/``. Anything else is never a scratchpad (no ``..``, no wildcard,
-# no separator, no other length). ``fullmatch``: no trailing newline is tolerated either.
+# ``<temp>/claude/<project slug>/`` and ``~/.claude/projects/<project slug>/``. Anything else is
+# never the session's directory (no ``..``, no wildcard, no separator, no other length).
+# ``fullmatch``: no trailing newline is tolerated either.
 _SESSION_ID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", re.ASCII)
-_SCRATCH_DEPTH = 4  # claude / <slug> / <session id> / scratchpad
+# The segments below the root, in order: a literal name, the project slug (any one segment but
+# ``.`` / ``..``) or the session id. The slug is not recomputed from the project directory: Claude
+# Code's encoding of it varies (the drive letter's case differs between the CLI and VS Code).
+_SLUG = "<slug>"
+_SESSION = "<session>"
+_SCRATCH_LAYOUT = ("claude", _SLUG, _SESSION, "scratchpad")  # below the temp directory
+_TOOL_RESULTS_LAYOUT = (".claude", "projects", _SLUG, _SESSION, "tool-results")  # below the home
 # What the path layer may have done to a path that still counts as "the scratchpad": spellings of
 # the SAME file (an NTFS stream name, one trailing dot, the ``\\?\`` / ``\\.\`` / ``\??\`` prefixes,
 # the on-disk resolved form). Anything else (a translated MSYS / Cygwin / WSL path, an admin share,
@@ -355,48 +368,50 @@ def temp_dir_text(
         return None
 
 
-class Scratchpad:
-    """The current session's scratchpad: ``<temp>/claude/<one segment>/<session id>/scratchpad``.
+class SessionDir:
+    """One directory of the current session: ``<root>/<layout>``, for example the scratchpad
+    ``<temp>/claude/<one segment>/<session id>/scratchpad``.
 
-    ``contains`` says whether a normalized path is the scratchpad directory itself or below it.
-    The caller asks for each form of a path (its lexical key and, when a symlink / junction / short
-    name changes it, the on-disk resolved key) and a path only counts when EVERY form does: a
-    junction inside the scratchpad that leads elsewhere, or a scratchpad directory that is itself a
-    link to somewhere else, makes the resolved form leave the resolved temp directory.
+    ``contains`` says whether a normalized path is the directory itself or below it. The caller
+    asks for each form of a path (its lexical key and, when a symlink / junction / short name
+    changes it, the on-disk resolved key) and a path only counts when EVERY form does: a junction
+    inside the directory that leads elsewhere, or a session directory that is itself a link to
+    somewhere else, makes the resolved form leave the resolved root.
 
-    Only this exact session counts (the id compares without case), only below THIS machine's temp
-    directory (``temp_dir_text``), only one segment for the project slug, and the ``claude`` and
-    ``scratchpad`` names compare without case on Windows and exactly on POSIX. The temp directory
-    is resolved on disk lazily, once, and only when a path got that far.
+    Only this exact session counts (the id compares without case), only below THIS machine's root
+    (the temp directory, ``temp_dir_text``, or the home), only one segment for the project slug,
+    and the literal names compare without case on Windows and exactly on POSIX. The root is
+    resolved on disk lazily, once, and only when a path got that far.
     """
 
-    __slots__ = ("_resolved", "_resolved_done", "_tmp", "flavor", "session")
+    __slots__ = ("_resolved", "_resolved_done", "_root", "flavor", "layout", "session")
 
-    def __init__(self, session: str, tmp: NormPath) -> None:
+    def __init__(self, session: str, root: NormPath, layout: tuple[str, ...]) -> None:
         self.session = session.casefold()
-        self.flavor: Flavor = tmp.flavor
-        self._tmp = tmp
+        self.flavor: Flavor = root.flavor
+        self.layout = layout
+        self._root = root
         self._resolved: str | None = None
         self._resolved_done = False
 
-    def _resolved_tmp(self) -> str | None:
-        """The key of the temp directory after link and short-name resolution (None: unusable)."""
+    def _resolved_root(self) -> str | None:
+        """The key of the root after link and short-name resolution (None: unusable)."""
         if not self._resolved_done:
             self._resolved_done = True
-            resolved = resolve_on_disk(self._tmp)
-            if _usable_tmp(resolved, self.flavor):
+            resolved = resolve_on_disk(self._root)
+            if _usable_root(resolved, self.flavor):
                 self._resolved = resolved.key
         return self._resolved
 
     def _lexical_root(self) -> str | None:
-        # A temp directory spelled with an 8.3 short name is "uncertain" lexically; the paths Claude
-        # Code reports then name it in full, so the resolved spelling is the root to compare with.
-        if not self._tmp.uncertain:
-            return self._tmp.key
-        return self._resolved_tmp()
+        # A root spelled with an 8.3 short name is "uncertain" lexically; the paths Claude Code
+        # reports then name it in full, so the resolved spelling is the root to compare with.
+        if not self._root.uncertain:
+            return self._root.key
+        return self._resolved_root()
 
     def contains(self, path: NormPath, *, resolved: bool) -> bool:
-        """Is ``path`` the scratchpad or below it? ``resolved``: it is an on-disk resolved form.
+        """Is ``path`` the directory or below it? ``resolved``: it is an on-disk resolved form.
 
         Never raises; anything doubtful (uncertain, relative, device, other flavor, a key that is
         not clean) is False.
@@ -406,7 +421,7 @@ class Scratchpad:
                 return False
             if not _clean_key(path.key) or not set(path.reasons) <= _PLAIN_REASONS:
                 return False
-            root = self._resolved_tmp() if resolved else self._lexical_root()
+            root = self._resolved_root() if resolved else self._lexical_root()
             if root is None:
                 return False
             return self._below(path.key, root)
@@ -418,29 +433,53 @@ class Scratchpad:
         if not key.startswith(prefix):
             return False
         parts = key[len(prefix) :].split("/")
-        if len(parts) < _SCRATCH_DEPTH:
+        if len(parts) < len(self.layout):
             return False
-        claude, slug, session, pad = parts[:_SCRATCH_DEPTH]
-        if not slug or slug in (".", ".."):
-            return False
-        if self.flavor == "windows":
-            names_ok = claude.casefold() == "claude" and pad.casefold() == "scratchpad"
-        else:
-            names_ok = claude == "claude" and pad == "scratchpad"
-        return names_ok and session.casefold() == self.session
+        for part, want in zip(parts, self.layout, strict=False):
+            if want == _SLUG:
+                ok = bool(part) and part not in (".", "..")
+            elif want == _SESSION:
+                ok = part.casefold() == self.session
+            elif self.flavor == "windows":
+                ok = part.casefold() == want
+            else:
+                ok = part == want
+            if not ok:
+                return False
+        return True
 
 
-def _usable_tmp(tmp: NormPath, flavor: Flavor) -> bool:
-    """A temp directory that may root a scratchpad: absolute, certain, on a local-looking anchor."""
-    if tmp.uncertain or tmp.is_device or not tmp.absolute or tmp.flavor != flavor:
+def _usable_root(root: NormPath, flavor: Flavor) -> bool:
+    """A directory that may root a session directory: absolute, certain, on a local-looking
+    anchor."""
+    if root.uncertain or root.is_device or not root.absolute or root.flavor != flavor:
         return False
-    if not _clean_key(tmp.key) or not scratch_plain(tmp.key):
+    if not _clean_key(root.key) or not scratch_plain(root.key):
         return False
-    anchor = _anchor_of(tmp.key, flavor)
+    anchor = _anchor_of(root.key, flavor)
     if flavor == "posix":
         return anchor == "/"
-    # a drive letter ("c:"): never a UNC share (a network temp directory) or a device
+    # a drive letter ("c:"): never a UNC share (a network directory) or a device
     return anchor is not None and len(anchor) == 2 and anchor[1] == ":"
+
+
+def _session_root(text: str, platform: Platform) -> NormPath | None:
+    """``text`` (the temp directory or the home) as a root for a ``SessionDir``, or None."""
+    root = normalize_path(text, cwd=None, home=None, dialect="tool", literal=True)
+    flavor: Flavor = "windows" if platform == "windows" else "posix"
+    if root.flavor != flavor or set(root.reasons) - {"short-name-unresolved"}:
+        return None  # (an odd spelling of the directory: no session directory)
+    if not scratch_plain(root.key):
+        return None  # (a pattern character: `literal` skipped the glob check)
+    if root.uncertain:
+        # only an unresolved 8.3 short name may be repaired (by the disk lookup); any other
+        # doubt (a variable, a glob, a relative path ...) means there is no session directory
+        blocking = [r for r in root.reasons if r not in _INFO_REASONS]
+        if blocking != ["short-name-unresolved"]:
+            return None
+    elif not _usable_root(root, flavor):
+        return None
+    return root
 
 
 def scratchpad_for(
@@ -448,11 +487,11 @@ def scratchpad_for(
     platform: Platform,
     env: Mapping[str, str] | None,
     home: str | None,
-) -> Scratchpad | None:
+) -> SessionDir | None:
     """The scratchpad of the session ``session_id`` on this (possibly fake) machine, or None.
 
     None unless the id is a UUID and the temp directory (``temp_dir_text``) is usable. Pure: the
-    disk is not touched here (see ``Scratchpad`` for the lazy lookup). Never raises.
+    disk is not touched here (see ``SessionDir`` for the lazy lookup). Never raises.
     """
     try:
         if not isinstance(session_id, str) or _SESSION_ID.fullmatch(session_id) is None:
@@ -460,22 +499,31 @@ def scratchpad_for(
         text = temp_dir_text(platform, env, home)
         if text is None:
             return None
-        tmp = normalize_path(text, cwd=None, home=None, dialect="tool", literal=True)
-        flavor: Flavor = "windows" if platform == "windows" else "posix"
-        if tmp.flavor != flavor or set(tmp.reasons) - {"short-name-unresolved"}:
-            return None  # (an odd spelling of the temp directory: no scratchpad)
-        if not scratch_plain(tmp.key):
-            return None  # (a pattern character: `literal` skipped the glob check)
-        if tmp.uncertain:
-            # only an unresolved 8.3 short name may be repaired (by the disk lookup); any other
-            # doubt (a variable, a glob, a relative path ...) means there is no scratchpad
-            blocking = [r for r in tmp.reasons if r not in _INFO_REASONS]
-            if blocking != ["short-name-unresolved"]:
-                return None
-        elif not _usable_tmp(tmp, flavor):
-            return None
-        return Scratchpad(session_id, tmp)
+        root = _session_root(text, platform)
+        return None if root is None else SessionDir(session_id, root, _SCRATCH_LAYOUT)
     except Exception:  # noqa: BLE001 - never raise; None means "no scratchpad"
+        return None
+
+
+def tool_results_for(
+    session_id: str | None, platform: Platform, home: str | None
+) -> SessionDir | None:
+    """The tool-results directory of the session ``session_id``, or None.
+
+    ``<home>/.claude/projects/<one segment>/<session id>/tool-results``: Claude Code saves a tool
+    output that is too long for the conversation there (a subagent's too, under the parent
+    session's id, which is the ``session_id`` its hook events carry) and tells the agent to read
+    it. Only ``~/.claude`` counts; a ``CLAUDE_CONFIG_DIR`` elsewhere is never this directory.
+    None unless the id is a UUID and the home is usable. Pure, never raises.
+    """
+    try:
+        if not isinstance(session_id, str) or _SESSION_ID.fullmatch(session_id) is None:
+            return None
+        if not isinstance(home, str) or not home.strip():
+            return None
+        root = _session_root(home, platform)
+        return None if root is None else SessionDir(session_id, root, _TOOL_RESULTS_LAYOUT)
+    except Exception:  # noqa: BLE001 - never raise; None means "no tool-results directory"
         return None
 
 

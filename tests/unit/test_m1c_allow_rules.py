@@ -67,6 +67,7 @@ EXPECTED_ALLOW_IDS = {
     "allow-ps-data-shaping",
     "allow-cd-family",  # M1c-3 (tests/unit/test_m1c3_cd_allow.py)
     "allow-session-scratchpad",  # M1c-4 (tests/unit/test_m1c4_scratchpad.py)
+    "allow-session-tool-results-read",  # tests/unit/test_session_tool_results.py
     "allow-devtools-trusted-project",
 }
 NEW_ASK_IDS = {"ask-secret-file-write", "ask-credential-file-write", "ask-git-internals-write"}
@@ -211,6 +212,8 @@ _TWIN_EXCEPTIONS = {
     # strict reads outside the project with one rule for every program
     "ask-shell-read-outside-project": "ask-read-outside-project",
     "ask-git-read-outside-project": "ask-read-outside-project",
+    # strict keeps ~/.claude/projects/** in no-agent-state-read, without the tool-results exception
+    "no-session-transcript-read": "no-agent-state-read",
 }
 
 

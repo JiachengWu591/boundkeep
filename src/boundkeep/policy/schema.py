@@ -955,6 +955,12 @@ class Match(BaseModel):
     # at least one path and EVERY path is inside this session's scratchpad (never true for a path
     # that is uncertain or whose resolved form leaves it); says nothing about tool or program
     path_in_scratchpad: _TrueOnly | None = None
+    # the same for this session's ~/.claude/projects/<slug>/<session id>/tool-results, where Claude
+    # Code saves a tool output too long for the conversation and tells the agent to read it
+    path_in_session_tool_results: _TrueOnly | None = None
+    # qualifies path_glob (like access): the glob is not checked against a path shown to be in that
+    # tool-results directory
+    except_session_tool_results: _TrueOnly | None = None
     paths_read_only: _TrueOnly | None = None  # every path is read-only (no paths: vacuously true)
     project_trusted: _TrueOnly | None = None  # the project directory is in trusted_projects
     network: _TrueOnly | None = None
@@ -977,6 +983,11 @@ class Match(BaseModel):
     def _access_needs_globs(self) -> Match:
         if self.access is not None and self.path_glob is None:
             raise ValueError("'access' only qualifies 'path_glob'; add path_glob or remove it")
+        if self.except_session_tool_results is not None and self.path_glob is None:
+            raise ValueError(
+                "'except_session_tool_results' only qualifies 'path_glob'; add path_glob or "
+                "remove it"
+            )
         return self
 
     @model_validator(mode="after")
@@ -1055,12 +1066,13 @@ class Rule(BaseModel):
                     "path_outside_project",
                     "path_inside_project",
                     "path_in_scratchpad",
+                    "path_in_session_tool_results",
                 )
             ):
                 raise _at_error(
                     "the listed tools never touch file paths, so a path condition (path_glob, "
-                    "access, path_outside_project, path_inside_project, path_in_scratchpad) can "
-                    "never match",
+                    "access, path_outside_project, path_inside_project, path_in_scratchpad, "
+                    "path_in_session_tool_results) can never match",
                     "tool",
                 )
         return self
@@ -1092,8 +1104,10 @@ class PolicyTest(BaseModel):
     platform: _Platforms | None = None
     cwd: Annotated[str, Field(min_length=1, max_length=1024)] | None = None
     project_dir: Annotated[str, Field(min_length=1, max_length=1024)] | None = None
-    # The event's session_id (default: a fixed non-UUID one). A test of ``path_in_scratchpad`` needs
-    # a UUID: the scratchpad is `<fake temp dir>/claude/<slug>/<session id>/scratchpad`.
+    # The event's session_id (default: a fixed non-UUID one). A test of ``path_in_scratchpad`` or of
+    # the session's tool-results directory needs a UUID: the scratchpad is
+    # `<fake temp dir>/claude/<slug>/<session id>/scratchpad`, the tool-results directory
+    # `<fake home>/.claude/projects/<slug>/<session id>/tool-results`.
     session_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     expect: Expect
 

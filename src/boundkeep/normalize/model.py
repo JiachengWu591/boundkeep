@@ -74,8 +74,12 @@ class PathRef(BaseModel):
     uncertain: bool = False  # unresolved variable, glob, drive-relative, device name, ...
     # True only when the path (this form of it) is inside the CURRENT session's scratchpad, the
     # directory ``<temp dir>/claude/<slug>/<session id>/scratchpad`` Claude Code gives the agent for
-    # its own intermediate files (see ``normalize.paths.Scratchpad``). False whenever unsure.
+    # its own intermediate files (see ``normalize.paths.SessionDir``). False whenever unsure.
     in_scratchpad: bool = False
+    # The same for the CURRENT session's ``~/.claude/projects/<slug>/<session id>/tool-results``,
+    # where Claude Code saves a tool output too long for the conversation and tells the agent to
+    # read it (``normalize.paths.tool_results_for``). False whenever unsure.
+    in_session_tool_results: bool = False
     reasons: tuple[str, ...] = ()
 
 

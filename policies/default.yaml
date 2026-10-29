@@ -715,13 +715,30 @@ rules:
         - "**/users/*/.claude/settings.local.json"
         - "**/.claude/settings.local.json"
         - "**/.mcp.json"
-        - "**/.claude/projects/**"
         - "**/.claude/history.jsonl"
         - "**/.claude/shell-snapshots/**"
         - "**/.claude/ide/**"
       access: read
     action: deny
     reason: "reading Claude Code credentials, settings, MCP configuration, transcripts and session state is not allowed"
+  - id: no-session-transcript-read
+    # Session transcripts and everything else Claude Code keeps per project and session
+    # (~/.claude/projects/**: every earlier session's reads, commands and output, secrets included,
+    # and the subagents' logs). Its own rule only for one exception: Claude Code saves a tool output
+    # too long for the conversation in <home>/.claude/projects/<slug>/<session id>/tool-results/ and
+    # tells the agent to read it, so THE CURRENT SESSION's tool-results directory is skipped
+    # (except_session_tool_results: every form of the path, the typed one and the on-disk resolved
+    # one, judged on its own; another session's, a transcript, the subagents' logs and a link that
+    # leads out of the directory are still denied). A subagent's long output lands under the parent
+    # session's id, which is the session_id its hook events carry. Strict keeps this glob in
+    # no-agent-state-read without the exception.
+    match:
+      path_glob:
+        - "**/.claude/projects/**"
+      access: read
+      except_session_tool_results: true
+    action: deny
+    reason: "reading Claude Code session transcripts and other sessions' state is not allowed"
   - id: no-history-read
     # Shell, database and REPL history files record everything typed, including passwords given on
     # a command line, connection strings and tokens in URLs. They are a collection of secrets in
@@ -1881,6 +1898,20 @@ rules:
     match:
       path_in_scratchpad: true
     action: allow
+  - id: allow-session-tool-results-read
+    # Claude Code saves a tool output too long for the conversation in
+    # <home>/.claude/projects/<slug>/<session id>/tool-results/<name>.txt and tells the agent to read
+    # it there. Reading THE CURRENT SESSION's directory with the file tools is the agent reading
+    # back output of a call that was already judged, so it needs no question. Read-only (writing
+    # there is never allowed by this rule), every form of every path inside it, the same doubts as
+    # the scratchpad (never another session's, never with `..`, a variable, a wildcard or a hard
+    # link, never when the event has no session id that looks like a UUID). Shell commands are not
+    # covered (`cat` of it is no longer denied, but not allowed either). Strict has no such rule.
+    tool: [Read, Grep, Glob]
+    match:
+      path_in_session_tool_results: true
+      paths_read_only: true
+    action: allow
   - id: allow-ps-data-shaping
     # PowerShell cmdlets that only reshape or filter what is piped into them and never take a path:
     # Select-Object, Where-Object, Sort-Object, Group-Object, Format-Table, Format-List, Out-String,
@@ -2696,6 +2727,33 @@ tests:
   - { tool: Write, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/var/tmp/claude/foo/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/f", content: "x" }, expect: gray }   # not under this machine's temp directory
   - { tool: Bash, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "python /tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/x.py" }, expect: gray }   # shell is not covered
   - { tool: Bash, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "cat /tmp/claude/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/scratchpad/x.py" }, expect: gray }
+  # allow-session-tool-results-read / no-session-transcript-read: Claude Code saves a long tool output in
+  # <home>/.claude/projects/<slug>/<session id>/tool-results/ and tells the agent to read it. Only the current session's.
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\b50fdq7fi.txt" }, expect: allow }
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\USERS\\TESTUSER\\.CLAUDE\\PROJECTS\\E--PROJ\\19513824-5F23-476C-BD11-F2F49FB38457\\TOOL-RESULTS\\B50FDQ7FI.TXT" }, expect: allow }   # Windows names ignore case
+  - { tool: Grep, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { pattern: needle, path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results" }, expect: allow }
+  - { tool: Glob, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { pattern: "*.txt", path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results" }, expect: allow }
+  - { tool: Read, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/home/testuser/.claude/projects/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/tool-results/x.txt" }, expect: allow }
+  - { tool: Grep, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { pattern: needle, path: "/home/testuser/.claude/projects/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/tool-results" }, expect: allow }
+  # ... and what stays denied: other sessions, transcripts, subagent logs, climbing out, other places, protected names.
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\29513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\x.txt" }, expect: deny }   # another session's
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457.jsonl" }, expect: deny }   # the transcript
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\subagents\\agent-a.jsonl" }, expect: deny }   # subagent logs
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\..\\..\\other.jsonl" }, expect: deny }   # climbs out
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results2\\x.txt" }, expect: deny }
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\x.txt" }, expect: deny }   # no project slug
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "D:\\x\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\x.txt" }, expect: deny }   # not this machine's home
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\*.txt" }, expect: deny }   # a wildcard is uncertain
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\.env" }, expect: deny }   # no-secret-read still wins
+  - { tool: Read, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\x.txt" }, expect: deny }   # no UUID session id: nothing counts
+  - { tool: Write, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\x.txt", content: "x" }, expect: gray }   # writing there is never allowed
+  - { tool: PowerShell, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "Get-Content C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\x.txt" }, expect: gray }   # shell: no longer denied, not allowed
+  - { tool: PowerShell, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "Get-Content C:\\Users\\testuser\\.claude\\projects\\e--proj\\29513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\x.txt" }, expect: deny }
+  - { tool: Read, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/home/testuser/.claude/projects/-home-testuser-proj/29513824-5f23-476c-bd11-f2f49fb38457/tool-results/x.txt" }, expect: deny }
+  - { tool: Read, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/home/testuser/.Claude/projects/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/tool-results/x.txt" }, expect: deny }   # POSIX names are case-sensitive
+  - { tool: Read, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/home/testuser/.claude/projects/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457.jsonl" }, expect: deny }
+  - { tool: Bash, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "cat /home/testuser/.claude/projects/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/tool-results/x.txt" }, expect: gray }
+  - { tool: Bash, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "cat /home/testuser/.claude/projects/-home-testuser-proj/29513824-5f23-476c-bd11-f2f49fb38457/tool-results/x.txt" }, expect: deny }
 
   # X1 review of M1c-2 (H-4): an expanding value in the arguments of a cmdlet an allow rule covers is gray (ConvertTo-Json
   # prints its first positional parameter; Select-Object -Property shows the value as a column header; the others echo it).

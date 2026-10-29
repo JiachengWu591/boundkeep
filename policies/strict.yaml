@@ -1541,3 +1541,6 @@ tests:
   - { tool: Bash, input: { command: "git add ." }, expect: gray }
   - { tool: Bash, input: { command: "git commit -m wip" }, expect: gray }
   - { tool: Bash, input: { command: "git stash" }, expect: gray }
+  # The default policy lets the file tools read the current session's tool-results directory; strict keeps denying it.
+  - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\b50fdq7fi.txt" }, expect: deny }
+  - { tool: Read, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/home/testuser/.claude/projects/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/tool-results/x.txt" }, expect: deny }

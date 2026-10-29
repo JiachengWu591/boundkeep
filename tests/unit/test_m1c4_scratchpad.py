@@ -533,7 +533,7 @@ def _norm(platform: str, text: str) -> paths.NormPath:
     return paths.normalize_path(text, cwd=None, home=None, dialect="tool", literal=True)
 
 
-def _sp(platform: str) -> paths.Scratchpad:
+def _sp(platform: str) -> paths.SessionDir:
     fake = policycli._FAKE[platform]
     found = paths.scratchpad_for(SID, platform, fake["env"], fake["home"])  # type: ignore[arg-type]
     assert found is not None
