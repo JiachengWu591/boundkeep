@@ -6,7 +6,7 @@ eval/staging/
 
 # Working lists for add_samples.py: the committed result is the .jsonl under eval/datasets
 eval/authoring/*.txt
-!eval/authoring/TEMPLATE.txt
+!eval/authoring/TEMPLATE*.txt
 
 # Python
 __pycache__/
