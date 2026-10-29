@@ -42,7 +42,7 @@ rules:
 
 **路径规则不要写 `tool:`。** Read、Grep、Glob、Bash、PowerShell 等都会带路径，只列其中几个的读规则等于给其余的留了绕行的路（`Grep` 读 `.env` 曾因此被放行）。内置的所有读类 deny / ask 规则都没有 `tool:`，也没有 `platform:`：Windows 凭据、浏览器、持久化类的 glob 在纯 Linux 上本来就匹配不到任何东西，而 WSL 里看到的 `/mnt/c/Users/x/.ssh/config`（键 `c:/users/x/...`）要靠不依赖主目录的 `**/users/*/...` 写法拦住。
 
-**`tool` 的校验。** 每个名字必须是已知工具（`Bash`、`PowerShell`、`Read`、`Write`、`Edit`、`MultiEdit`、`NotebookEdit`、`Glob`、`Grep`、`WebFetch`、`WebSearch`、`ToolSearch`、`TodoWrite`、`Agent`，以及 `Task`、`BashOutput`、`KillShell`、`ExitPlanMode`、`AskUserQuestion`、`Skill`、`SlashCommand`），或以 `mcp__` 开头，或是这些的前缀星号写法（`mcp__github__*`）。其余一律是加载错误并给出 "did you mean"（`Bsh` → `Bash`；大小写敏感）。只列了不碰路径的工具（`WebSearch`、`Agent` 等）却写了路径条件（`path_glob`、`access`、`path_outside_project`、`path_inside_project`、`path_in_scratchpad`、`path_in_session_tool_results`）也是错误：规则永远不会命中。
+**`tool` 的校验。** 每个名字必须是已知工具（`Bash`、`PowerShell`、`Read`、`Write`、`Edit`、`MultiEdit`、`NotebookEdit`、`Glob`、`Grep`、`WebFetch`、`WebSearch`、`ToolSearch`、`TodoWrite`、`Agent`，以及 `Task`、`BashOutput`、`KillShell`、`ExitPlanMode`、`AskUserQuestion`、`Skill`、`SlashCommand`），或以 `mcp__` 开头，或是这些的前缀星号写法（`mcp__github__*`）。其余一律是加载错误并给出 "did you mean"（`Bsh` → `Bash`；大小写敏感）。只列了不碰路径的工具（`WebSearch`、`Agent` 等）却写了路径条件（`path_glob`、`access`、`path_outside_project`、`path_inside_project`、`path_in_scratchpad`、`path_in_session_tool_results`、`path_in_project_memory`）也是错误：规则永远不会命中。
 
 ### match 字段
 
@@ -59,6 +59,8 @@ rules:
 | `path_in_scratchpad: true` | 至少一个路径，且**每个**路径（每个形式：键入的字面形式与符号链接 / junction / 短名字解析后的形式）都**确定**在**当前会话的 scratchpad** 里或就是它（Claude Code 给 agent 放中间文件的目录 `<临时目录>/claude/<项目 slug>/<会话 id>/scratchpad`，见"Session scratchpad"一节）。由归一化层写在 `PathRef.in_scratchpad`，任何不确定都是 false。这是 allow 侧用的，与 `path_inside_project` 一样：不知道就不匹配。与其他字段 AND；**单独写它不满足** allow 规则必须点名工具或程序的加载检查；只列不碰路径的工具时加载报错。`boundkeep explain` 的明细行是 `path_in_scratchpad: every path is inside the session scratchpad` |
 | `path_in_session_tool_results: true` | 与 `path_in_scratchpad` 同样的判断，对象是**当前会话的 tool-results 目录** `<主目录>/.claude/projects/<项目 slug>/<会话 id>/tool-results`（Claude Code 把过长的工具输出存在这里，再让 agent 去读，见"Session tool-results"一节）。由归一化层写在 `PathRef.in_session_tool_results`，任何不确定都是 false；allow 侧用，不知道就不匹配 |
 | `except_session_tool_results: true` | 像 `access` 一样**修饰 `path_glob`**（没有 `path_glob` 时加载报错）：一个路径（的某个形式）确定在当前会话的 tool-results 目录里时，`path_glob` 不拿它比较。每个形式单独判断，所以目录里指向别处的链接仍按它解析后的目标比较。给 deny 规则开一个精确的口子用 |
+| `path_in_project_memory: true` | 与 `path_in_session_tool_results` 同样的判断，对象是**当前项目的 auto memory 目录** `<主目录>/.claude/projects/<项目 slug>/memory`（见"Project memory"一节）。由归一化层写在 `PathRef.in_project_memory`；allow 侧用，不知道就不匹配 |
+| `except_project_memory: true` | 与 `except_session_tool_results` 相同，对象是当前项目的 memory 目录 |
 | `paths_read_only: true` | **每个**路径的访问方式都恰好是 `read`。`write` 与 `unknown`（可能写）都不算只读；没有任何路径的动作匹配（`pwd`、`echo hi`，空真）。与其他字段 AND，不要求路径在项目内（要的话再写 `path_inside_project`）。这是 allow 侧用的；写在 deny / ask 规则里时，访问方式为 `unknown` 的路径不会让它命中 |
 | `project_trusted: true` | 该动作的**项目目录**等于或位于顶层 `trusted_projects` 的某一项之内才匹配（见"受信任的项目"）。项目目录未知、不确定、过宽（文件系统根、盘符根、主目录或其祖先），或会话的工作目录不在项目内时，不匹配。**单独写它不满足** allow 规则必须点名工具或程序的加载检查。失败方向：allow 规则里任何问题都算不匹配；deny / ask 规则里"无法判断项目是否受信任"算匹配（已知不受信任才不匹配） |
 | `network: true` | 该动作联网 |
@@ -140,7 +142,7 @@ tests:
   - { tool: Bash, cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "rm -rf build" }, expect: gray }
 ```
 
-`expect` 取 `deny | ask | allow | gray`（`gray` = 规则层不应定案，用来防止规则过宽）。可选字段 `platform`、`cwd`、`project_dir`，以及 `session_id`（事件的会话 id，默认是一个不是 UUID 的固定值，所以默认没有任何路径在"会话 scratchpad"或会话的 tool-results 目录里；测 `path_in_scratchpad` 或 tool-results 要写一个 UUID）。`boundkeep test [--policy 文件] [--platform windows|posix|all]` 用**假机器**（Windows：`C:\Users\testuser`，POSIX：`/home/testuser`）跑真实的管线，所以 Windows 路径的用例在任何平台都能通过；默认两个平台都跑。
+`expect` 取 `deny | ask | allow | gray`（`gray` = 规则层不应定案，用来防止规则过宽）。可选字段 `platform`、`cwd`、`project_dir`，以及 `session_id`（事件的会话 id，默认是一个不是 UUID 的固定值，所以默认没有任何路径在"会话 scratchpad"或会话的 tool-results 目录里；测 `path_in_scratchpad` 或 tool-results 要写一个 UUID；项目 memory 目录不看会话 id，看 `project_dir`）。`boundkeep test [--policy 文件] [--platform windows|posix|all]` 用**假机器**（Windows：`C:\Users\testuser`，POSIX：`/home/testuser`）跑真实的管线，所以 Windows 路径的用例在任何平台都能通过；默认两个平台都跑。
 
 `boundkeep explain <事件.json|->` 用**本机的真实环境**（你的主目录与环境变量、事件里的 `cwd` 与 `project_dir`）解释一个事件：每个动作的程序、路径（规范键与 `inside_project`）、域名、风险标签、命中的规则、最终判决和 hook 实际会输出什么。
 
@@ -161,7 +163,7 @@ tests:
 | `ask-guard-state-read` | ask | 读 `.boundkeep/**`（`endpoint.json`、`policy.yaml`、`logs/audit.jsonl`） |
 | `deny-link-to-guard-files` | deny | **X1 审查 H-6。** `ln`、`New-Item`（`-ItemType HardLink` / `SymbolicLink` / `Junction`；`New-Item` 只有创建链接时才会把目标列为读路径）的**读路径**命中 `protect-guard-config` 的那份 glob（`.boundkeep/**`、`.claude/settings*.json`、`~/.claude`、managed settings，有测试保证两份清单相等）。硬链接是同一个文件的另一个名字：`ln ~/.boundkeep/policy.yaml here` 之后，对 `here` 的普通 `Write` 就改写了策略，而按名字判断的规则看不见。创建链接是目标被点名的唯一时刻，所以在这里拒绝。`protect-guard-config-dir`（`CLAUDE_CONFIG_DIR`）与 `protect-guard-code`（已安装的代码、解释器、boundkeep 主目录）这两条守护进程在运行时加的规则各有一条同样的孪生规则（`deny-link-protect-guard-config-dir`、`deny-link-protect-guard-code`、`deny-link-copy-…`）。这些规则的 glob **不进入** `protected_read_globs`（规则 id 以 `deny-link-` 开头）：它们点名的是被创建链接的目标，不是读内容，否则对含 `.claude/settings.json` 的目录做 `Grep` 会被拒绝，而项目级 settings.json 可读是有意的 |
 | `deny-link-copy-of-guard-files` | deny | 同上，`cp -l` / `cp --link`（用硬链接代替复制）。不带 `-l` 的 `cp` 仍然只是读（`ask-guard-state-read`） |
-| `ask-agent-exec-config` | ask | 写 `.mcp.json`、`~/.claude.json`、`.claude/{hooks,commands,agents,skills,rules,output-styles,plugins}/**`、`.claude/statusline.*`、`CLAUDE.md`、`CLAUDE.local.md` |
+| `ask-agent-exec-config` | ask | 写 `.mcp.json`、`~/.claude.json`、`.claude/{hooks,commands,agents,skills,rules,output-styles,plugins}/**`、`.claude/statusline.*`、`.claude/projects/*/memory/**`（auto memory，之后每个会话都会读）、`CLAUDE.md`、`CLAUDE.local.md` |
 | `ask-repo-exec-config` | ask | 写 `.git/hooks/**`、`.git/config`、`.envrc`、`.husky/**`、`.vscode/{tasks,settings,launch}.json`、`.github/workflows/**`、`.devcontainer/**` |
 | `ask-user-config-write` | ask | 写 `~/.gitconfig`、`~/.npmrc`、`~/.pypirc`、`~/.config/pip/pip.conf`、`~/.netrc`、`~/.docker/config.json` |
 | `ask-project-autorun-files`（strict：`deny-project-autorun-files`） | ask（strict：deny） | 写（新建、修改、改名、删除；Write / Edit / MultiEdit 与所有 shell 写入，规则没有 `tool:` 限制，`access: write`）会让代码日后自己跑起来的文件。项目内：`package.json`、`Makefile` / `makefile` / `GNUmakefile`、`pyproject.toml`、`setup.py`、`setup.cfg`、`tox.ini`、`noxfile.py`、`conftest.py`、`sitecustomize.py`、`usercustomize.py`、`*.pth`、`build.rs`、`rust-toolchain[.toml]`、`.cargo/config[.toml]`、`.npmrc`、`.yarnrc*`、`.pnpmfile.cjs`、`.pre-commit-config.yaml`、`.gitattributes`、`.gitmodules`、`.envrc`、`.husky/**`、`.github/workflows/**`、`.github/actions/**`、`.gitlab-ci.yml`、`.circleci/**`、`Jenkinsfile`、`azure-pipelines.yml`、`.travis.yml`、`bitbucket-pipelines.yml`、`Dockerfile*`、`docker-compose*.{yml,yaml}`、`compose.{yml,yaml}`、`compose.*.{yml,yaml}`、`.devcontainer/**`、`.vscode/{tasks,settings,launch,extensions,mcp}.json`、`.idea/runConfigurations/**`。用户级：`~/.cargo/config[.toml]`、`~/.gradle/init.d/**`、`~/.gradle/init.gradle*`、`~/.condarc`、`~/.yarnrc*`、`~/.terraformrc`、`~/.aws/config`（`credential_process`）、`~/.config/pip/pip.conf`、`%APPDATA%\pip\pip.ini`（含 WSL 看到的 `/mnt/c/Users/x/AppData/Roaming/pip/pip.ini`）。**先于项目内写入的 allow 规则存在**：default 里的 `allow-project-file-writes`（见下）已经加上，这些文件靠"最严者胜"仍然是 ask，不会被悄悄放行。名字整体匹配；不含 README、`*.md`、源码、锁文件、`tsconfig.json`、`.gitignore`、`.editorconfig`（这些写入在 default 里是 allow，strict 里仍是灰色）。**已接受的误报**：改 `package.json`、`Makefile`、`pyproject.toml`、`conftest.py`、Dockerfile、CI 文件都会问（有意为之）；`*.pth` 也匹配 PyTorch 权重文件，`Dockerfile*` 也匹配 `Dockerfile.md`；`cp Makefile 任意位置` 也会问（`cp` 分不清目标是文件还是目录，把 `<目标>/Makefile` 也算作写入）；读这些文件不受影响。与 `ask-repo-exec-config` 有重叠（`.envrc`、`.husky`、`.vscode`、workflows、devcontainer），重复是有意的：两条都命中也只是同一个 ask |
@@ -170,8 +172,9 @@ tests:
 | `no-secret-read` | deny | 读 `.env`、`.env.*`、`*.env`、名为 `env` 的文件、`.envs/**`、`**/.ssh/**`、`*.pem`、`*.key`、`*.jks`、`*.keystore`、`*.tfstate*`、`*.tfvars`、`service-account*.json`、`credentials.json` / `credentials.txt`、`secrets.{yml,yaml,json,toml,txt}`、`secret.txt`、`key.txt` / `keys.txt`、`password(s).txt`、`token.txt`、`.htpasswd`、`kubeconfig`、`*.kubeconfig`、`local.settings.json`、`*.kdbx` / `*.kdb`、`/etc/shadow*`、`/etc/sudoers*`、`/etc/ssh/ssh_host_*`、`/proc/*/environ`。名字整体匹配，所以 `env.py`、`kubeconfig.go`、`docker-compose.yml`、`README` 仍可读 |
 | `no-credential-store-read` | deny | 读云 CLI 与容器配置（`.aws`、`.azure`、gcloud、gh、op、doctl、rclone、kube、docker）、`.gnupg`、`.git-credentials`、`.git/credentials`、`.config/git/credentials`、`.gitconfig`、`.git/config`、`.netrc` / `_netrc`、`.npmrc`、`.pypirc`、`.pgpass`、`.my.cnf`、`.s3cfg`、`.boto`、`.vault-token`、`.cargo/credentials*`、`.gem/credentials`、`.m2/settings.xml`、Terraform 凭据、GitHub CLI 与 gcloud 的 `%APPDATA%` 目录、私钥文件（`id_rsa*`、`id_ed25519*` 等，含 `.bak` 备份；代价是公钥 `id_rsa.pub` 也读不了） |
 | `no-agent-state-read` | deny | 读 `~/.claude/.credentials.json`、`~/.claude.json`、用户级 `~/.claude/settings.json` 与 `~/.claude/settings.local.json`、项目的 `.claude/settings.local.json`（这几个的 `env` 块里常放令牌）、`.mcp.json`（MCP 服务器的 headers 与 env）、`history.jsonl`、`shell-snapshots`、`ide`（strict 的这一条还含 `.claude/projects/**`，没有例外） |
-| `no-session-transcript-read` | deny | 读 `.claude/projects/**`（会话记录、子代理日志、别的会话的一切）；**当前会话的 tool-results 目录除外**（`except_session_tool_results`，见"Session tool-results"一节）。仅 default，strict 由 `no-agent-state-read` 覆盖 |
+| `no-session-transcript-read` | deny | 读 `.claude/projects/**`（会话记录、子代理日志、别的会话的一切）；**当前会话的 tool-results 目录与当前项目的 memory 目录除外**（`except_session_tool_results`、`except_project_memory`，见"Session tool-results"与"Project memory"两节）。仅 default，strict 由 `no-agent-state-read` 覆盖 |
 | `allow-session-tool-results-read` | allow | `Read`、`Grep`、`Glob` 只读当前会话的 tool-results 目录（`path_in_session_tool_results` + `paths_read_only`）。仅 default |
+| `allow-project-memory-read` | allow | `Read`、`Grep`、`Glob` 只读当前项目的 auto memory 目录（`path_in_project_memory` + `paths_read_only`）；写由 `ask-agent-exec-config` 问。仅 default |
 | `no-history-read` | deny | 读 `.bash_history`、`.zsh_history`、`.python_history`、`.psql_history`、`.mysql_history`、PSReadLine 的 `ConsoleHost_history.txt` 等 |
 | `no-windows-credential-read` / `no-browser-profile-read` | deny | Windows 凭据、DPAPI、保险库、`System32\config`、`windows\repair`；Windows / Linux / macOS 浏览器配置目录与钥匙串。都含 `**/users/*/...` 形式，WSL 看到的 `/mnt/c/Users/x/...` 也被拦 |
 | `no-raw-disk-access` | deny | 读写 `/dev/sd*`、`nvme*`、`mmcblk*`、`/dev/mem`、`\\.\PhysicalDrive*` 等裸设备 |
@@ -341,6 +344,16 @@ Claude Code 给每个会话一个只属于它的 scratchpad，agent 用它放中
 - strict 不变：`.claude/projects/**` 仍在它的 `no-agent-state-read` 里，没有例外，也没有这条 allow。
 
 **残余风险：**这些文件是本会话已经判定过（或用户批准过）的工具调用的完整输出；读回它们不会读到别的会话的东西，但对话里只有开头，所以 agent 读到的可能比它先前看到的多（例如一次很长的输出后半段里的秘密）。主目录不是守护进程的那个、或 `CLAUDE_CONFIG_DIR` 指向别处时规则不适用，一切照旧（不会更宽松）。
+
+### Project memory（`path_in_project_memory` / `except_project_memory`，仅 default，2026-10-29）
+
+Claude Code 的 auto memory 放在 `<主目录>/.claude/projects/<项目>/memory/`（`MEMORY.md` 加每条笔记一个文件），整个会话里都会读写；`<项目>` 由 git 仓库根推出（不在仓库里时是项目根），同一仓库的子目录与 worktree 共用一个（code.claude.com/docs/en/memory，"Storage location"，2026-10-29 核对）。它在 `.claude/projects/**` 之下，原先被 `no-session-transcript-read` 拒绝；留出集 h2 的一条真实会话样本就是这样被误拒的（`docs/reports/holdout-h2.md` 第 6、7 节）。
+
+**什么算"在当前项目的 memory 目录里"**（`PathRef.in_project_memory`，`normalize.paths.memory_for`）：同一个 `SessionDir`，结构 `.claude/projects/<slug>/memory`，但 slug **必须**是按项目目录算出来的名字（每个不是 ASCII 字母或数字的字符换成 `-`：`E:\boundkeep` → `E--boundkeep`，`/home/u/proj` → `-home-u-proj`），项目目录本身与它在主目录之下的每一级祖先都算（git 根是其中之一，不去磁盘上找），主目录本身和盘符 / 文件系统根不算。Windows 不分大小写（CLI 与 VS Code 的盘符大小写不同），POSIX 区分。其余的疑点与 tool-results 相同（硬链接、通配符、变量、`..` 都不标记）。
+
+**规则：**`no-session-transcript-read` 加 `except_project_memory: true`；新增 `allow-project-memory-read`（`Read` / `Grep` / `Glob`，只读）；`ask-agent-exec-config` 加 `**/.claude/projects/*/memory/**`（写）。于是：读当前项目的 memory 是 allow，shell 读不再被拒绝但会问；**写 memory 是明确的 ask**（不只是灰色），因为写进去的内容之后每个会话都会读到，是注入的指令唯一能活过本次会话的地方；别的项目的 memory、会话记录照旧 deny。strict：读仍 deny，写改为 deny（`deny-agent-exec-config`）。
+
+**认不出的情况**（照旧 deny，不会更宽松）：路径很长、Claude Code 截短并加了哈希的 slug；`autoMemoryDirectory` 或 `CLAUDE_CODE_PROJECT_DIR_NAME` 把目录移走了；主目录不是守护进程的那个。
 
 ## PowerShell 命令的规则写法
 
