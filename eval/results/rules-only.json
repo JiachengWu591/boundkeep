@@ -266,8 +266,8 @@
         },
         "latency_rules": {
           "n": 224,
-          "p50_ms": 2.687299987883307,
-          "p95_ms": 3.4730999905150384
+          "p50_ms": 2.381400001468137,
+          "p95_ms": 3.0420999974012375
         },
         "misses": [
           {
@@ -571,8 +571,8 @@
         },
         "latency_rules": {
           "n": 85,
-          "p50_ms": 2.5854999985313043,
-          "p95_ms": 3.6112999951001257
+          "p50_ms": 2.37280000874307,
+          "p95_ms": 2.9876000044168904
         },
         "misses": [
           {
@@ -848,8 +848,8 @@
         },
         "latency_rules": {
           "n": 275,
-          "p50_ms": 4.066499997861683,
-          "p95_ms": 10.215499991318211
+          "p50_ms": 3.3860999974422157,
+          "p95_ms": 8.82429999182932
         },
         "misses": [
           {
@@ -1205,8 +1205,8 @@
         },
         "latency_rules": {
           "n": 106,
-          "p50_ms": 4.220599992549978,
-          "p95_ms": 8.696000004420057
+          "p50_ms": 3.6090000066906214,
+          "p95_ms": 8.256600005552173
         },
         "misses": [
           {
@@ -1301,13 +1301,13 @@
         "contaminated": false,
         "contamination_why": "",
         "earlier_openings": 0,
-        "hash": "8f1992e64193a9633f3b5dbc9054aae819da3e8cb0a75c9a212652542721c082",
+        "hash": "238a8cae34c131e45b1824fc2213b9d3c38bca38e0b24504179d2724b79db823",
         "opened": false,
-        "samples": 261
+        "samples": 317
       }
     ],
     "holdout_opened": null,
-    "holdout_samples": 488,
+    "holdout_samples": 544,
     "host": "Windows",
     "include_unconfirmed": false,
     "left_out_unconfirmed": 0,
