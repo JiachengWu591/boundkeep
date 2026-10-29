@@ -80,6 +80,10 @@ class PathRef(BaseModel):
     # where Claude Code saves a tool output too long for the conversation and tells the agent to
     # read it (``normalize.paths.tool_results_for``). False whenever unsure.
     in_session_tool_results: bool = False
+    # The same for the CURRENT project's auto memory, ``~/.claude/projects/<slug>/memory``, where
+    # Claude Code keeps the notes it writes and reads across sessions
+    # (``normalize.paths.memory_for``). False whenever unsure.
+    in_project_memory: bool = False
     reasons: tuple[str, ...] = ()
 
 

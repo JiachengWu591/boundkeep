@@ -961,6 +961,10 @@ class Match(BaseModel):
     # qualifies path_glob (like access): the glob is not checked against a path shown to be in that
     # tool-results directory
     except_session_tool_results: _TrueOnly | None = None
+    # the same two for this project's ~/.claude/projects/<slug>/memory, where Claude Code keeps the
+    # auto memory it reads and writes across sessions
+    path_in_project_memory: _TrueOnly | None = None
+    except_project_memory: _TrueOnly | None = None
     paths_read_only: _TrueOnly | None = None  # every path is read-only (no paths: vacuously true)
     project_trusted: _TrueOnly | None = None  # the project directory is in trusted_projects
     network: _TrueOnly | None = None
@@ -983,11 +987,9 @@ class Match(BaseModel):
     def _access_needs_globs(self) -> Match:
         if self.access is not None and self.path_glob is None:
             raise ValueError("'access' only qualifies 'path_glob'; add path_glob or remove it")
-        if self.except_session_tool_results is not None and self.path_glob is None:
-            raise ValueError(
-                "'except_session_tool_results' only qualifies 'path_glob'; add path_glob or "
-                "remove it"
-            )
+        for name in ("except_session_tool_results", "except_project_memory"):
+            if getattr(self, name) is not None and self.path_glob is None:
+                raise ValueError(f"'{name}' only qualifies 'path_glob'; add path_glob or remove it")
         return self
 
     @model_validator(mode="after")
@@ -1067,12 +1069,13 @@ class Rule(BaseModel):
                     "path_inside_project",
                     "path_in_scratchpad",
                     "path_in_session_tool_results",
+                    "path_in_project_memory",
                 )
             ):
                 raise _at_error(
                     "the listed tools never touch file paths, so a path condition (path_glob, "
                     "access, path_outside_project, path_inside_project, path_in_scratchpad, "
-                    "path_in_session_tool_results) can never match",
+                    "path_in_session_tool_results, path_in_project_memory) can never match",
                     "tool",
                 )
         return self

@@ -221,7 +221,8 @@ rules:
     # MCP servers, hook scripts, slash commands, sub-agents, skills and CLAUDE.md instructions.
     # Changing them changes the agent's future behaviour outside this review, so it is refused.
     # Rules and output styles are instructions loaded into the context, statusline scripts and
-    # plugins (hooks, commands, MCP servers) are code Claude Code runs.
+    # plugins (hooks, commands, MCP servers) are code Claude Code runs. Auto memory
+    # (~/.claude/projects/<slug>/memory/) is loaded into every later session of the project.
     match:
       path_glob:
         - "**/.mcp.json"
@@ -234,6 +235,7 @@ rules:
         - "**/.claude/output-styles/**"
         - "**/.claude/statusline.*"
         - "**/.claude/plugins/**"
+        - "**/.claude/projects/*/memory/**"
         - "**/CLAUDE.md"
         - "**/CLAUDE.local.md"
       access: write
@@ -1544,3 +1546,7 @@ tests:
   # The default policy lets the file tools read the current session's tool-results directory; strict keeps denying it.
   - { tool: Read, platform: [windows], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\e--proj\\19513824-5f23-476c-bd11-f2f49fb38457\\tool-results\\b50fdq7fi.txt" }, expect: deny }
   - { tool: Read, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/home/testuser/.claude/projects/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/tool-results/x.txt" }, expect: deny }
+  # The default policy lets the file tools read the current project's auto memory and asks before a write; strict
+  # denies both.
+  - { tool: Read, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory\\MEMORY.md" }, expect: deny }
+  - { tool: Write, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory\\x.md", content: "x" }, expect: deny }

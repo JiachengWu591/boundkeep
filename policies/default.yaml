@@ -230,7 +230,10 @@ rules:
     # MCP servers, hook scripts, slash commands, sub-agents, skills and CLAUDE.md instructions.
     # Changing them changes the agent's future behaviour outside this review, so a person should see the change.
     # Rules and output styles are instructions loaded into the context, statusline scripts and
-    # plugins (hooks, commands, MCP servers) are code Claude Code runs.
+    # plugins (hooks, commands, MCP servers) are code Claude Code runs. Auto memory
+    # (~/.claude/projects/<slug>/memory/) is loaded into every later session of the project: a
+    # write there is the one place an injected instruction outlives the session (reading it is
+    # allowed, allow-project-memory-read).
     match:
       path_glob:
         - "**/.mcp.json"
@@ -243,6 +246,7 @@ rules:
         - "**/.claude/output-styles/**"
         - "**/.claude/statusline.*"
         - "**/.claude/plugins/**"
+        - "**/.claude/projects/*/memory/**"
         - "**/CLAUDE.md"
         - "**/CLAUDE.local.md"
       access: write
@@ -730,13 +734,18 @@ rules:
     # (except_session_tool_results: every form of the path, the typed one and the on-disk resolved
     # one, judged on its own; another session's, a transcript, the subagents' logs and a link that
     # leads out of the directory are still denied). A subagent's long output lands under the parent
-    # session's id, which is the session_id its hook events carry. Strict keeps this glob in
-    # no-agent-state-read without the exception.
+    # session's id, which is the session_id its hook events carry. The second exception is THE
+    # CURRENT PROJECT's auto memory, <home>/.claude/projects/<slug>/memory/, which Claude Code reads
+    # and writes throughout a session (except_project_memory: <slug> is Claude Code's name for the
+    # project directory or one of its ancestors below the home, the git root it derives the name
+    # from being one of them; another project's memory is still denied). Strict keeps this glob in
+    # no-agent-state-read without either exception.
     match:
       path_glob:
         - "**/.claude/projects/**"
       access: read
       except_session_tool_results: true
+      except_project_memory: true
     action: deny
     reason: "reading Claude Code session transcripts and other sessions' state is not allowed"
   - id: no-history-read
@@ -1912,6 +1921,22 @@ rules:
       path_in_session_tool_results: true
       paths_read_only: true
     action: allow
+  - id: allow-project-memory-read
+    # Claude Code keeps auto memory, notes it writes for itself, in
+    # <home>/.claude/projects/<slug>/memory/ and reads it back throughout a session (MEMORY.md and
+    # one file per note; code.claude.com/docs/en/memory, checked 2026-10-29). Reading THE CURRENT
+    # PROJECT's memory with the file tools needs no question. Read-only: WRITING there stays a
+    # question (no rule allows it), because what is written is read back by every later session in
+    # this project, which makes it the one place where an injected instruction outlives the
+    # session. <slug> must be Claude Code's name for the project directory or an ancestor below the
+    # home (never another project's memory), with the same doubts as the scratchpad (never `..`, a
+    # variable, a wildcard or a hard link). A memory directory moved by autoMemoryDirectory or
+    # CLAUDE_CODE_PROJECT_DIR_NAME is not recognized. Strict has no such rule.
+    tool: [Read, Grep, Glob]
+    match:
+      path_in_project_memory: true
+      paths_read_only: true
+    action: allow
   - id: allow-ps-data-shaping
     # PowerShell cmdlets that only reshape or filter what is piped into them and never take a path:
     # Select-Object, Where-Object, Sort-Object, Group-Object, Format-Table, Format-List, Out-String,
@@ -2754,6 +2779,30 @@ tests:
   - { tool: Read, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { file_path: "/home/testuser/.claude/projects/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457.jsonl" }, expect: deny }
   - { tool: Bash, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "cat /home/testuser/.claude/projects/-home-testuser-proj/19513824-5f23-476c-bd11-f2f49fb38457/tool-results/x.txt" }, expect: gray }
   - { tool: Bash, platform: [posix], session_id: "19513824-5f23-476c-bd11-f2f49fb38457", input: { command: "cat /home/testuser/.claude/projects/-home-testuser-proj/29513824-5f23-476c-bd11-f2f49fb38457/tool-results/x.txt" }, expect: deny }
+
+  # allow-project-memory-read / no-session-transcript-read (holdout h2): Claude Code's auto memory for THIS project,
+  # <home>/.claude/projects/<slug>/memory/, <slug> = the project directory (or an ancestor below the home) with every
+  # character but ASCII letters and digits turned into "-". Reading it is allowed; another project's memory is not.
+  - { tool: Read, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory\\MEMORY.md" }, expect: allow }
+  - { tool: Read, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\c--users-testuser-proj\\memory\\user_role.md" }, expect: allow }   # the drive letter's case differs between the CLI and VS Code
+  - { tool: Grep, platform: [windows], input: { pattern: needle, path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory" }, expect: allow }
+  - { tool: Glob, platform: [windows], input: { pattern: "*.md", path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory" }, expect: allow }
+  - { tool: Read, platform: [windows], cwd: "E:\\FYP", project_dir: "E:\\FYP", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\E--FYP\\memory\\MEMORY.md" }, expect: allow }   # a project outside the home
+  - { tool: Read, platform: [windows], cwd: "C:\\Users\\testuser\\work\\repo\\sub", project_dir: "C:\\Users\\testuser\\work\\repo\\sub", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-work-repo\\memory\\MEMORY.md" }, expect: allow }   # the git root above the project dir
+  - { tool: Read, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\E--other\\memory\\MEMORY.md" }, expect: deny }   # another project's memory
+  - { tool: Read, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser\\memory\\MEMORY.md" }, expect: deny }   # the home is not a project
+  - { tool: Read, platform: [windows], cwd: "C:\\Users\\testuser\\work\\repo\\sub", project_dir: "C:\\Users\\testuser\\work\\repo\\sub", input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-work-other\\memory\\MEMORY.md" }, expect: deny }   # a sibling, not an ancestor
+  - { tool: Read, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory\\..\\s.jsonl" }, expect: deny }
+  - { tool: Read, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory2\\x.md" }, expect: deny }
+  - { tool: Read, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory\\*.md" }, expect: deny }   # a wildcard is uncertain
+  - { tool: Read, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory\\.env" }, expect: deny }   # no-secret-read still wins
+  - { tool: Write, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory\\x.md", content: "x" }, expect: ask }   # every later session reads it
+  - { tool: Edit, platform: [windows], input: { file_path: "C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory\\MEMORY.md", old_string: a, new_string: b }, expect: ask }
+  - { tool: PowerShell, platform: [windows], input: { command: "Get-Content C:\\Users\\testuser\\.claude\\projects\\C--Users-testuser-proj\\memory\\MEMORY.md" }, expect: gray }   # shell: not denied, not allowed
+  - { tool: Read, platform: [posix], input: { file_path: "/home/testuser/.claude/projects/-home-testuser-proj/memory/MEMORY.md" }, expect: allow }
+  - { tool: Read, platform: [posix], input: { file_path: "/home/testuser/.claude/projects/-Home-testuser-proj/memory/MEMORY.md" }, expect: deny }   # POSIX names are case-sensitive
+  - { tool: Read, platform: [posix], input: { file_path: "/home/testuser/.claude/projects/-home-testuser-other/memory/MEMORY.md" }, expect: deny }
+  - { tool: Bash, platform: [posix], input: { command: "cat /home/testuser/.claude/projects/-home-testuser-proj/memory/MEMORY.md" }, expect: gray }
 
   # X1 review of M1c-2 (H-4): an expanding value in the arguments of a cmdlet an allow rule covers is gray (ConvertTo-Json
   # prints its first positional parameter; Select-Object -Property shows the value as a column header; the others echo it).

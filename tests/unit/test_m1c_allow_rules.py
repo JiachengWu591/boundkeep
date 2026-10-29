@@ -68,6 +68,7 @@ EXPECTED_ALLOW_IDS = {
     "allow-cd-family",  # M1c-3 (tests/unit/test_m1c3_cd_allow.py)
     "allow-session-scratchpad",  # M1c-4 (tests/unit/test_m1c4_scratchpad.py)
     "allow-session-tool-results-read",  # tests/unit/test_session_tool_results.py
+    "allow-project-memory-read",  # tests/unit/test_project_memory.py
     "allow-devtools-trusted-project",
 }
 NEW_ASK_IDS = {"ask-secret-file-write", "ask-credential-file-write", "ask-git-internals-write"}

@@ -266,10 +266,11 @@ def cmd_explain(args: argparse.Namespace) -> int:
             unsure = " uncertain" if ref.uncertain else ""
             scratch = " in_scratchpad" if ref.in_scratchpad else ""
             results = " in_session_tool_results" if ref.in_session_tool_results else ""
+            memory = " in_project_memory" if ref.in_project_memory else ""
             console.out(
                 f"    path: {printable(repr(ref.raw), _PATH_CHARS)} -> "
                 f"{printable(ref.key, _PATH_CHARS)} [{ref.access}] "
-                f"inside_project={ref.inside_project}{unsure}{scratch}{results}"
+                f"inside_project={ref.inside_project}{unsure}{scratch}{results}{memory}"
             )
         if action.domains or action.network:
             hosts = ", ".join(action.domains) or "-"

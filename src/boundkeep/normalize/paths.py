@@ -39,7 +39,9 @@ from __future__ import annotations
 import dataclasses
 import fnmatch
 import functools
+import ntpath
 import os
+import posixpath
 import re
 import stat
 import sys
@@ -59,7 +61,9 @@ __all__ = [
     "inside_project",
     "is_local_disk",
     "key_of_home",
+    "memory_for",
     "normalize_path",
+    "project_slug",
     "resolve_on_disk",
     "scratch_plain",
     "scratchpad_for",
@@ -290,7 +294,7 @@ def key_of_home(home: str) -> str:
 
 
 # --------------------------------------------------------------------------------------------
-# The session's own directories: the scratchpad and the tool-results directory
+# The session's own directories: the scratchpad, the tool-results directory, the project memory
 # --------------------------------------------------------------------------------------------
 
 # Claude Code's session ids are UUIDs and so is the name of the session's directory below
@@ -299,12 +303,17 @@ def key_of_home(home: str) -> str:
 # ``fullmatch``: no trailing newline is tolerated either.
 _SESSION_ID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", re.ASCII)
 # The segments below the root, in order: a literal name, the project slug (any one segment but
-# ``.`` / ``..``) or the session id. The slug is not recomputed from the project directory: Claude
-# Code's encoding of it varies (the drive letter's case differs between the CLI and VS Code).
+# ``.`` / ``..``) or the session id. Below a session id the slug is not recomputed from the
+# project directory: the id already picks one session. The project memory has no session id, so
+# there the slug must be one of the names computed for the current project (``memory_for``).
 _SLUG = "<slug>"
 _SESSION = "<session>"
 _SCRATCH_LAYOUT = ("claude", _SLUG, _SESSION, "scratchpad")  # below the temp directory
 _TOOL_RESULTS_LAYOUT = (".claude", "projects", _SLUG, _SESSION, "tool-results")  # below the home
+_MEMORY_LAYOUT = (".claude", "projects", _SLUG, "memory")  # below the home
+# Claude Code names a project's directory below ~/.claude/projects by turning every character of
+# its path that is not an ASCII letter or digit into "-" (``E:\boundkeep`` -> ``E--boundkeep``)
+_NOT_IN_SLUG = re.compile(r"[^A-Za-z0-9]")
 # What the path layer may have done to a path that still counts as "the scratchpad": spellings of
 # the SAME file (an NTFS stream name, one trailing dot, the ``\\?\`` / ``\\.\`` / ``\??\`` prefixes,
 # the on-disk resolved form). Anything else (a translated MSYS / Cygwin / WSL path, an admin share,
@@ -379,17 +388,33 @@ class SessionDir:
     somewhere else, makes the resolved form leave the resolved root.
 
     Only this exact session counts (the id compares without case), only below THIS machine's root
-    (the temp directory, ``temp_dir_text``, or the home), only one segment for the project slug,
-    and the literal names compare without case on Windows and exactly on POSIX. The root is
-    resolved on disk lazily, once, and only when a path got that far.
+    (the temp directory, ``temp_dir_text``, or the home), only one segment for the project slug
+    (one of ``slugs`` when they are given), and the literal names compare without case on Windows
+    and exactly on POSIX. The root is resolved on disk lazily, once, and only when a path got that
+    far.
     """
 
-    __slots__ = ("_resolved", "_resolved_done", "_root", "flavor", "layout", "session")
+    __slots__ = ("_resolved", "_resolved_done", "_root", "flavor", "layout", "session", "slugs")
 
-    def __init__(self, session: str, root: NormPath, layout: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        session: str,
+        root: NormPath,
+        layout: tuple[str, ...],
+        slugs: frozenset[str] | None = None,
+    ) -> None:
         self.session = session.casefold()
         self.flavor: Flavor = root.flavor
         self.layout = layout
+        # Windows keys are casefolded, so the names are too (the drive letter's case differs
+        # between the CLI and VS Code); POSIX keeps case
+        self.slugs = (
+            None
+            if slugs is None
+            else frozenset(s.casefold() for s in slugs)
+            if root.flavor == "windows"
+            else slugs
+        )
         self._root = root
         self._resolved: str | None = None
         self._resolved_done = False
@@ -438,6 +463,7 @@ class SessionDir:
         for part, want in zip(parts, self.layout, strict=False):
             if want == _SLUG:
                 ok = bool(part) and part not in (".", "..")
+                ok = ok and (self.slugs is None or part in self.slugs)
             elif want == _SESSION:
                 ok = part.casefold() == self.session
             elif self.flavor == "windows":
@@ -524,6 +550,50 @@ def tool_results_for(
         root = _session_root(home, platform)
         return None if root is None else SessionDir(session_id, root, _TOOL_RESULTS_LAYOUT)
     except Exception:  # noqa: BLE001 - never raise; None means "no tool-results directory"
+        return None
+
+
+def project_slug(text: str) -> str:
+    """Claude Code's name for the directory of ``text`` below ``~/.claude/projects``."""
+    return _NOT_IN_SLUG.sub("-", text)
+
+
+def memory_for(project: NormPath | None, platform: Platform, home: str | None) -> SessionDir | None:
+    """The current project's auto memory directory, ``<home>/.claude/projects/<slug>/memory``.
+
+    Claude Code derives ``<slug>`` from the git repository root, or the project root outside a
+    repository (code.claude.com/docs/en/memory, "Storage location", checked 2026-10-29). The git
+    root is the project directory or one of its ancestors and is not looked up here, so the slug of
+    the project directory and of each ancestor counts, up to but not including the home directory
+    or a drive / filesystem root (a session in one project must not read another project's notes,
+    and the home is not a project). Not recognized, so never "the memory": a slug Claude Code
+    shortens (a very long path), ``autoMemoryDirectory``, ``CLAUDE_CODE_PROJECT_DIR_NAME``, a
+    ``CLAUDE_CONFIG_DIR`` elsewhere. None when the project or the home is unusable. Pure, never
+    raises.
+    """
+    try:
+        if project is None or project.uncertain or project.is_device or not project.absolute:
+            return None
+        if not isinstance(home, str) or not home.strip():
+            return None
+        root = _session_root(home, platform)
+        if root is None:
+            return None
+        path_mod = ntpath if platform == "windows" else posixpath
+        same = (lambda a, b: a.casefold() == b.casefold()) if platform == "windows" else str.__eq__
+        stop = path_mod.normpath(home)
+        text = path_mod.normpath(project.raw)
+        slugs: set[str] = set()
+        for _ in range(64):  # a path deeper than this is not a project anyone launched
+            parent = path_mod.dirname(text)
+            if parent == text or same(text, stop):
+                break
+            slugs.add(project_slug(text))
+            text = parent
+        if not slugs:
+            return None
+        return SessionDir("", root, _MEMORY_LAYOUT, frozenset(slugs))
+    except Exception:  # noqa: BLE001 - never raise; None means "no memory directory"
         return None
 
 

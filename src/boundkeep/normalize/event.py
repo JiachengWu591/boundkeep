@@ -231,6 +231,7 @@ class _Ctx:
     rule_screen: subtree.RuleScreens | None = None  # path globs of the deny / ask rules, or None
     scratch: paths.SessionDir | None = None  # this session's scratchpad (None: no valid session)
     tool_results: paths.SessionDir | None = None  # this session's tool-results directory
+    memory: paths.SessionDir | None = None  # this project's auto memory directory
 
 
 @dataclass(slots=True)
@@ -744,6 +745,7 @@ def _make_ref(
     root = (ctx.root_resolved or ctx.root) if resolved else ctx.root
     scratch = ctx.scratch
     results = ctx.tool_results
+    memory = ctx.memory
     return PathRef(
         raw=raw,
         key=norm.key,
@@ -757,6 +759,9 @@ def _make_ref(
         in_session_tool_results=(
             not uncertain and results is not None and results.contains(norm, resolved=resolved)
         ),
+        in_project_memory=(
+            not uncertain and memory is not None and memory.contains(norm, resolved=resolved)
+        ),
         reasons=tuple(reasons),
     )
 
@@ -766,8 +771,8 @@ def _mark_hard_linked(refs: list[PathRef], resolved: paths.NormPath) -> list[Pat
 
     The file has another name somewhere else: inside the project it can be the policy, a settings
     file or a secret, and every rule that works on the name misses it. No allow rule may rely on
-    ``inside_project``, the scratchpad or the tool-results directory for it, and no deny rule may
-    skip it as a tool-results file (the deny / ask rules still see the name, and a
+    ``inside_project``, the scratchpad, the tool-results directory or the project memory for it,
+    and no deny rule may skip it as such a file (the deny / ask rules still see the name, and a
     ``path_outside_project`` rule sees "not known to be inside").
     """
     if paths.HARD_LINKED not in resolved.reasons:
@@ -778,6 +783,7 @@ def _mark_hard_linked(refs: list[PathRef], resolved: paths.NormPath) -> list[Pat
                 "inside_project": None if ref.inside_project is True else ref.inside_project,
                 "in_scratchpad": False,
                 "in_session_tool_results": False,
+                "in_project_memory": False,
                 "reasons": _with(ref.reasons, paths.HARD_LINKED),
             }
         )
@@ -1697,18 +1703,19 @@ def _budget_action(ctx: _Ctx, tool: str, exc: _BudgetExceeded, **extra: Any) -> 
 
 
 def _plain_operands(refs: Sequence[PathRef]) -> list[PathRef]:
-    """``refs`` with ``in_scratchpad`` and ``in_session_tool_results`` cleared on every path whose
-    name has a pattern character.
+    """``refs`` with ``in_scratchpad``, ``in_session_tool_results`` and ``in_project_memory``
+    cleared on every path whose name has a pattern character.
 
     The operand of a file or search tool is a path, not a pattern: a name with ``* ? [ ] { }`` in
     it (a Next.js ``[id]`` directory, a brace list) may mean more than it says to some tool, and the
-    session-directory rules do not guess: such a path is never "in the scratchpad" or "in the
-    tool-results directory". Only the operands of the tool (not the file name a Grep ``glob`` is
-    probed with, which nothing opens).
+    session-directory rules do not guess: such a path is never "in the scratchpad", "in the
+    tool-results directory" or "in the project memory". Only the operands of the tool (not the file
+    name a Grep ``glob`` is probed with, which nothing opens).
     """
+    marked = ("in_scratchpad", "in_session_tool_results", "in_project_memory")
     return [
-        ref.model_copy(update={"in_scratchpad": False, "in_session_tool_results": False})
-        if (ref.in_scratchpad or ref.in_session_tool_results) and not paths.scratch_plain(ref.key)
+        ref.model_copy(update=dict.fromkeys(marked, False))
+        if any(getattr(ref, name) for name in marked) and not paths.scratch_plain(ref.key)
         else ref
         for ref in refs
     ]
@@ -2251,6 +2258,7 @@ def normalize_event(
             rule_screen=None if rule_globs is None else subtree.rule_screens_for(tuple(rule_globs)),
             scratch=paths.scratchpad_for(base.get("session_id"), platform, env, home),
             tool_results=paths.tool_results_for(base.get("session_id"), platform, home),
+            memory=paths.memory_for(root, platform, home),
         )
         tool = payload.get("tool_name")
         if not isinstance(tool, str) or not tool:

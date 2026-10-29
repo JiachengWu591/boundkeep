@@ -19,10 +19,12 @@ The contract is docs/m1-design.md ("模块 D"); the short version:
   (``PathRef.in_scratchpad``, set by the normalizer; False whenever unsure). It combines with the
   other fields by AND and is checked like ``path_inside_project``: unknown is "no match".
   ``path_in_session_tool_results`` is the same for the current session's tool-results directory
-  (``PathRef.in_session_tool_results``).
+  (``PathRef.in_session_tool_results``), ``path_in_project_memory`` for the current project's
+  auto memory directory (``PathRef.in_project_memory``).
 * ``except_session_tool_results`` qualifies ``path_glob`` like ``access``: the glob is not checked
   against a path (a form of it) shown to be in the current session's tool-results directory. Each
   form counts on its own, so a link there that resolves elsewhere is still checked by its target.
+  ``except_project_memory`` is the same for the project's memory directory.
 * ``flags_none`` takes the same entries and the same case folding as ``flags_any`` and matches
   only if NONE of the action's flags equals a listed one (no flags: matches).
   ``paths_read_only`` matches only if EVERY path has access exactly ``read`` (``write`` and
@@ -197,6 +199,8 @@ def _glob_detail(match: Match, path: PathRef, rule: Rule) -> str | None:
         # this form of the path is shown to be in the current session's tool-results directory:
         # the glob is not checked against it (another form, or another path, still is)
         return None
+    if match.except_project_memory is not None and path.in_project_memory:
+        return None  # the same for the current project's memory directory
     if len(path.key) > MAX_KEY_LENGTH:
         if rule.action != "allow":
             return f"path_glob: key longer than {MAX_KEY_LENGTH} characters"
@@ -329,6 +333,11 @@ def _match_detail(
         details.append(
             "path_in_session_tool_results: every path is inside the session tool-results directory"
         )
+    if match.path_in_project_memory is not None:
+        # Same shape again, for the current project's auto memory directory.
+        if not action.paths or any(not p.in_project_memory for p in action.paths):
+            return None
+        details.append("path_in_project_memory: every path is inside the project memory directory")
     if match.paths_read_only is not None:
         # Exactly "read": "write" and "unknown" (may write) both fail. No paths: vacuously true.
         if any(p.access != "read" for p in action.paths):

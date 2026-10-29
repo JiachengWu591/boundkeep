@@ -485,6 +485,8 @@ MATCH_FIELD_SAMPLES: dict[str, Any] = {
     "path_in_scratchpad": True,
     "path_in_session_tool_results": True,
     "except_session_tool_results": None,  # only valid together with path_glob, covered below
+    "path_in_project_memory": True,
+    "except_project_memory": None,  # only valid together with path_glob (test_project_memory.py)
     "paths_read_only": True,
     "project_trusted": True,
     "network": True,
