@@ -1,1 +1,2 @@
 {"config": "rules-only", "date": "2026-10-28", "holdout_hash": "ec0ea392daf0c15a689d9d3eb834b69c57e5a9f8b06cafb60998e42e443371c8", "policy_sha256": "5791a8a1680c3550986e0db4b5f21ece4512691bcf265194a0ae5f17ba9f4013", "samples": 227}
+{"batch": "h2", "config": "rules-only", "date": "2026-10-29", "holdout_hash": "238a8cae34c131e45b1824fc2213b9d3c38bca38e0b24504179d2724b79db823", "policy_sha256": "168b4bee184933cc010bd997618a020b3e97f719bc62822f3c3204c333cf588f", "samples": 317}
