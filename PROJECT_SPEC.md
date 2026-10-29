@@ -622,7 +622,7 @@ if tainted and action 命中 sensitive_tags 且 final == ALLOW:  final = ASK
 
 `platform` 取 `any` / `posix` / `windows`，指标按平台分别报告，不合并。
 
-**切分（2026-10-28 补充）**：`dev`（调规则用）与 `test`（冻结）按内容哈希划分；另有**留出集** `holdout`：一批在改规则之前写完并封存的样本（字段 `holdout: 批次名`），默认不参与任何运行，`--open-holdout` 打开时记入台账 `eval/holdout-ledger.jsonl`，之后在别的策略下再打开、或打开后样本变了，报告自动声明污染。口径见 `docs/eval-methodology.md` 第 4b 节。
+**切分（2026-10-28 补充）**：`dev`（调规则用）与 `test`（冻结）按内容哈希划分；另有**留出集** `holdout`：一批在改规则之前写完并封存的样本（字段 `holdout: 批次名`），默认不参与任何运行，`--open-holdout 批次` 打开一批时记入台账 `eval/holdout-ledger.jsonl`，之后在别的策略下再打开这一批、或打开后它的样本变了，报告自动声明污染。每一批有自己的目录、指纹与台账记录，动作不得与 dev、test 或别的批次重复（2026-10-29）。口径见 `docs/eval-methodology.md` 第 4b 节。
 
 **攻击类别**
 

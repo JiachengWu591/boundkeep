@@ -1,6 +1,9 @@
-# 写留出集 h1 的攻击样本
+# 写留出集的攻击样本（当前批次 h2）
 
-留出集是一批**在改规则之前**写完、封存的样本，用来给之后的规则一个无偏的数字（`docs/eval-methodology.md` 第 4b 节）。正常样本那一半已经在 M2-rules-3 的规则改动之前封存（真实会话 127 条、合成 42 条，共 169 条，指纹 `0aacd20fdef20db6`），攻击这一半由你来写。
+留出集是一批**在改规则之前**写完、封存的样本，用来给之后的规则一个无偏的数字（`docs/eval-methodology.md` 第 4b 节）。每一批有自己的目录、指纹与台账记录：
+
+- **h1**（`eval/datasets/holdout/h1/`）：2026-10-28 打开过一次，之后规则改过，**已被污染**，不再用来给新规则打分。
+- **h2**（`eval/datasets/holdout/h2/`）：正常样本那一半来自你在其他项目里的真实会话（使用者逐条确认后入库）；攻击这一半由你来写。规则冻结在提交 `53159b4`，从现在到 h2 打开之前不改规则。
 
 ## 写多少
 
@@ -17,11 +20,13 @@
 
 `injection-deviation`（同一个动作、不同任务意图的成对样本）这个工具不支持，这一批不写。
 
-**最重要的一条：写的时候不要去看 `policies/` 里的规则，也不要先跑一遍看结果。** 描述规则的文件同样不要看：`docs/policy-reference.md`、`docs/reports/M2-rules-3.md`、`docs/reviews/M2-rules-3-review.md` 和 `tests/`。 按“攻击者会怎么做”来写，而不是按“规则会不会拦”来写；样本要能代表攻击，而不是代表规则。`ask` 还是 `deny` 按你自己的产品判断填：你认为这件事**必须被直接拒绝**就写 `deny`，问一次就够就写 `ask`。不用管现在的规则给什么。
+**最重要的一条：写的时候不要去看规则，也不要先跑一遍看结果。** 不要看的文件：`policies/`、`docs/policy-reference.md`、`docs/reports/`、`docs/reviews/`、`tests/`、`eval/report.md`、`eval/results/`（后两个列着漏报和误报）。起草用的模型同样不能看这些。按“攻击者会怎么做”来写，而不是按“规则会不会拦”来写；样本要能代表攻击，而不是代表规则。`ask` 还是 `deny` 按你自己的产品判断填：你认为这件事**必须被直接拒绝**就写 `deny`，问一次就够就写 `ask`。不用管现在的规则给什么。
+
+h1 的教训：h1 的攻击样本写在你读过我对那批规则改动的汇总之后，报告只能把这一点写成偏差。h2 这一次，写完之前请不要再读我对规则的任何汇总。
 
 ## 格式
 
-每个类别一个文本文件，放在 `eval/authoring/`（比如 `h1-exfil.txt`），一行一条，字段之间用 ` ### `（前后各一个空格）分隔：
+每个类别一个文本文件，放在 `eval/authoring/`（比如 `h2-exfil.txt`），一行一条，字段之间用 ` ### `（前后各一个空格）分隔：
 
 ```
 平台 ### 工具 ### 要求 ### 命令或路径或输入 ### 为什么是恶意的 [### tainted]
@@ -38,28 +43,24 @@
 - URL 只能用保留域名：`.invalid`、`.example`、`.test`、`.localhost`、`example.com`、`example.org`、`example.net`
 - 用户目录只能是 `testuser`（`C:\Users\testuser\...`、`/home/testuser/...`），项目目录是 `C:\Users\testuser\proj` / `/home/testuser/proj`
 - 不要放真实的密钥；需要“秘密”的地方写 `CANARY-...`
-- 不能和 dev / test 里已有的动作完全相同（工具会报 `repeats an action`，改一下写法即可）
+- 不能和 dev、test 或 h1 里已有的动作完全相同（工具会报 `repeats an action`，改一下写法即可）
 
 ## 怎么生成
 
 每写完一个文件，在仓库根目录运行（文件可以反复改、反复运行，输出每次重写）：
 
 ```bash
-uv run python eval/add_samples.py eval/authoring/h1-exfil.txt --category exfil --holdout h1
+uv run python eval/add_samples.py eval/authoring/h2-exfil.txt --category exfil --holdout h2 --provenance llm-assisted
 ```
 
-输出在 `eval/datasets/holdout/<类别>.jsonl`，样本 id 是 `hold-atk-...`，标记为已确认（你自己写的）。
-
-如果这些行是借助模型起草的，加上 `--provenance llm-assisted`，来源如实记录（默认是 `handwritten`）；打开留出集时，报告“样本来源”那一行会把它们算作由 LLM 助手起草。两种情况下运行这条命令都等于确认：每一行你都看过，并认同“要求”那一列。起草用的模型同样不能看 `policies/` 和上面那几个描述规则的文件。全部写完后：
+输出在 `eval/datasets/holdout/h2/<类别>.jsonl`，样本 id 是 `hold-h2-atk-...`，标记为已确认。`--provenance llm-assisted` 表示这些行借助模型起草；完全自己手写就去掉它（默认 `handwritten`）。运行这条命令等于确认：每一行你都看过，并认同“要求”那一列。全部写完后：
 
 ```bash
 uv run python eval/run_eval.py --check
 ```
 
-它会打印 `holdout` 指纹。**不要加 `--open-holdout`**：那会测留出集并记进台账，之后规则一改，它就被判为已污染。
+它会打印每一批的指纹（`holdout h1 …, h2 …`）。**不要加 `--open-holdout`**：那会测这一批并记进台账，之后规则一改，它就被判为已污染。
 
 ## 写完之后
 
-告诉我写完了。我只跑自动检查（格式、惰性、不与 dev / test 重复）并记下指纹，**不看你写的攻击样本的内容**；提交由你决定。
-
-规则已经在 M2-rules-3 改完并冻结（提交 `0210b85`），所以攻击这一半写在规则改动之后，报告会写明这一点。写完之后、下一次改规则（M3a、L-1 等）之前，用 `--open-holdout` 打开留出集一次，测的就是这一批规则；之后再改规则再打开，台账会自动声明污染。
+告诉我写完了。我只跑自动检查（格式、惰性、不与 dev / test / h1 重复）并记下指纹，**不看你写的攻击样本的内容**；提交由你决定。之后、下一次改规则（M3a、L-1 等）之前，用 `--open-holdout h2` 打开一次，测的就是冻结的这一批规则。
