@@ -1,7 +1,7 @@
 """Turn a plain text list of attack samples you wrote into a validated dataset file.
 
     python eval/add_samples.py eval/authoring/obfuscation.txt --category obfuscation
-    python eval/add_samples.py eval/authoring/h1-exfil.txt --category exfil --holdout h1
+    python eval/add_samples.py eval/authoring/h2-exfil.txt --category exfil --holdout h2
 
 The input is one sample per line, fields separated by `` ### `` (blank lines and lines starting with
 ``#`` are ignored):
@@ -19,9 +19,10 @@ input every time, so fix a line and run it again. Nothing is written unless the 
 including your new lines, validates; the error names the input line. Sample ids start at 100.
 
 ``--holdout BATCH`` writes samples of the sealed holdout batch instead (docs/eval-methodology.md
-4b): ids ``hold-<prefix>-001`` and up, output ``eval/datasets/holdout/<category>.jsonl``, and an
-action that is already in dev or test is rejected. injection-deviation is not offered here: its
-samples come in pairs with a benign twin.
+4b): ids ``hold-<batch>-<prefix>-001`` and up, output
+``eval/datasets/holdout/<batch>/<category>.jsonl``, and an action that is already in dev, test or
+another batch is rejected (h1's ids, written before there was a second batch, have no batch name
+in them). injection-deviation is not offered here: its samples come in pairs with a benign twin.
 
 ``--provenance llm-assisted`` records that a model drafted the lines (the default is
 ``handwritten``). Either way the samples are written as confirmed: running the command says you
@@ -107,7 +108,7 @@ def build(
     provenance: str = "handwritten",
 ) -> list[dict[str, object]]:
     out = []
-    prefix = f"hold-{PREFIX[category]}" if holdout else PREFIX[category]
+    prefix = f"hold-{holdout}-{PREFIX[category]}" if holdout else PREFIX[category]
     first = FIRST_HOLDOUT_NUMBER if holdout else FIRST_NUMBER
     for index, row in enumerate(rows):
         full: dict[str, object] = {
@@ -145,8 +146,11 @@ def main(argv: list[str] | None = None) -> int:
         help="llm-assisted when a model drafted the lines (default: handwritten)",
     )
     args = p.parse_args(argv)
+    if args.holdout and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,31}", args.holdout):
+        print("add_samples: --holdout takes a short lowercase batch name", file=sys.stderr)  # noqa: T201
+        return 1
     if args.holdout:
-        out: Path = args.out or args.datasets / "holdout" / f"{args.category}.jsonl"
+        out: Path = args.out or args.datasets / "holdout" / args.holdout / f"{args.category}.jsonl"
     else:
         out = args.out or args.datasets / "attacks" / f"{args.category}-v2.jsonl"
     try:
@@ -166,9 +170,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if not parsed:
         print("add_samples: no sample lines found", file=sys.stderr)  # noqa: T201
-        return 1
-    if args.holdout and not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,31}", args.holdout):
-        print("add_samples: --holdout takes a short lowercase batch name", file=sys.stderr)  # noqa: T201
         return 1
     rows = build(parsed, args.category, args.holdout, args.provenance)
     try:

@@ -212,54 +212,51 @@ def limitations(
 
 
 def _holdout_lines(info: dict[str, Any]) -> list[str]:
-    n = info.get("holdout_samples", 0)
-    if not n:
-        return []
-    fingerprint = str(info.get("holdout_hash", ""))[:16]
-    earlier = info.get("holdout_earlier_openings", 0)
-    if not info.get("holdout_opened"):
+    return [_batch_line(batch) for batch in info.get("holdout_batches", [])]
+
+
+def _batch_line(batch: dict[str, Any]) -> str:
+    name, earlier = batch["batch"], batch["earlier_openings"]
+    head = f"- 留出集 {name}（{batch['samples']} 条，指纹 `{str(batch['hash'])[:16]}…`）"
+    if not batch["opened"]:
         if not earlier:
-            return [
-                f"- 留出集 {n} 条已封存（指纹 `{fingerprint}…`），这次运行没有打开，"
-                "上面的数字里没有它。"
-            ]
+            return head + "已封存，这次运行没有打开，上面的数字里没有它。"
         line = (
-            f"- 留出集（{n} 条，指纹 `{fingerprint}…`）已经打开过 {earlier} 次"
-            "（`eval/holdout-ledger.jsonl`），这次运行没有打开，上面的数字里没有它。"
+            head + f"已经打开过 {earlier} 次（`eval/holdout-ledger.jsonl`），这次运行没有打开，"
+            "上面的数字里没有它。"
         )
-        if info.get("holdout_contaminated"):
+        if batch["contaminated"]:
             line += (
-                f"**它已被污染**：{info.get('holdout_contamination_why', '')}；"
-                "再打开得到的数字不是无偏估计，需要一个新的留出集。"
+                f"**它已被污染**：{batch['contamination_why']}；"
+                "再打开得到的数字不是无偏估计，需要一个新的留出批次。"
             )
-        return [line]
-    if info.get("holdout_contaminated"):
-        return [
-            f"- **留出集已被污染**：{info.get('holdout_contamination_why', '')}。这次的留出集数字"
-            "只能当作参考，不能作为无偏估计；需要一个新的留出集。"
-        ]
+        return line
+    if batch["contaminated"]:
+        return (
+            f"- **留出集 {name} 已被污染**：{batch['contamination_why']}。这次的留出集数字"
+            "只能当作参考，不能作为无偏估计；需要一个新的留出批次。"
+        )
     if earlier:
-        return [
-            f"- 留出集（{n} 条，指纹 `{fingerprint}…`）在同一份策略下已经打开过 {earlier} 次，"
-            "策略与样本都没有变，数字仍然有效。"
-        ]
-    return [
-        f"- 留出集（{n} 条，指纹 `{fingerprint}…`）第一次打开，记在 `eval/holdout-ledger.jsonl`。"
-        "从现在起，只要规则或留出集样本再变，之后打开的结果就会被自动声明为已污染。"
-    ]
+        return head + f"在同一份策略下已经打开过 {earlier} 次，策略与样本都没有变，数字仍然有效。"
+    return (
+        head + "第一次打开，记在 `eval/holdout-ledger.jsonl`。从现在起，只要规则或这一批样本"
+        "再变，之后打开的结果就会被自动声明为已污染。"
+    )
+
+
+def _batch_state(batch: dict[str, Any]) -> str:
+    if batch["opened"]:
+        return "这次打开，已污染" if batch["contaminated"] else "这次打开"
+    if batch["earlier_openings"]:
+        return "以前打开过，" + ("已污染，" if batch["contaminated"] else "") + "这次未打开"
+    return "封存，未打开"
 
 
 def to_markdown(metrics: dict[str, Any], samples: Sequence[Sample], info: dict[str, Any]) -> str:
-    holdout_note = ""
-    if info.get("holdout_samples"):
-        if info.get("holdout_opened"):
-            state = "已打开"
-        elif info.get("holdout_earlier_openings"):
-            state = "以前打开过，已污染" if info.get("holdout_contaminated") else "以前打开过"
-            state += "，这次未打开"
-        else:
-            state = "封存，未打开"
-        holdout_note = f"，holdout 指纹 `{str(info['holdout_hash'])[:16]}…`（{state}）"
+    holdout_note = "".join(
+        f"；留出集 {b['batch']} 指纹 `{str(b['hash'])[:16]}…`（{_batch_state(b)}）"
+        for b in info.get("holdout_batches", [])
+    )
     lines = [
         "# 评测报告（生成物，不要手改）",
         "",

@@ -3,6 +3,7 @@
     boundkeep eval import-session PATH...   redact a Claude Code session into candidate samples
     boundkeep eval confirm FILE --ids ...   mark samples a person has reviewed (user command)
     boundkeep eval promote FILE             move the confirmed samples into eval/datasets/benign
+                                            (a holdout batch's into eval/datasets/holdout/<batch>)
 
 Imported samples land in ``eval/staging/`` (git-ignored) with ``label_confirmed: false`` and a
 review sheet next to them. Nothing reaches ``eval/datasets`` until a person confirmed it and ran
@@ -90,7 +91,8 @@ def cmd_import(args: argparse.Namespace) -> int:
     out = Path(args.out)
     try:
         known = _known_keys(Path(args.datasets))
-        tuned = {action_key(s) for s in _existing(Path(args.datasets)) if s.split != "holdout"}
+        # dev, test and every other holdout batch: the same action there would leak into this one
+        tuned = {action_key(s) for s in _existing(Path(args.datasets)) if s.holdout != args.holdout}
     except dataset.DatasetError:
         return EXIT_PROBLEM
     rows: list[dict[str, Any]] = []
@@ -177,9 +179,13 @@ def cmd_promote(args: argparse.Namespace) -> int:
     except dataset.DatasetError as exc:
         console.err(f"boundkeep eval promote: {exc}")
         return EXIT_PROBLEM
-    # a holdout sample goes to the sealed holdout directory, every other one to benign/
+    # a holdout sample goes to its sealed batch's directory, every other one to benign/
     targets = {
-        item.sample.id: datasets / ("holdout" if item.sample.holdout else "benign") / PROMOTED
+        item.sample.id: (
+            datasets / "holdout" / item.sample.holdout / PROMOTED
+            if item.sample.holdout
+            else datasets / "benign" / PROMOTED
+        )
         for item in ready
     }
     ready_ids = set(targets)
@@ -235,7 +241,8 @@ def add_parser(sub: Any) -> None:
     q.add_argument(
         "--holdout",
         metavar="BATCH",
-        help="candidates for the sealed holdout batch BATCH (actions already in dev/test dropped)",
+        help="candidates for the sealed holdout batch BATCH (actions already in dev, test or "
+        "another batch are dropped)",
     )
     q.set_defaults(func=cmd_import)
 

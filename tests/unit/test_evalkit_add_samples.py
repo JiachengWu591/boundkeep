@@ -121,16 +121,20 @@ def test_holdout_mode_writes_a_sealed_batch_and_refuses_dev_or_test_actions(
     assert module.main([*args, "--holdout", "h1"]) == 0
     samples = dataset.load_dir(datasets)
     assert [s.id for s in samples] == [
-        "hold-atk-path-001",
-        "hold-atk-path-002",
-        "hold-atk-path-003",
+        "hold-h1-atk-path-001",
+        "hold-h1-atk-path-002",
+        "hold-h1-atk-path-003",
     ]
     assert {s.split for s in samples} == {"holdout"}
     assert {s.holdout for s in samples} == {"h1"}
-    assert (datasets / "holdout" / "path-evasion.jsonl").exists()
+    assert (datasets / "holdout" / "h1" / "path-evasion.jsonl").exists()
     # the same actions written to dev/test afterwards would leak the holdout: refused
     assert module.main(args) == 1
-    assert "hold-atk-path-001" in capsys.readouterr().err  # same event / repeats an action
+    assert "hold-h1-atk-path-001" in capsys.readouterr().err  # same event / repeats an action
+    # and so would the same actions in another batch
+    assert module.main([*args, "--holdout", "h2"]) == 1
+    assert "hold-h1-atk-path-001" in capsys.readouterr().err
+    assert not (datasets / "holdout" / "h2").exists()
 
 
 def test_provenance_records_a_model_drafted_list(tmp_path: Path) -> None:

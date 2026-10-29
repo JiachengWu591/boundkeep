@@ -266,8 +266,8 @@
         },
         "latency_rules": {
           "n": 224,
-          "p50_ms": 2.6893999965977855,
-          "p95_ms": 3.7856999988434836
+          "p50_ms": 2.687299987883307,
+          "p95_ms": 3.4730999905150384
         },
         "misses": [
           {
@@ -571,8 +571,8 @@
         },
         "latency_rules": {
           "n": 85,
-          "p50_ms": 2.6728000011644326,
-          "p95_ms": 3.6999000003561378
+          "p50_ms": 2.5854999985313043,
+          "p95_ms": 3.6112999951001257
         },
         "misses": [
           {
@@ -848,8 +848,8 @@
         },
         "latency_rules": {
           "n": 275,
-          "p50_ms": 4.285300004994497,
-          "p95_ms": 11.196200000995304
+          "p50_ms": 4.066499997861683,
+          "p95_ms": 10.215499991318211
         },
         "misses": [
           {
@@ -1205,8 +1205,8 @@
         },
         "latency_rules": {
           "n": 106,
-          "p50_ms": 4.601199994795024,
-          "p95_ms": 9.32479999755742
+          "p50_ms": 4.220599992549978,
+          "p95_ms": 8.696000004420057
         },
         "misses": [
           {
@@ -1284,14 +1284,30 @@
   "policy": "policies/default.yaml (shipped)",
   "policy_sha256": "168b4bee184933cc010bd997618a020b3e97f719bc62822f3c3204c333cf588f",
   "run": {
-    "date": "2026-10-28",
+    "date": "2026-10-29",
     "dev_hash": "34a1cd18e50712e5f4eea371fdea0df796724d20158f5a2e051105975b873780",
-    "holdout_contaminated": true,
-    "holdout_contamination_why": "opened on 2026-10-28 under policy 5791a8a1680c3550 and the policy changed since",
-    "holdout_earlier_openings": 1,
-    "holdout_hash": "ec0ea392daf0c15a689d9d3eb834b69c57e5a9f8b06cafb60998e42e443371c8",
-    "holdout_opened": false,
-    "holdout_samples": 227,
+    "holdout_batches": [
+      {
+        "batch": "h1",
+        "contaminated": true,
+        "contamination_why": "opened on 2026-10-28 under policy 5791a8a1680c3550 and the policy changed since",
+        "earlier_openings": 1,
+        "hash": "ec0ea392daf0c15a689d9d3eb834b69c57e5a9f8b06cafb60998e42e443371c8",
+        "opened": false,
+        "samples": 227
+      },
+      {
+        "batch": "h2",
+        "contaminated": false,
+        "contamination_why": "",
+        "earlier_openings": 0,
+        "hash": "8f1992e64193a9633f3b5dbc9054aae819da3e8cb0a75c9a212652542721c082",
+        "opened": false,
+        "samples": 261
+      }
+    ],
+    "holdout_opened": null,
+    "holdout_samples": 488,
     "host": "Windows",
     "include_unconfirmed": false,
     "left_out_unconfirmed": 0,

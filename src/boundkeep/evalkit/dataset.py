@@ -126,14 +126,21 @@ def validate(located: Sequence[Located]) -> list[Sample]:
         if sample.category == "injection-deviation" and sample.pair is None:
             raise DatasetError(f"{where}: an injection-deviation sample needs a pair key")
     # a holdout sample measures rules that were never tuned on it: the same action (with another
-    # task intent) already in dev or test would leak it back
-    tuned = {action_key(item.sample) for item in located if item.sample.split != "holdout"}
+    # task intent) already in dev or test would leak it back, and so would one in another batch
+    # (a batch that was opened has been looked at, like test)
+    tuned = {action_key(item.sample) for item in located if item.sample.holdout is None}
+    batch_of: dict[str, str] = {}
     for item in located:
-        if item.sample.split == "holdout" and action_key(item.sample) in tuned:
-            raise DatasetError(
-                f"{item.file}:{item.line}: holdout sample {item.sample.id!r} repeats an action "
-                "that is already in dev or test"
-            )
+        batch = item.sample.holdout
+        if batch is None:
+            continue
+        key = action_key(item.sample)
+        where = f"{item.file}:{item.line}: holdout sample {item.sample.id!r} repeats an action"
+        if key in tuned:
+            raise DatasetError(f"{where} that is already in dev or test")
+        owner = batch_of.setdefault(key, batch)
+        if owner != batch:
+            raise DatasetError(f"{where} of holdout batch {owner!r}")
     return [item.sample for item in located]
 
 
@@ -142,6 +149,20 @@ def split_hash(samples: Iterable[Sample], split: Split) -> str:
     chosen = sorted((s.id, content_key(s), s.label) for s in samples if s.split == split)
     blob = json.dumps(chosen, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
+
+
+def batches(samples: Iterable[Sample]) -> list[str]:
+    """The holdout batches present, sorted by name."""
+    return sorted({s.holdout for s in samples if s.holdout is not None})
+
+
+def batch_hash(samples: Iterable[Sample], batch: str) -> str:
+    """The fingerprint of one holdout batch: ``split_hash`` over that batch's samples alone.
+
+    With one batch it equals the fingerprint of the whole holdout split, which is what the ledger
+    recorded before there was a second batch.
+    """
+    return split_hash((s for s in samples if s.holdout == batch), "holdout")
 
 
 def counts(samples: Iterable[Sample]) -> dict[str, Counter[str]]:
@@ -206,10 +227,17 @@ def confirm_file(
     return changed
 
 
-def sealed(samples: Iterable[Sample]) -> tuple[list[Sample], list[Sample]]:
-    """(the samples a normal run measures, the holdout samples it must leave alone)."""
+def sealed(
+    samples: Iterable[Sample], opened: str | None = None
+) -> tuple[list[Sample], list[Sample]]:
+    """(the samples a run measures, the holdout samples it must leave alone).
+
+    ``opened``: the one holdout batch this run measures along with dev and test; every other batch
+    stays sealed.
+    """
     items = list(samples)
-    return [s for s in items if s.split != "holdout"], [s for s in items if s.split == "holdout"]
+    measured = [s for s in items if s.holdout is None or s.holdout == opened]
+    return measured, [s for s in items if s.holdout is not None and s.holdout != opened]
 
 
 def only_confirmed(samples: Iterable[Sample]) -> tuple[list[Sample], int]:

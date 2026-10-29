@@ -486,7 +486,7 @@ def import_session(
 
     ``known``: event keys already present (in the datasets or from earlier files); extended here.
     ``holdout``: the sealed batch the candidates are for (ids ``hold-real-...``); an action that is
-    already in dev or test (``tuned_actions``, whatever its task intent) is dropped.
+    already in dev, test or another batch (``tuned_actions``, whatever its task intent) is dropped.
     """
     stats.files += 1
     entries = _entries(path)
@@ -550,7 +550,7 @@ def import_session(
                 stats.drop("duplicate")
                 continue
             if holdout and tuned_actions is not None and action_key(sample) in tuned_actions:
-                stats.drop("already-in-dev-or-test")
+                stats.drop("already-in-dev-test-or-another-batch")
                 continue
             shape = call_shape(name, row["input"])
             if shape_limit and stats.shapes[shape] >= shape_limit:
