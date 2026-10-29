@@ -330,6 +330,7 @@ event(pre) ─> normalize ─> Action
 - **用户声明只读的 MCP 工具**：策略顶层键 `mcp_read_only`（列表，`mcp__服务名__工具名`，工具名部分可以以 `*` 结尾，服务名不能用通配符，默认空）与匹配字段 `mcp_read_only: true`。声明过的工具，若唯一的灰色原因是 `mcp-tool-not-reviewed`，可以被带这个字段的 allow 规则放行；参数里有看起来是写操作的 SQL（`mcp-sql-not-read-only`）、命令参数、项目外路径或白名单外的主机时仍然不放行。策略文件本身不可被 agent 写，所以声明只能由用户自己改。strict 策略没有这条 allow。
 - **网络目的地**：匹配字段 `destination: known | unknown`（`known`：动作至少有一个已知域名；`unknown`：网络动作但没有已知域名）。默认策略把"目的地无法确定"（`net-unknown-destination`）与"主机不在白名单"（`net-allowlist`）拆成两条，理由各自准确；白名单补上常见生态的包源与源码主机。规则层仍然分不清"上传制品"与"外传"，两者都问。
 - **持久化与递归删除的默认取舍**：项目**之外**的持久化（shell 启动文件、自启动项与用户服务、PowerShell profile 与启动文件夹、`/etc` 等系统配置、`~/.ssh`、`crontab` 安装、`systemctl enable` / `launchctl load` 等服务注册、计划任务与服务注册、WMI 订阅、本地账户、Defender 与防火墙改动、执行策略、`bcdedit`、`takeown`、关机），以及项目之外的 `find -delete` 与递归改权限、格式化与分区工具，默认策略由 `ask` 改为 `deny`。项目**之内**的自动运行文件（`package.json`、`.git/hooks` 等）与 `~/.local/bin`、`~/bin` 仍是 `ask`。理由：这些动作在编码任务里几乎没有正当用途，而一次被疲劳点掉的确认就会让代码在会话之外长期运行；需要时由用户自己做。strict 至少同样严格。
+- **当前会话的 tool-results 目录**（留出集 h1 打开之后，使用者批准；h1 因此被污染）：Claude Code 把过长的工具输出存在 `~/.claude/projects/<slug>/<会话 id>/tool-results/` 并让 agent 去读。归一化层像 scratchpad 一样标记**当前会话**这个目录里的路径（`PathRef.in_session_tool_results`）；匹配字段 `except_session_tool_results` 像 `access` 一样修饰 `path_glob`，让 deny 规则不拿这样的路径比较，`path_in_session_tool_results` 供 allow 规则用。默认策略把 `.claude/projects/**` 拆成带这个例外的 `no-session-transcript-read`，并让 `Read` / `Grep` / `Glob` 只读这个目录（`allow-session-tool-results-read`）；别的会话、会话记录、子代理日志照旧 deny，shell 读不再拒绝但仍会问，strict 不变。
 
 **Action（归一化后的动作）**
 

@@ -42,7 +42,7 @@ rules:
 
 **路径规则不要写 `tool:`。** Read、Grep、Glob、Bash、PowerShell 等都会带路径，只列其中几个的读规则等于给其余的留了绕行的路（`Grep` 读 `.env` 曾因此被放行）。内置的所有读类 deny / ask 规则都没有 `tool:`，也没有 `platform:`：Windows 凭据、浏览器、持久化类的 glob 在纯 Linux 上本来就匹配不到任何东西，而 WSL 里看到的 `/mnt/c/Users/x/.ssh/config`（键 `c:/users/x/...`）要靠不依赖主目录的 `**/users/*/...` 写法拦住。
 
-**`tool` 的校验。** 每个名字必须是已知工具（`Bash`、`PowerShell`、`Read`、`Write`、`Edit`、`MultiEdit`、`NotebookEdit`、`Glob`、`Grep`、`WebFetch`、`WebSearch`、`ToolSearch`、`TodoWrite`、`Agent`，以及 `Task`、`BashOutput`、`KillShell`、`ExitPlanMode`、`AskUserQuestion`、`Skill`、`SlashCommand`），或以 `mcp__` 开头，或是这些的前缀星号写法（`mcp__github__*`）。其余一律是加载错误并给出 "did you mean"（`Bsh` → `Bash`；大小写敏感）。只列了不碰路径的工具（`WebSearch`、`Agent` 等）却写了路径条件（`path_glob`、`access`、`path_outside_project`、`path_inside_project`、`path_in_scratchpad`）也是错误：规则永远不会命中。
+**`tool` 的校验。** 每个名字必须是已知工具（`Bash`、`PowerShell`、`Read`、`Write`、`Edit`、`MultiEdit`、`NotebookEdit`、`Glob`、`Grep`、`WebFetch`、`WebSearch`、`ToolSearch`、`TodoWrite`、`Agent`，以及 `Task`、`BashOutput`、`KillShell`、`ExitPlanMode`、`AskUserQuestion`、`Skill`、`SlashCommand`），或以 `mcp__` 开头，或是这些的前缀星号写法（`mcp__github__*`）。其余一律是加载错误并给出 "did you mean"（`Bsh` → `Bash`；大小写敏感）。只列了不碰路径的工具（`WebSearch`、`Agent` 等）却写了路径条件（`path_glob`、`access`、`path_outside_project`、`path_inside_project`、`path_in_scratchpad`、`path_in_session_tool_results`）也是错误：规则永远不会命中。
 
 ### match 字段
 
@@ -57,6 +57,8 @@ rules:
 | `path_outside_project: true` | 任一路径**不能确定**在项目内（`inside_project` 为 false 或 null）即匹配；没有路径时不匹配。与 `path_glob` / `access` 同用时见下面的"同一条路径" |
 | `path_inside_project: true` | 至少一个路径，且**每个**路径都**确定**在项目内。这是 allow 侧用的，不确定不算。不能和 `path_outside_project` 同写（永远不会命中，加载报错） |
 | `path_in_scratchpad: true` | 至少一个路径，且**每个**路径（每个形式：键入的字面形式与符号链接 / junction / 短名字解析后的形式）都**确定**在**当前会话的 scratchpad** 里或就是它（Claude Code 给 agent 放中间文件的目录 `<临时目录>/claude/<项目 slug>/<会话 id>/scratchpad`，见"Session scratchpad"一节）。由归一化层写在 `PathRef.in_scratchpad`，任何不确定都是 false。这是 allow 侧用的，与 `path_inside_project` 一样：不知道就不匹配。与其他字段 AND；**单独写它不满足** allow 规则必须点名工具或程序的加载检查；只列不碰路径的工具时加载报错。`boundkeep explain` 的明细行是 `path_in_scratchpad: every path is inside the session scratchpad` |
+| `path_in_session_tool_results: true` | 与 `path_in_scratchpad` 同样的判断，对象是**当前会话的 tool-results 目录** `<主目录>/.claude/projects/<项目 slug>/<会话 id>/tool-results`（Claude Code 把过长的工具输出存在这里，再让 agent 去读，见"Session tool-results"一节）。由归一化层写在 `PathRef.in_session_tool_results`，任何不确定都是 false；allow 侧用，不知道就不匹配 |
+| `except_session_tool_results: true` | 像 `access` 一样**修饰 `path_glob`**（没有 `path_glob` 时加载报错）：一个路径（的某个形式）确定在当前会话的 tool-results 目录里时，`path_glob` 不拿它比较。每个形式单独判断，所以目录里指向别处的链接仍按它解析后的目标比较。给 deny 规则开一个精确的口子用 |
 | `paths_read_only: true` | **每个**路径的访问方式都恰好是 `read`。`write` 与 `unknown`（可能写）都不算只读；没有任何路径的动作匹配（`pwd`、`echo hi`，空真）。与其他字段 AND，不要求路径在项目内（要的话再写 `path_inside_project`）。这是 allow 侧用的；写在 deny / ask 规则里时，访问方式为 `unknown` 的路径不会让它命中 |
 | `project_trusted: true` | 该动作的**项目目录**等于或位于顶层 `trusted_projects` 的某一项之内才匹配（见"受信任的项目"）。项目目录未知、不确定、过宽（文件系统根、盘符根、主目录或其祖先），或会话的工作目录不在项目内时，不匹配。**单独写它不满足** allow 规则必须点名工具或程序的加载检查。失败方向：allow 规则里任何问题都算不匹配；deny / ask 规则里"无法判断项目是否受信任"算匹配（已知不受信任才不匹配） |
 | `network: true` | 该动作联网 |
@@ -138,7 +140,7 @@ tests:
   - { tool: Bash, cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "rm -rf build" }, expect: gray }
 ```
 
-`expect` 取 `deny | ask | allow | gray`（`gray` = 规则层不应定案，用来防止规则过宽）。可选字段 `platform`、`cwd`、`project_dir`，以及 `session_id`（事件的会话 id，默认是一个不是 UUID 的固定值，所以默认没有任何路径在"会话 scratchpad"里；测 `path_in_scratchpad` 要写一个 UUID）。`boundkeep test [--policy 文件] [--platform windows|posix|all]` 用**假机器**（Windows：`C:\Users\testuser`，POSIX：`/home/testuser`）跑真实的管线，所以 Windows 路径的用例在任何平台都能通过；默认两个平台都跑。
+`expect` 取 `deny | ask | allow | gray`（`gray` = 规则层不应定案，用来防止规则过宽）。可选字段 `platform`、`cwd`、`project_dir`，以及 `session_id`（事件的会话 id，默认是一个不是 UUID 的固定值，所以默认没有任何路径在"会话 scratchpad"或会话的 tool-results 目录里；测 `path_in_scratchpad` 或 tool-results 要写一个 UUID）。`boundkeep test [--policy 文件] [--platform windows|posix|all]` 用**假机器**（Windows：`C:\Users\testuser`，POSIX：`/home/testuser`）跑真实的管线，所以 Windows 路径的用例在任何平台都能通过；默认两个平台都跑。
 
 `boundkeep explain <事件.json|->` 用**本机的真实环境**（你的主目录与环境变量、事件里的 `cwd` 与 `project_dir`）解释一个事件：每个动作的程序、路径（规范键与 `inside_project`）、域名、风险标签、命中的规则、最终判决和 hook 实际会输出什么。
 
@@ -167,7 +169,9 @@ tests:
 | `ask-git-internals-write`（strict 同名，同为 ask） | ask | 写 `**/.git/**`：HEAD、refs、index、对象库、`info/attributes`，以及子模块与 worktree 里的 hooks 和 config（`.git/modules/x/hooks/...`、`.git/modules/x/config`），较窄的 `ask-repo-exec-config`（`.git/hooks`、`.git/config`）够不着这些。git 自己会写这些文件，shell 里的 git 命令不会点名 `.git` 路径 |
 | `no-secret-read` | deny | 读 `.env`、`.env.*`、`*.env`、名为 `env` 的文件、`.envs/**`、`**/.ssh/**`、`*.pem`、`*.key`、`*.jks`、`*.keystore`、`*.tfstate*`、`*.tfvars`、`service-account*.json`、`credentials.json` / `credentials.txt`、`secrets.{yml,yaml,json,toml,txt}`、`secret.txt`、`key.txt` / `keys.txt`、`password(s).txt`、`token.txt`、`.htpasswd`、`kubeconfig`、`*.kubeconfig`、`local.settings.json`、`*.kdbx` / `*.kdb`、`/etc/shadow*`、`/etc/sudoers*`、`/etc/ssh/ssh_host_*`、`/proc/*/environ`。名字整体匹配，所以 `env.py`、`kubeconfig.go`、`docker-compose.yml`、`README` 仍可读 |
 | `no-credential-store-read` | deny | 读云 CLI 与容器配置（`.aws`、`.azure`、gcloud、gh、op、doctl、rclone、kube、docker）、`.gnupg`、`.git-credentials`、`.git/credentials`、`.config/git/credentials`、`.gitconfig`、`.git/config`、`.netrc` / `_netrc`、`.npmrc`、`.pypirc`、`.pgpass`、`.my.cnf`、`.s3cfg`、`.boto`、`.vault-token`、`.cargo/credentials*`、`.gem/credentials`、`.m2/settings.xml`、Terraform 凭据、GitHub CLI 与 gcloud 的 `%APPDATA%` 目录、私钥文件（`id_rsa*`、`id_ed25519*` 等，含 `.bak` 备份；代价是公钥 `id_rsa.pub` 也读不了） |
-| `no-agent-state-read` | deny | 读 `~/.claude/.credentials.json`、`~/.claude.json`、用户级 `~/.claude/settings.json` 与 `~/.claude/settings.local.json`、项目的 `.claude/settings.local.json`（这几个的 `env` 块里常放令牌）、`.mcp.json`（MCP 服务器的 headers 与 env）、`.claude/projects/**`（会话记录）、`history.jsonl`、`shell-snapshots`、`ide` |
+| `no-agent-state-read` | deny | 读 `~/.claude/.credentials.json`、`~/.claude.json`、用户级 `~/.claude/settings.json` 与 `~/.claude/settings.local.json`、项目的 `.claude/settings.local.json`（这几个的 `env` 块里常放令牌）、`.mcp.json`（MCP 服务器的 headers 与 env）、`history.jsonl`、`shell-snapshots`、`ide`（strict 的这一条还含 `.claude/projects/**`，没有例外） |
+| `no-session-transcript-read` | deny | 读 `.claude/projects/**`（会话记录、子代理日志、别的会话的一切）；**当前会话的 tool-results 目录除外**（`except_session_tool_results`，见"Session tool-results"一节）。仅 default，strict 由 `no-agent-state-read` 覆盖 |
+| `allow-session-tool-results-read` | allow | `Read`、`Grep`、`Glob` 只读当前会话的 tool-results 目录（`path_in_session_tool_results` + `paths_read_only`）。仅 default |
 | `no-history-read` | deny | 读 `.bash_history`、`.zsh_history`、`.python_history`、`.psql_history`、`.mysql_history`、PSReadLine 的 `ConsoleHost_history.txt` 等 |
 | `no-windows-credential-read` / `no-browser-profile-read` | deny | Windows 凭据、DPAPI、保险库、`System32\config`、`windows\repair`；Windows / Linux / macOS 浏览器配置目录与钥匙串。都含 `**/users/*/...` 形式，WSL 看到的 `/mnt/c/Users/x/...` 也被拦 |
 | `no-raw-disk-access` | deny | 读写 `/dev/sd*`、`nvme*`、`mmcblk*`、`/dev/mem`、`\\.\PhysicalDrive*` 等裸设备 |
@@ -323,6 +327,20 @@ Claude Code 给每个会话一个只属于它的 scratchpad，agent 用它放中
 - 守护进程的临时目录可能与 Claude Code 的不同（例如守护进程以不同环境变量启动）。那样路径不在守护进程的临时目录下，规则**不适用**，一切保持原状，不会更宽松。路径本身用 8.3 短名字拼写的也不被认出（只有守护进程自己的 `TEMP` 写成短名字时，才会解析成长名字再比较）。
 - 恶意项目无法用名字伪造：根必须在守护进程的临时目录之下，项目里叫 `claude\x\<id>\scratchpad` 的目录只是普通的项目内路径（有它自己的规则）。同一用户的其他进程能在临时目录下建同名目录，这在"同一用户的进程"信任边界之内。
 - 检查与实际使用之间有时间差：解析在判定时做一次，之后有人把目录换成链接，规则看不到（与项目内规则的磁盘解析同一限制）。
+
+### Session tool-results（`path_in_session_tool_results` / `except_session_tool_results`，仅 default）
+
+工具输出太长时，Claude Code 把全文存在 `<主目录>/.claude/projects/<项目 slug>/<会话 id>/tool-results/<名字>.txt`，对话里只留开头，并让 agent 去读那个文件。子代理的长输出也存在**父会话**的这个目录里，而子代理的 hook 事件带的 `session_id` 正是父会话的（`docs/hook-behavior.md` E13）。这个目录在 `.claude/projects/**` 之下，原先被 `no-agent-state-read` 一律拒绝；留出集 h1 的一条真实会话样本就是这样被误拒的（`docs/reports/M2-rules-3.md` 第 8、9 节）。
+
+**什么算"在当前会话的 tool-results 目录里"**（`PathRef.in_session_tool_results`）：与 scratchpad 用同一段代码（`normalize.paths.SessionDir`），只是根是守护进程的主目录（hook 参数里固定的那个，不是 `CLAUDE_CONFIG_DIR`），结构是 `.claude/projects/<恰好一段>/<session_id>/tool-results`。会话 id 必须是 UUID 形状；`.claude`、`projects`、`tool-results` 在 Windows 风格里不分大小写，POSIX 里区分；目录本身也算；键入的形式与链接解析后的形式各自判断；硬链接、通配符与花括号、变量、`..` 走出去的路径都不标记。slug 不按项目目录重新计算（Claude Code 的编码在 CLI 与 VS Code 之间盘符大小写不同）。
+
+**规则：**`.claude/projects/**` 从 `no-agent-state-read` 移到自己的 `no-session-transcript-read`（deny），只有这一条带 `except_session_tool_results: true`；另加 `allow-session-tool-results-read`（`tool: [Read, Grep, Glob]`，`path_in_session_tool_results` + `paths_read_only`）。于是：
+
+- 当前会话的 tool-results 文件：文件工具读是 allow；shell 读（`cat`、`Get-Content`）不再被拒绝，但仍是灰色（会问）；写永远不被这条放行。
+- 别的会话的 tool-results、会话记录本身（`<会话 id>.jsonl`）、`subagents/` 里的子代理日志、目录里指向别处的链接：照旧 deny。`no-secret-read` 等其他 deny 规则不带这个例外，目录里叫 `.env` 的文件照旧 deny。
+- strict 不变：`.claude/projects/**` 仍在它的 `no-agent-state-read` 里，没有例外，也没有这条 allow。
+
+**残余风险：**这些文件是本会话已经判定过（或用户批准过）的工具调用的完整输出；读回它们不会读到别的会话的东西，但对话里只有开头，所以 agent 读到的可能比它先前看到的多（例如一次很长的输出后半段里的秘密）。主目录不是守护进程的那个、或 `CLAUDE_CONFIG_DIR` 指向别处时规则不适用，一切照旧（不会更宽松）。
 
 ## PowerShell 命令的规则写法
 

@@ -1,6 +1,6 @@
 # M2 之后的规则改动三：留出集 h1，MCP、网络、持久化与递归删除
 
-日期：2026-10-28。**状态：已实现；同一复审者审了两轮（第 7 节），没有 high / medium 遗留，A 到 E 五组都可以冻结；整套测试见第 6 节；留出集的攻击样本已补齐（58 条，第 0 节），2026-10-28 打开了一次（第 8 节）：没有攻击被放行，达到要求 windows 60.6%、posix 54.3%。**
+日期：2026-10-28。**状态：已实现；同一复审者审了两轮（第 7 节），没有 high / medium 遗留，A 到 E 五组都可以冻结；整套测试见第 6 节；留出集的攻击样本已补齐（58 条，第 0 节），2026-10-28 打开了一次（第 8 节）：没有攻击被放行，达到要求 windows 60.6%、posix 54.3%；之后修了当前会话 tool-results 目录的误拒（第 9 节），h1 因此被污染。**
 
 ## 0. 留出集 h1 的封存记录（在任何规则改动之前）
 
@@ -152,3 +152,27 @@
 5. 局限：每台机器只有 33 / 35 条攻击，一条约 3 个百分点；攻击这一半由使用者借助模型在规则冻结之后补写（第 0 节）；打开之后我看到了报告里的漏报列表（样本 id、命中的规则和理由，没有看命令内容）。
 
 如果之后据此改规则（例如上面第 4 条的两个误拒），留出集 h1 就被污染了，台账会在下次打开时自动声明；要无偏的数字需要新的留出批次。
+
+## 9. 打开之后的第一处改动：当前会话的 tool-results 目录（2026-10-28，使用者批准，h1 因此被污染）
+
+第 8 节第 4 条的第二个误拒：Claude Code 把过长的工具输出存在 `~/.claude/projects/<slug>/<会话 id>/tool-results/` 并让 agent 去读，`no-agent-state-read` 把它拒了。本机核对过布局：当前会话的目录下有 `subagents/` 与 `tool-results/`，那条留出样本读的文件就在本会话的 `tool-results/` 里（它来自本会话的复审子代理，子代理的 hook 事件带父会话的 `session_id`，`docs/hook-behavior.md` E13）。
+
+| 层 | 改动 |
+|---|---|
+| `normalize/paths.py` | scratchpad 的判断改成通用的 `SessionDir`（根 + 结构），scratchpad 行为不变；新增 `tool_results_for`：`<主目录>/.claude/projects/<恰好一段>/<会话 id>/tool-results`，会话 id 必须是 UUID，主目录必须是本机盘符或 POSIX 绝对路径 |
+| `normalize/model.py`、`event.py` | `PathRef.in_session_tool_results`，与 `in_scratchpad` 同样设置与清除（每个形式单独判断；硬链接、模式字符清除） |
+| `policy/schema.py`、`matcher.py` | 匹配字段 `path_in_session_tool_results`（allow 侧，每个路径都在里面）与 `except_session_tool_results`（像 `access` 一样修饰 `path_glob`：这样的路径不拿来比较；没有 `path_glob` 时加载报错） |
+| `policies/default.yaml` | `.claude/projects/**` 从 `no-agent-state-read` 移到 `no-session-transcript-read`（deny，带例外）；新 `allow-session-tool-results-read`（`Read` / `Grep` / `Glob`，只读）；24 条 `tests:` |
+| `policies/strict.yaml` | 规则不变（`.claude/projects/**` 仍在 `no-agent-state-read`，没有例外）；2 条 `tests:` 确认仍 deny |
+| `eval/run_eval.py`、`evalkit/report.py` | 不打开留出集的运行也读台账：打开过的不再写成“封存”，规则改过就声明污染（之前只有再打开时才声明） |
+
+结果：
+
+- 当前会话的 tool-results 文件：文件工具读是 allow；`cat` / `Get-Content` 不再被拒，但仍会问；写永远不放行。别的会话的 tool-results、会话记录、`subagents/` 日志、目录里指向别处的链接、`..` 走出去的路径、通配符、没有 UUID 会话 id 的事件：照旧 deny。目录里叫 `.env` 的文件照旧被 `no-secret-read` 拒绝。
+- dev / test：Windows 正常样本的 deny 各从 2 条变成 1 条（dev 误报率 34.8% → 34.3%，test 38.0% → 36.6%），攻击样本的数字不变。
+- **留出集 h1 已被污染**：策略 sha256 变了，评测报告现在写明“以前打开过，已污染”。h1 第 8 节的数字仍是这批规则（`0210b85`）在留出集上的唯一无偏结果；之后的规则要无偏的数字，需要新的留出批次。
+- 第 8 节第 4 条的另一个误拒（`find ... -exec rm -rf {} +` 被 `rm-outside-project` 拒绝）没有动。
+
+验证：新增 `tests/unit/test_session_tool_results.py`（路径层的正反例、Windows / POSIX 大小写、没有 UUID 或主目录有疑问时不标记、schema 校验、匹配器对每个形式单独判断、硬链接与模式字符清除）；`boundkeep test`：default 1089 条、strict 320 条，0 失败；`ruff`、`mypy` 干净；评测框架测试通过（含台账状态的两条新测试）。整套测试见下面。
+
+整套测试 `uv run pytest -q`（2026-10-28，1 小时 2 分）：25769 通过、168 跳过、0 失败（第 6 节那两条也都过了）。
