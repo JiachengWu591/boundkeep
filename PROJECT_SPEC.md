@@ -1,4 +1,4 @@
-# boundkeep（守界）— 项目规格 v0（修订 5）
+# boundkeep（守界）— 项目规格 v0（修订 6）
 
 > 状态：设计稿。标注 `[待验证]` 的条目依赖外部产品的实际行为，编码前先用最小实验确认。
 > 本文件是开发会话的唯一事实来源：要改设计，先改这里，再改代码。
@@ -11,6 +11,16 @@
 > **修订 5（2026-10-20）**：§1 核心承诺的前置条件（M-13）改写：不再要求"在 `enforce` 下日常可用"达到某个覆盖率，而是要求规则层做到规则能判的部分，并引入 `trusted_projects` 作为会运行仓库代码的开发工具预设的闸门；覆盖率由 M2 评测量化，规则判不了的灰色交给 M3 的 LLM 层。
 >
 > **修订 4（2026-10-18）**：采纳 M1+M1b 的 X1 安全审查（`docs/reviews/M1-M1b-security-review.md`）与复审（`docs/reviews/M1-M1b-fixes-rereview.md`）提出的规格变更：§1 核心承诺补"在 `enforce` 下可日常使用"这一前置条件；§3 范围外写明同一用户的进程可以冒充守护进程；§5.1 管道令牌只防其他用户、DACL 收紧只是提高门槛、客户端永不输出 `allow`（除非 `--emit-allow`）；§7 目录目标的读类动作要检查子树、预算耗尽不得使已可见的 deny 变弱、实测 hook 的 `ask` 优先于 `permissions.allow` 与 `bypassPermissions`；§10 增加"hook 配置层与会话目录不匹配"与"settings 被削弱"两行。
+>
+> **修订 6（2026-10-30）**：采纳 M3a 报告第 7 节的规格变更（`docs/reports/M3a.md`，P1 到 P12），使用者于 2026-10-30 接受；代码在 M3a 里已经按这些实现（提交 `46169eb`）。
+> - §7：会话状态库与污染的计数方式；粘性位 `session_read_untrusted` 与 M-2 的 ask 规则；`risk_tags` 里 `exec` 的范围；没被完整分析的灰色调用不送审。
+> - §8：`taint` 与 `llm_audit` 的新键与取值范围。
+> - §9.1：失败分类加 `http_4xx`，重试与预算。
+> - §9.2：实际的请求形状，以及发送出口的拒绝条件。
+> - §9.5、§9.6：给 Claude Code 的理由、缓存键，以及 `audit-only` 下的行为。
+> - §10：会话状态库不可用时的行为，带 LLM 审计的审查期限。
+> - §12：离线配置的测量方式。
+> - §13：目录结构。
 
 > **当前进度（2026-10-30）**
 >
@@ -19,7 +29,7 @@
 > - **M2 之后的规则改动**（`m2-baseline` 标签仍是改动之前的规则；`eval/report.md` 随每次改动重新生成；test 切分已声明被污染）：`git add` / `commit` / `stash`（`docs/reports/M2-rules-1.md`）；只读信息命令（`M2-rules-2.md`）；MCP 参数进入 deny / ask 规则（`mcp_read_only`）、网络按目的地拆分、项目之外的持久化等由 ask 改为 deny（`M2-rules-3.md`）；当前会话的 tool-results 目录可读（同一报告第 9 节）；当前项目的 auto memory 可读、写要问（`docs/reports/holdout-h2.md` 第 7 节）。
 > - **留出集**（分批，口径第 4b 节）：h1、h2 各打开过一次（`M2-rules-3.md` 第 8 节、`holdout-h2.md` 第 6 节），之后都改过规则，**都已被污染**；再要无偏的数字需要新的批次（h3）。
 > - **未做 / 等你做**：真实 Claude Code 里的手工验收（包括在 Claude Code 之外的终端里运行 `trust add`）；Linux 容器套件；补 obfuscation 样本；L-1 的选项白名单（会改规则）。
-> - **M3a 已实现并提交，等 X1 审查**（2026-10-30，代码提交 `46169eb`，报告 `docs/reports/M3a.md`）：SQLite 会话状态（任务意图、污染窗口与粘性位、并发、清理）、M-2 的 ask 规则 `ask-devtools-after-untrusted-content`、后端接口与假后端、OpenAI 兼容适配器（只对本地假服务测过）、发送出口、二次裁决、缓存、`boundkeep llm check`、一致性测试、`rules+taint` 评测行（相对 `rules-only` 的增量为 0，原因见报告）。报告第 7 节的规格变更提案 P1 到 P12 已由使用者于 2026-10-30 接受，**还没有写进本文件的设计章节**。
+> - **M3a 已实现并提交，等 X1 审查**（2026-10-30，代码提交 `46169eb`，报告 `docs/reports/M3a.md`）：SQLite 会话状态（任务意图、污染窗口与粘性位、并发、清理）、M-2 的 ask 规则 `ask-devtools-after-untrusted-content`、后端接口与假后端、OpenAI 兼容适配器（只对本地假服务测过）、发送出口、二次裁决、缓存、`boundkeep llm check`、一致性测试、`rules+taint` 评测行（相对 `rules-only` 的增量为 0，原因见报告）。报告第 7 节的规格变更提案 P1 到 P12 已由使用者于 2026-10-30 接受，已写进本文件（修订 6）。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -292,14 +302,18 @@ event(pre) ─> normalize ─> Action
             rules.match(Action)
                  ├─ deny   ───────────────────────────────> DENY   (decided_by=rule)
                  ├─ ask    ───────────────────────────────> ASK    (decided_by=rule)
-                 ├─ allow  ─> [污染升级检查] ─────────────> ALLOW / ASK
+                 ├─ allow  ─> [污染一步：只管不是规则给出的 allow] ─> ALLOW / ASK
                  └─ 未命中 ───────────────────────────────> gray
                                                               │
                               llm_audit.backend == none ? ────┤
                                      是 ─> ASK                │
-                                     否 ─> backend.audit(Action, intent, tainted)
-                                              └─ code 二次裁决 ─> allow / ask / deny
+                                     否 ─> 没被完整分析？ ── 是 ─> ASK（不送审，decided_by=gray-unanalysed）
+                                              │ 否
+                                              ▼
+                                     send_gate ─> backend.audit(请求，§9.2) ─> code 二次裁决（§9.5）─> allow / ask / deny
 ```
+
+会话状态（任务意图、污染）与上面每一步的关系见本节后面的"会话状态、污染与 LLM 审计的接入（M3a）"。
 
 **判决到 hook 输出的映射**
 
@@ -318,7 +332,7 @@ event(pre) ─> normalize ─> Action
 
 **预算耗尽不得使已可见的 deny 变弱（M1 不变量，X1 审查 M-1）**：归一化预算（动作数、磁盘查询、时间）耗尽后，触发预算的命令与其后的命令仍做纯词法分类（不展开通配符、不查磁盘、不遍历），deny / ask 规则照常匹配词法路径；结果仍带灰色 `budget:*` 标记，所以不会是 `allow`。
 
-**开发工具预设与受信任项目（M1c-2，2026-10-20 批准）**：会运行仓库代码的开发工具（`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`，含 `python -m <工具>` 与项目 `.venv` 里的带路径形式）只有在动作所属的项目目录被列入策略的顶层键 `trusted_projects` 时才有 `allow` 规则（匹配字段 `project_trusted`，默认空列表，所以默认不生效；strict 策略永不放行）。`trusted_projects` 只能由用户在终端里用 `boundkeep trust add|remove|list` 修改（`add` 在 stdin 不是交互终端时拒绝；agent 对 `boundkeep trust` 的调用被策略 deny）；条目是目录而非 glob，拒绝过宽的目录（home、home 的祖先、盘符根、`/`、`C:\Users`、`/tmp`、系统目录等）；项目目录经链接解析后也必须被信任。这个预设与"项目内写入的 allow"合起来构成"先写后运行"的链路：被提示注入的 agent 可以先写一个普通测试文件再运行 `pytest`，仓库代码因此在没有审查的情况下执行；所以只应信任自己写过或审计过的仓库，会话污染标记（M3a）计划用来进一步收紧这条链路。同一行里先写后执行的检测（`exec-of-written-file`）对这些工具的配置文件与测试文件同样生效，但**跨工具调用**的"先写后运行"无法识别。**开发工具契约的补充（M1c/M1c-2 的 X1 审查 H-1 到 H-3，2026-10-22）**：`flags_none` 是危险选项的黑名单，看不见"值里藏路径或模块"的写法，所以归一化层另给三种灰色，规则不用改：工具的任何参数以 `@` 开头（参数文件，ruff / pytest / mypy 都支持，带引号的 PowerShell 字符串也算）；pylint 的 `--output-format` / `-f` 的值不是内置报告器名（`报告器:文件` 写任意路径，`模块.类` 导入代码）；Bash 方言里工具命令前的环境变量前缀不在一份短白名单内（`RUFF_OUTPUT_FILE` 等把输出或缓存送到任意路径）。长期方向是把黑名单换成每个工具的安全选项白名单（未列出的选项一律灰色）。**独立复审后的修订（`docs/reviews/M1c2-fixes-rereview.md`，R-1 到 R-12）**：（一）归一化层给每个动作一个标记 `dynamic_args`：命令里有一个**不是路径的**词会展开（变量、命令替换；对开发工具还有通配符），**任何 allow 规则都不匹配**这样的动作（与"灰色""带包装器"同一位置，deny / ask 不受影响），取代逐个 cmdlet、逐个选项的名单：展开之后才变成 `@参数文件` 的词、会被打印或回显的 `$env:` 值、外部程序选项值里的展开都一次盖住；PowerShell 开关的冒号值（`-Stream:$env:X`）不再被丢掉（灰色 `ps-switch-value`）。（二）目录读的子树扫描对要被读的普通文件取 `st_nlink`，发现硬链接就灰色（`recursive-scan-hardlink`）。（三）路径限定的开发工具必须在虚拟环境目录里，否则带包装器标记 `unvetted-exe`；已安装代码的写保护扩到 `venv`、`env`、`.tox`、`.nox`、`.conda`、`.pixi`、`.direnv`、`__pypackages__`、`dist-packages`。（四）"主目录里的钥匙、设置、应用数据目录不能信任"从策略加载器移到 `trust add` 与 `doctor`（升级前写进策略的条目不能让整份策略失败）。（五）其余：`pytest --debug` 是写路径选项、pytest 自己的 `-W` 带点类别灰色、白名单环境变量的值不能是路径、会话在策略不可用时也记下快照、`deny-link-` 规则用精确 id 集合、`trust add` 的嵌套仓库搜索不穿过联接点。**接受的缺口**：快照在内存里（重启与 512 个会话之后的驱逐）、`cmd /c mklink` / `fsutil` 的相对写法只是 ask、选项白名单没做。**范围、推荐用法与已安装代码（同一批审查的 M-1、M-2、M-3、L-1）**：`pytest.toml`、`.pytest.toml`、`.pdbrc` 与 `pytest.ini` 同为工具配置（写入 ask / strict deny）；`.venv`、`site-packages`、`node_modules` 里的写入 ask（strict deny）；`trust add` 对目录下面的别的仓库要求输入 `yes`，主目录里的钥匙、设置与应用数据目录不能作为条目；`python -X pycache_prefix=…` 与带点类别的 `-W` 不再是开发工具调用，盘符相对路径是灰色。**M-2 的决定**：先写测试文件、再运行 pytest 这条链要靠 M3a 的会话污染位才能真正收紧，在它存在之前 `trusted_projects` 保持默认关闭，不作为推荐设置；选项白名单（L-1 的长期方案）推迟到 M2 基线之后，作为单独的规则变更。**信任列表按会话快照（H-5，同一批审查）**：`trust add` 的"必须是真实控制台"检查不是边界（`Start-Process`、`cmd /c start`、`< CON` 起的子进程都有真实控制台；间接写法对规则只是灰色），所以守护进程记下每个会话第一个事件时的 `trusted_projects`，会话中途新增的条目对那个会话不生效（删除立即生效；没有可用 `session_id` 就没有受信任的项目）；`trust add` 另外在 `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` 环境下拒绝。用户 `trust add` 之后要新开会话才生效。**硬链接（H-6）**：磁盘解析对 `st_nlink > 1` 的普通文件加原因 `hard-linked`，该路径对 allow 规则"不确定"；创建指向守护文件的链接（`ln`、`New-Item -ItemType HardLink|SymbolicLink|Junction`、`cp -l`）是 deny。**PowerShell（H-4）**：allow 名单上的 cmdlet 的参数里出现非路径的展开（`$env:TOKEN`、`"x$env:TOKEN"`、`${env:TOKEN}`；`$true` / `$false` / `$null` 除外）是灰色 `ps-dynamic-arg`，因为 `ConvertTo-Json $env:TOKEN` 等会把值打印进上下文。
+**开发工具预设与受信任项目（M1c-2，2026-10-20 批准）**：会运行仓库代码的开发工具（`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`，含 `python -m <工具>` 与项目 `.venv` 里的带路径形式）只有在动作所属的项目目录被列入策略的顶层键 `trusted_projects` 时才有 `allow` 规则（匹配字段 `project_trusted`，默认空列表，所以默认不生效；strict 策略永不放行）。`trusted_projects` 只能由用户在终端里用 `boundkeep trust add|remove|list` 修改（`add` 在 stdin 不是交互终端时拒绝；agent 对 `boundkeep trust` 的调用被策略 deny）；条目是目录而非 glob，拒绝过宽的目录（home、home 的祖先、盘符根、`/`、`C:\Users`、`/tmp`、系统目录等）；项目目录经链接解析后也必须被信任。这个预设与"项目内写入的 allow"合起来构成"先写后运行"的链路：被提示注入的 agent 可以先写一个普通测试文件再运行 `pytest`，仓库代码因此在没有审查的情况下执行；所以只应信任自己写过或审计过的仓库。M3a 用会话污染位收紧了这条链路（`ask-devtools-after-untrusted-content`，见本节后面的 M3a 一段）：会话读过不可信内容之后，这些工具一律再问；会话没有读过时，先写后运行仍然不弹框。同一行里先写后执行的检测（`exec-of-written-file`）对这些工具的配置文件与测试文件同样生效，但**跨工具调用**的"先写后运行"无法识别。**开发工具契约的补充（M1c/M1c-2 的 X1 审查 H-1 到 H-3，2026-10-22）**：`flags_none` 是危险选项的黑名单，看不见"值里藏路径或模块"的写法，所以归一化层另给三种灰色，规则不用改：工具的任何参数以 `@` 开头（参数文件，ruff / pytest / mypy 都支持，带引号的 PowerShell 字符串也算）；pylint 的 `--output-format` / `-f` 的值不是内置报告器名（`报告器:文件` 写任意路径，`模块.类` 导入代码）；Bash 方言里工具命令前的环境变量前缀不在一份短白名单内（`RUFF_OUTPUT_FILE` 等把输出或缓存送到任意路径）。长期方向是把黑名单换成每个工具的安全选项白名单（未列出的选项一律灰色）。**独立复审后的修订（`docs/reviews/M1c2-fixes-rereview.md`，R-1 到 R-12）**：（一）归一化层给每个动作一个标记 `dynamic_args`：命令里有一个**不是路径的**词会展开（变量、命令替换；对开发工具还有通配符），**任何 allow 规则都不匹配**这样的动作（与"灰色""带包装器"同一位置，deny / ask 不受影响），取代逐个 cmdlet、逐个选项的名单：展开之后才变成 `@参数文件` 的词、会被打印或回显的 `$env:` 值、外部程序选项值里的展开都一次盖住；PowerShell 开关的冒号值（`-Stream:$env:X`）不再被丢掉（灰色 `ps-switch-value`）。（二）目录读的子树扫描对要被读的普通文件取 `st_nlink`，发现硬链接就灰色（`recursive-scan-hardlink`）。（三）路径限定的开发工具必须在虚拟环境目录里，否则带包装器标记 `unvetted-exe`；已安装代码的写保护扩到 `venv`、`env`、`.tox`、`.nox`、`.conda`、`.pixi`、`.direnv`、`__pypackages__`、`dist-packages`。（四）"主目录里的钥匙、设置、应用数据目录不能信任"从策略加载器移到 `trust add` 与 `doctor`（升级前写进策略的条目不能让整份策略失败）。（五）其余：`pytest --debug` 是写路径选项、pytest 自己的 `-W` 带点类别灰色、白名单环境变量的值不能是路径、会话在策略不可用时也记下快照、`deny-link-` 规则用精确 id 集合、`trust add` 的嵌套仓库搜索不穿过联接点。**接受的缺口**：快照在内存里（重启与 512 个会话之后的驱逐）、`cmd /c mklink` / `fsutil` 的相对写法只是 ask、选项白名单没做。**范围、推荐用法与已安装代码（同一批审查的 M-1、M-2、M-3、L-1）**：`pytest.toml`、`.pytest.toml`、`.pdbrc` 与 `pytest.ini` 同为工具配置（写入 ask / strict deny）；`.venv`、`site-packages`、`node_modules` 里的写入 ask（strict deny）；`trust add` 对目录下面的别的仓库要求输入 `yes`，主目录里的钥匙、设置与应用数据目录不能作为条目；`python -X pycache_prefix=…` 与带点类别的 `-W` 不再是开发工具调用，盘符相对路径是灰色。**M-2 的决定**：先写测试文件、再运行 pytest 这条链要靠 M3a 的会话污染位才能真正收紧，在它存在之前 `trusted_projects` 保持默认关闭，不作为推荐设置；选项白名单（L-1 的长期方案）推迟到 M2 基线之后，作为单独的规则变更。**信任列表按会话快照（H-5，同一批审查）**：`trust add` 的"必须是真实控制台"检查不是边界（`Start-Process`、`cmd /c start`、`< CON` 起的子进程都有真实控制台；间接写法对规则只是灰色），所以守护进程记下每个会话第一个事件时的 `trusted_projects`，会话中途新增的条目对那个会话不生效（删除立即生效；没有可用 `session_id` 就没有受信任的项目）；`trust add` 另外在 `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` 环境下拒绝。用户 `trust add` 之后要新开会话才生效。**硬链接（H-6）**：磁盘解析对 `st_nlink > 1` 的普通文件加原因 `hard-linked`，该路径对 allow 规则"不确定"；创建指向守护文件的链接（`ln`、`New-Item -ItemType HardLink|SymbolicLink|Junction`、`cp -l`）是 deny。**PowerShell（H-4）**：allow 名单上的 cmdlet 的参数里出现非路径的展开（`$env:TOKEN`、`"x$env:TOKEN"`、`${env:TOKEN}`；`$true` / `$false` / `$null` 除外）是灰色 `ps-dynamic-arg`，因为 `ConvertTo-Json $env:TOKEN` 等会把值打印进上下文。
 
 **M2 评测之后的规则层（2026-10-28，使用者批准方向；详见 `docs/reports/M2-rules-3.md`）**：
 
@@ -328,6 +342,34 @@ event(pre) ─> normalize ─> Action
 - **持久化与递归删除的默认取舍**：项目**之外**的持久化（shell 启动文件、自启动项与用户服务、PowerShell profile 与启动文件夹、`/etc` 等系统配置、`~/.ssh`、`crontab` 安装、`systemctl enable` / `launchctl load` 等服务注册、计划任务与服务注册、WMI 订阅、本地账户、Defender 与防火墙改动、执行策略、`bcdedit`、`takeown`、关机），以及项目之外的 `find -delete` 与递归改权限、格式化与分区工具，默认策略由 `ask` 改为 `deny`。项目**之内**的自动运行文件（`package.json`、`.git/hooks` 等）与 `~/.local/bin`、`~/bin` 仍是 `ask`。理由：这些动作在编码任务里几乎没有正当用途，而一次被疲劳点掉的确认就会让代码在会话之外长期运行；需要时由用户自己做。strict 至少同样严格。
 - **当前会话的 tool-results 目录**（留出集 h1 打开之后，使用者批准；h1 因此被污染）：Claude Code 把过长的工具输出存在 `~/.claude/projects/<slug>/<会话 id>/tool-results/` 并让 agent 去读。归一化层像 scratchpad 一样标记**当前会话**这个目录里的路径（`PathRef.in_session_tool_results`）；匹配字段 `except_session_tool_results` 像 `access` 一样修饰 `path_glob`，让 deny 规则不拿这样的路径比较，`path_in_session_tool_results` 供 allow 规则用。默认策略把 `.claude/projects/**` 拆成带这个例外的 `no-session-transcript-read`，并让 `Read` / `Grep` / `Glob` 只读这个目录（`allow-session-tool-results-read`）；别的会话、会话记录、子代理日志照旧 deny，shell 读不再拒绝但仍会问，strict 不变。
 - **当前项目的 auto memory**（留出集 h2 打开之后，2026-10-29，使用者批准；h2 因此被污染，`docs/reports/holdout-h2.md` 第 7 节）：Claude Code 的 auto memory 在 `~/.claude/projects/<slug>/memory/`，slug 由 git 仓库根推出；归一化层按项目目录及其在主目录之下的祖先算出 slug，标记当前项目这个目录里的路径（`PathRef.in_project_memory`，匹配字段 `path_in_project_memory` / `except_project_memory`，与 tool-results 同形）。默认策略让文件工具只读它（`allow-project-memory-read`），**写它是明确的 ask**（`ask-agent-exec-config`：写进去的内容之后每个会话都会读）；别的项目的 memory 照旧 deny；strict 读写都拒绝。h2 暴露的另一类误拒（递归删除的目标定不下来时 `rm-outside-project` 拒绝）**没有改**：那样做会让语料里刻意钉成 deny 的对抗写法（变量、`xargs`、循环、管道、splat）一起变成 ask。
+
+**会话状态、污染与 LLM 审计的接入（M3a，2026-10-30 使用者批准；`docs/reports/M3a.md` 第 7 节 P1、P2、P10、P11）**：
+
+- **会话状态库**：存在 `~/.boundkeep/session.sqlite`。
+  - 并发：WAL，一把锁加 `BEGIN IMMEDIATE`，并行的工具调用不丢计数，多个进程同时写也一样。
+  - 每个 `session_id` 只存：首次与最近出现的时间、自最近一次来源调用以来的调用次数、来源工具名（最多 16 个）。配置了 LLM 后端且 `send_task_intent` 时，另存任务意图（§9.2）。不存工具输入、工具输出与文件内容。
+  - 清理：30 天不活动的会话删除；超过 5000 个会话时，先删最久不活动的；守护进程每小时清理一次。保留期刻意较长：resume 的会话沿用原来的 `session_id`，忘掉它就忘了它的上下文里有不可信内容。
+  - 失败：库打不开或读写失败时，那次调用按"状态未知"判，即当作已污染（§10）。
+- **污染的计数**（细化下面"污染升级规则"的第一条）：
+  - 来源工具的调用在 PreToolUse 与 PostToolUse 两处都打标记。PostToolUse 失败时，hook 客户端静默丢弃（它没有可以降级的决定），只在那里打标记会失效而放行；在 PreToolUse 打标记可能把随后被拒绝的调用也算进去，这是安全方向。
+  - 窗口按 PreToolUse 计数：来源调用之后的第 1 到第 `taint.window` 次调用为"被污染"；来源调用自己按它之前的状态判；PostToolUse 让窗口从那一刻重新开始。
+  - 因超时或守护进程繁忙、没经过审查就回答的来源调用，仍然打标记。
+- **污染一步**：会话被污染期间，**不是规则给出的** allow（只有"什么都不碰的工具"这一种）遇到带 `taint.sensitive_tags` 的动作时，改为 ask（`decided_by: taint`）。规则的 allow 不受影响；LLM 的 allow 在 §9.5 里经过同一条规则。
+- **粘性位与 M-2**：
+  - 匹配字段 `session_read_untrusted: true` 表示这个会话**任何时候**调用过 `taint.sources` 里的工具。它没有窗口，一直保留到换新的 `session_id`（`/clear` 会换新 id，resume 与 compact 不换）。状态未知时也算命中。只能用于 deny / ask 规则，加载时检查。
+  - 默认与 strict 策略的 ask 规则 `ask-devtools-after-untrusted-content` 用它：会话读过网页、搜索结果或 MCP 返回值之后，开发工具预设里的工具（`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`）一律再问，受信任的项目也一样。
+  - 这就是上面"开发工具预设"一段里 M-2 所说的收紧。它写成 ask 规则，而不是 allow 规则上的条件：条件只会让命令变成灰色，而配置了后端时，灰色会交给 LLM 审计。
+  - `trusted_projects` 是否因此改为推荐设置，等 M3a 的 X1 审查之后由使用者决定。
+- **`risk_tags` 里的 `exec`**：除下面"命令解析原则"里列的情形外，以下几类也带 `exec`：表里没有的程序；整行看不懂的命令；会运行项目代码的包管理器与任务运行器（`npm`、`npx`、`pip`、`uv`、`cargo`、`go`、`make`、`gradle`、`dotnet` 等）；未知工具。MCP 调用带 `exec` 与 `network_egress`。这些标签只影响污染一步与发给模型的内容，不影响任何规则。
+- **没被完整分析的灰色调用不送审**：以下情况下，模型只能看到调用的一部分，它给的 allow 会盖住没人看过的部分：
+  - 归一化预算用完；
+  - 解析器内部错误；
+  - PowerShell 辅助进程不可用；
+  - 子树扫描超限；
+  - MCP 参数没看全，或参数里带命令；
+  - 什么都没认出来（没有程序名、路径、主机，也没有 MCP 工具名）。
+
+  这些调用直接 ask（`decided_by: gray-unanalysed`，理由里写明没有送审），不按 `on_failure`：它们不是审计失败，与没有配置后端时的灰色相同。
 
 **Action（归一化后的动作）**
 
@@ -359,8 +401,9 @@ risk_tags: ["network_egress"]   # network_egress | file_write | exec | secret_ac
 
 **污染升级规则（v0 粗粒度）**
 
-- `tainted` 表示：最近 `taint.window` 次工具调用之内，发生过来自 `taint.sources` 的工具调用。
+- `tainted` 表示：最近 `taint.window` 次工具调用之内，发生过来自 `taint.sources` 的工具调用（怎么计数见上面的 M3a 一段）。
 - `tainted` 期间，对 `taint.sensitive_tags` 中的动作，若判决为 `allow`（规则 allow 之外的，即由 LLM 或默认路径产生的 allow），降级为 `ask`。
+- 不随窗口结束的"读过不可信内容"另有粘性位 `session_read_untrusted`，只供 deny / ask 规则使用（见上面的 M3a 一段）。
 - 显式规则中的 `allow`（如项目内只读）不受污染降级影响。
 - 局限：来源只按工具名识别。通过 Bash 的 `curl` 读取网页、读取不可信的本地文件，v0 不会打污染标记；README 必须写明。
 
@@ -384,16 +427,18 @@ defaults:
 
 llm_audit:
   backend: none                  # none | openai_compatible | anthropic
-  timeout_ms: 4000
+  timeout_ms: 4000               # 一次审计的总预算（含重试，100 到 60000）；守护进程最多用 6000 毫秒（§10）
   on_failure: ask                # ask | deny，永远不是 allow
-  send_task_intent: true         # false 则不发送用户任务摘要（审计能力会下降）
-  cache_ttl_s: 600
+  send_task_intent: true         # false 则不存、也不发送用户任务摘要（审计能力会下降）
+  intent_prompts: 3              # 任务意图取用户最近几条指令（1 到 10）
+  intent_chars: 300              # 每条最多多少字（40 到 2000；先剥离 IDE 块、脱敏，再截断，§9.2）
+  cache_ttl_s: 600               # 0 关闭缓存
   openai_compatible:
-    base_url: https://api.deepseek.com   # 参考预设；必须是 https（本机回环地址除外）
+    base_url: https://api.deepseek.com   # 参考预设；必须是 https（本机回环地址除外）；请求发往 <base_url>/chat/completions
     model: deepseek-flash                # 以厂商官方模型页为准，名称变动频繁
     api_key_env: BOUNDKEEP_LLM_API_KEY
     transport: tool_call                 # tool_call | json_object，见 §9
-    extra_body:
+    extra_body:                          # 只能添加厂商选项；不能设适配器自己设的键（model、messages、tools、tool_choice、response_format、stream 等）
       thinking: { type: disabled }       # DeepSeek：命名的 tool_choice 在 thinking 模式下不受支持
   anthropic:                             # 可选依赖 boundkeep[anthropic]
     model: ""                            # 以官方文档为准
@@ -401,7 +446,7 @@ llm_audit:
 
 taint:
   sources: [WebFetch, WebSearch, "mcp__*"]
-  window: 8                      # 污染后接下来 N 次工具调用内生效
+  window: 8                      # 来源调用之后接下来 N 次工具调用算被污染（1 到 1000，计数方式见 §7）
   sensitive_tags: [network_egress, file_write, exec, secret_access, config_tamper]
 
 rules:
@@ -480,6 +525,8 @@ tests:                           # 策略的回归测试，`boundkeep test` 运�
 - `tests` 中 `expect: gray` 表示"规则层不应定案"，用于防止规则过宽。
 - 策略文件解析失败：`boundkeep doctor` 报错；运行时降级 `ask`。
 - 密钥永远不写进策略文件，只通过 `api_key_env` 指定的环境变量读取。
+- `llm_audit.backend` 指定的后端必须有自己的配置块。`anthropic` 在 M3a 里还没有适配器：写了它，每个灰色动作都按 `on_failure` 处理（M3a）。
+- 匹配字段 `session_read_untrusted` 只能用在 deny / ask 规则里，加载时检查；它的含义见 §7 的 M3a 一段。
 - `rules[].platform` 与 `tests[].platform`（可选，`posix` / `windows` 的列表，缺省为全部）按常驻进程所在平台过滤；`boundkeep test --platform windows` 可以在任何平台上用 Windows 语义跑词法层的用例，依赖真实文件系统的用例只在对应平台运行。
 - `path_glob` 一律用正斜杠书写；在 Windows 上不区分大小写比较；`~` 指用户主目录（Windows 为 `%USERPROFILE%`）。输入路径先按 §5.1 规范化再匹配。
 - PowerShell 的 cmdlet 名、参数名不区分大小写；规则里只写规范名（§7）。
@@ -491,8 +538,14 @@ tests:                           # 策略的回归测试，`boundkeep test` 运�
 ### 9.1 后端接口
 
 ```
-AuditBackend.audit(request: AuditRequest) -> AuditResult   # 失败抛出 BackendError（分类：timeout / rate_limit / http_5xx / invalid_output / auth / network）
+AuditBackend.audit(request: AuditRequest) -> AuditResult   # 失败抛出 BackendError（七类：timeout / rate_limit / http_5xx / http_4xx / invalid_output / auth / network）
 ```
+
+M3a 的失败分类、重试与预算：
+
+- **失败分类**：`http_4xx` 指 401、403、429 之外的 4xx：请求本身被拒，重试没有用。401 / 403 算 `auth`，429 算 `rate_limit`。
+- **审计器自己的三种失败**：发送出口拒绝发送（`refused`）；后端建不起来（`unavailable`）；中间出了意外（`internal`）。
+- **重试与预算**：适配器至多重试一次，只对可重试的失败（超时、限流、5xx、连接失败），而且 `Retry-After` 不是一个短的纯秒数就不重试。预算（`timeout_ms`）是每次尝试的硬期限，挤牙膏式送出的响应头也拉不长它。审计之间不保持连接。
 
 适配器：`openai_compatible`（默认实现，直接用 `httpx` 调用 `/chat/completions`，不绑定特定 SDK）、`anthropic`（可选依赖）、`fake`（脚本化返回，供测试）。所有后端共用同一份输入构造、发送出口、输出校验和二次裁决，差异只在传输层。
 
@@ -500,18 +553,51 @@ AuditBackend.audit(request: AuditRequest) -> AuditResult   # 失败抛出 Backen
 
 ```json
 {
-  "task_intent": "用户最近 3 条指令，各截断到 N 字",
+  "schema": "boundkeep.audit-request/1",
+  "task_intent": ["用户最近 intent_prompts 条指令，各截断到 intent_chars 字"],
   "tool": "Bash",
-  "action": { "program": "curl", "domains": ["x.example"], "paths": [], "risk_tags": ["network_egress"] },
+  "actions": [
+    { "program": "node", "args": ["scripts/release.js", "--tag", "v2"],
+      "paths": [{ "path": "<project>/scripts/release.js", "access": "read", "inside_project": true }],
+      "network": false, "risk_tags": ["exec"] }
+  ],
   "cwd_inside_project": true,
   "tainted": true,
-  "taint_sources": ["WebFetch"]
+  "taint_sources": ["WebFetch"],
+  "read_untrusted": true
 }
 ```
 
-`taint_sources` 只含来源工具名，不含内容。
+（示意。M3a 的实际形状，P5、P11：）
 
-`task_intent` 取自 UserPromptSubmit 的 `prompt`，**但不能原样取**：VS Code 扩展会把 `<ide_opened_file>`（当前编辑器的文件路径）与 `<ide_selection>`（**选中的那段文件内容**）拼进 `prompt`，用户粘贴的文字被包在 `<pasted_content>` 里（M0a E3 实测）。提取任务意图时必须整段剥离所有 `<ide_*>` 块，把 `<pasted_content>` 当作不可信文本（只取截断后的摘要或不取），否则会把文件内容发给后端，也会让粘贴进来的不可信文字充当"用户意图"。
+- **字段**：`actions` 是 §7 的 Action 列表，每个简单命令一项，只含白名单字段：
+  - `program`、`subcommand`、`flags`、`args`；
+  - `paths`：写成 `<project>/…` 或 `~/…`，带访问方式与是否在项目内；
+  - `domains`、`network`、`risk_tags`、`wrappers`；
+  - 规则判不了的简短原因（`unclear`）、`dynamic_args`；
+  - MCP 的服务名与工具名。
+- **不发**：原始命令行、`cwd`、文件内容、工具输出，以及白名单之外的 hook 字段。
+- **其余字段**：
+  - `task_intent`：没有配置 `send_task_intent` 时是 `null`。
+  - `read_untrusted`：§7 的粘性位。
+  - `taint_sources`：只含来源工具名，不含内容。
+  - 变量展开过的路径：按展开之前的原文发送，因为守护进程的环境里有秘密，API 密钥也在其中。
+- **整个请求再过一遍脱敏**。
+
+**发送出口拒绝发送**的情形如下。这时什么都不发，按 `on_failure` 处理：
+
+- **看不全**：超过 8 个动作；一个动作超过 32 个词、16 个路径、16 个主机或 32 个选项；一个词超过 400 字；整个请求超过 16000 字。截断的视图可能把要紧的部分藏在填充后面，而模型只能放行它看到的东西。
+- **控制或格式字符**：词或路径里有制表符、回车、换行之外的控制或格式字符（双向覆盖、零宽字符、终端转义），读起来与实际运行的不同。
+- **跨词的秘密**：只在跨词时才出现的秘密（`--password X`、`-Password 'X'`、`curl -u u:pw`），逐词脱敏会漏掉，所以命令的词还要合成一行再脱敏一遍。
+- **跨字段的秘密**：序列化之后再脱敏一遍会变的请求。脱敏的模式是为 shell 文本写的，在 JSON 上的改动可能跨字段吞掉整个动作。
+- **秘密变量的值**：请求里含守护进程环境中名字像秘密（`key`、`token`、`secret`、`passw`、`credential`、`auth`、`cookie`）、长度至少 8 个字符的变量的值，`api_key_env` 指定的变量也算。
+
+`task_intent` 取自 UserPromptSubmit 的 `prompt`，**但不能原样取**：VS Code 扩展会把 `<ide_opened_file>`（当前编辑器的文件路径）与 `<ide_selection>`（**选中的那段文件内容**）拼进 `prompt`，用户粘贴的文字被包在 `<pasted_content>` 里（M0a E3 实测）。提取任务意图时必须整段剥离所有 `<ide_*>` 块，把 `<pasted_content>` 当作不可信文本（只取截断后的摘要或不取），否则会把文件内容发给后端，也会让粘贴进来的不可信文字充当"用户意图"。M3a 的做法（P5）：
+
+- `<ide_*>` 块整段剥离：剥到最后一个同名闭合标签；没有闭合，就剥到结尾。
+- `<pasted_content>` 不取内容，只留长度。
+- 先脱敏，再截断到 `intent_chars`。
+- 任务意图只在配置了后端、且 `send_task_intent` 为真时，才存进会话状态库（§7）。
 
 ### 9.3 输出：与厂商无关的 JSON Schema，字段顺序固定，推理在前
 
@@ -559,10 +645,20 @@ if tainted and action 命中 sensitive_tags 且 final == ALLOW:  final = ASK
 调用失败 / 超时 / 输出不合 schema:   final = on_failure（ask 或 deny）
 ```
 
+M3a 的补充（P4、P6）：
+
+- **失败**：§9.1 的七类，加上审计器自己的 `refused`、`unavailable`、`internal`，都按 `on_failure` 处理。
+- **哪些字段算数**：只有五个经过校验的字段参与裁决；模型只能让结果更严，不能更松。`tests/unit/test_m3a_verdict.py` 用表驱动测试覆盖全部组合。
+- **给 Claude Code 的理由**：只由结构化字段组成（风险、是否偏离任务、污染、失败类别）。模型写的 `reasoning` 与 `reason_for_user` 截断、清理之后只进审计日志，绝不回到 agent 的上下文：被命令文本操纵的模型，否则就能借理由跟 agent 说话。
+- **`audit-only` 模式**：也调用 LLM，只记录 `would_be`。
+
 ### 9.6 其他约束
 
 - 系统提示词固定、不含用户数据，放在 `src/boundkeep/audit/prompts/audit_system.md`，版本化并计算哈希，写入每条审计日志。
-- 结果缓存键：`hash(规范化动作 + 任务意图摘要 + tainted + 后端 + 模型 + 提示词哈希)`，带 TTL。
+- 结果缓存键：`hash(规范化动作 + 任务意图摘要 + tainted + 后端 + 模型 + 提示词哈希)`，带 TTL。M3a（P6）：
+  - 键是"经过发送出口的请求内容 + 后端 + 模型 + 传输方式 + 提示词哈希"的哈希。请求内容已含动作、任务意图、污染位与来源名，所以比上面的键更全，命中的只会是问同一个模型的同一个问题。
+  - 只缓存合法的模型结论；最终判决不缓存，每次都重新做二次裁决。
+  - 只存内存、有上限；`cache_ttl_s: 0` 关闭缓存。
 - 唯一的发送出口（`send_gate`）：字段白名单 + 脱敏；所有后端都只能通过它拿到要发送的内容。
 - **后端一致性测试（contract tests）**：每个适配器必须通过同一套测试：合法输出、缺字段、类型错误、截断、非 JSON、4xx / 5xx / 限流、超时、超大响应、跨域重定向、错误信息不含密钥。通过之前，不在任何文档里声明支持该后端。真实调用的测试标记为 `live`，默认跳过。
 - `boundkeep llm check`：对当前配置的后端发一次固定的、无害的请求，验证连通性、传输方式和 schema，只输出结论与 token 用量。
@@ -578,6 +674,9 @@ if tainted and action 命中 sensitive_tags 且 final == ALLOW:  final = ASK
 | 常驻进程未运行 / IPC 连不上（套接字、命名管道） | `boundkeep-hook` 输出 `ask` 并说明原因（不是静默放行） |
 | 命名管道忙（Windows） | 客户端在总预算内退避重试；预算用尽 → `ask` |
 | LLM 后端超时 / 报错 / 输出不合 schema / 未配置密钥 | 按 `on_failure`（默认 `ask`） |
+| 带 LLM 审计的审查超过期限（M3a，P12） | 期限从提交时算，等于规则的 2 秒 + LLM 预算（`timeout_ms`，最多 6 秒）+ 0.5 秒，最长 8.5 秒，在 hook 客户端的 10 秒之内。超时后 `enforce` 下按 `on_failure`，`audit-only` 下与其他超时一样是 `ask`。因超时或繁忙没有审查就回答的来源调用，仍然打污染标记（§7） |
+| 会话状态库不可用（损坏、磁盘满、权限；M3a，P7） | 每个调用按"状态未知"判，即当作已污染：开发工具再问，LLM 对敏感动作的 allow 变成 ask。守护进程启动时在控制台说明原因，`ping` 状态带 `session=…`，`doctor` 提示怎样恢复 |
+| 灰色调用没被完整分析（M3a，P11） | 不送 LLM 审计，直接 `ask`（`decided_by: gray-unanalysed`），不按 `on_failure`（§7） |
 | 策略文件解析失败 | `ask`；`boundkeep doctor` 报错 |
 | 命令无法解析 / 工具名未知 | 灰色地带 |
 | `mode: audit-only` | 只记录判决，不向 Claude Code 返回决定，沿用其原有权限流程 |
@@ -645,6 +744,13 @@ if tainted and action 命中 sensitive_tags 且 final == ALLOW:  final = ASK
 
 **消融（四行）**：`rules-only` → `rules+taint`（无 LLM）→ `rules+LLM` → `rules+LLM+taint`，逐层展示增量。前两行不需要任何密钥与网络。
 
+M3a 的测量方式（P8，口径见 `docs/eval-methodology.md` 第 6 节，指标版本不变）：
+
+- **每次运行**：都测量全部不需要网络与密钥的配置（`rules-only` 与 `rules+taint`）。
+- **`rules+taint` 怎么模拟会话**：每个样本在自己的会话里判。标了 `tainted` 的样本，先收到一次对应来源工具的调用，所以落在窗口之内，粘性位也已置上。
+- **参考表"每个样本都在刚读过不可信内容的会话里"**：给出污染层对正常操作的代价上限。它不是消融行，也不是头条数字。
+- **量不到的**：跨多步的链（先写测试文件、再运行 pytest）只能由单元测试覆盖。
+
 **LLM 行的报告要求**：写明后端、模型名与版本、thinking 设置、传输方式、提示词哈希、运行日期、token 用量。**结论不跨模型外推**：换后端或换模型，就要重跑并另列一行。
 
 **目标值不预设**：先跑 M2 的 `rules-only` 基线，再根据基线设定后续的提升目标。README 只写实测值，并链接 `eval/report.md`。若 M3b 尚未完成，LLM 行写"未运行"，README 不得对 LLM 层的效果做任何表述。
@@ -682,12 +788,15 @@ boundkeep/
 │   ├── normalize/               # hook JSON → Action：bash.py、powershell.py（M1b）、paths.py（词法层 + 文件系统层）、domains.py
 │   ├── policy/                  # schema(pydantic)、loader、matcher（M0：只有 version / mode / defaults.emit_allow / taint.sources 四个键，未知键报错；`mode` 存在 ~/.boundkeep/policy.yaml）
 │   ├── audit/
-│   │   ├── backends/            # base.py（协议）、openai_compatible.py、anthropic.py（可选）、fake.py
+│   │   ├── backends/            # base.py（协议）、openai_compatible.py、anthropic.py（可选，M3a 未做）、fake.py
 │   │   ├── prompts/audit_system.md
+│   │   ├── auditor.py           # 一次审查：发送出口 → 缓存 → 后端 → 二次裁决，失败分类与理由
+│   │   ├── prompt.py            # 系统提示词与它的哈希
 │   │   ├── send_gate.py         # 唯一发送出口：字段白名单 + 脱敏
 │   │   ├── verdict.py           # 二次裁决（纯函数）
 │   │   └── cache.py
-│   ├── session/                 # 任务意图存储、污染追踪（SQLite）
+│   ├── llmcheck.py              # boundkeep llm check
+│   ├── session/                 # facts.py（一次调用的会话事实）、intent.py（任务意图提取）、store.py（SQLite 状态库）
 │   ├── redact.py                # 脱敏
 │   ├── logstore.py              # JSONL 写入与读取
 │   └── compiler/                # 提议（LLM）/ 离线提示词模板 / 校验 / 回放预览（M4）
@@ -710,8 +819,8 @@ boundkeep/
 │   ├── manual-acceptance-m0.md  # M0 的手工验收步骤（用户做）
 │   ├── reports/                 # 每个里程碑的验收报告
 │   ├── llm-backends.md          # 各后端配置、已测版本、一致性测试结果
-│   └── privacy.md
-└── tests/                       # unit / contract（后端一致性）/ platform（按 windows、posix 标记）/ e2e / fixtures
+│   └── privacy.md               # 发给 LLM 后端什么、本机存什么（M3a）
+└── tests/                       # unit / contract（后端一致性，M3a：假后端与本地假服务；live 默认跳过）/ platform（按 windows、posix 标记）/ e2e / fixtures / helpers
 ```
 
 技术选型（可调整）：Python 3.11+、`uv`、pydantic v2、`httpx`（OpenAI 兼容后端）、pytest、hypothesis、ruff；`anthropic` SDK 仅作为可选依赖；`boundkeep-hook` 只用标准库；常驻进程的业务逻辑用标准库 `asyncio`，传输层经 `ipc/`（POSIX 用 Unix 套接字服务；Windows 用 ctypes 命名管道，不用 asyncio 的管道服务端，见 §5.1），或 FastAPI + uvicorn（v0.5 加 Web 时再统一）；Windows 端不引入 pywin32 一类新依赖。引入任何新依赖前先说明理由、许可证与维护状态。
