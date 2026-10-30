@@ -1,6 +1,6 @@
-# 架构（M0 通路与降级；M1 判定管线）
+# 架构（M0 通路与降级；M1 判定管线；M3a 会话状态与 LLM 审计）
 
-> 状态：M0 实现于 2026-10-08，M1 的判定管线随后接入（§6）。通路、降级、IPC 与客户端不变量（§1 到 §5、§7、§8）是 M0 的结论；§6 描述 M1 的常驻进程：normalize、规则、取最严，判定在事件循环之外的线程里、带期限地运行。M1 之后 PowerShell 命令仍不被解析（M1b 才做），每一条都落到 `ask`，文档与 README 不得暗示 PowerShell 已被规则审查。
+> 状态：M0 实现于 2026-10-08，M1 的判定管线随后接入（§6）。通路、降级、IPC 与客户端不变量（§1 到 §5、§7、§8）是 M0 的结论；§6 描述常驻进程：normalize、规则、取最严，判定在事件循环之外的线程里、带期限地运行。M1b 起 PowerShell 命令经辅助进程解析。M3a（2026-10-30）加了会话状态（§6a）与可选的 LLM 审计（§6b）；LLM 审计只对本地假服务测过，没有接过真实服务。
 > 事实来源是 `PROJECT_SPEC.md`；与 Claude Code 行为有关的结论以 `hook-behavior.md`（带版本的实测）为准。
 
 ## 1. 通路
@@ -34,8 +34,11 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 | `ipc/named_pipe.py`、`ipc/winsec.py` | Windows 服务端（ctypes、重叠 I/O）与 ACL/SDDL 辅助 |
 | `ipc/unix.py` | POSIX 服务端（只在 Linux 容器里测过，没有宿主验证，见 §9） |
 | `ipc/base.py` | 服务端抽象与工厂 |
-| `daemon/server.py`、`daemon/pipeline.py`、`daemon/lifecycle.py` | 常驻进程（请求处理、判定线程池与期限、策略热加载、审计记录）、判定管线（M1）、单实例锁与停止信号 |
-| `policy/` | M0 的最小策略（`version`、`mode`、`defaults.emit_allow`、`taint.sources`），严格校验 |
+| `daemon/server.py`、`daemon/pipeline.py`、`daemon/lifecycle.py` | 常驻进程（请求处理、判定线程池与期限、策略热加载、审计记录、会话状态的清理）、判定管线、单实例锁与停止信号 |
+| `policy/` | 策略 schema、加载器、规则匹配（M1 起；M3a 加 `taint.window` / `sensitive_tags`、`llm_audit` 的意图设置、匹配字段 `session_read_untrusted`） |
+| `session/` | （M3a）`facts.py` 一次调用所处的污染状态；`intent.py` 从提示词取任务意图；`store.py` SQLite（WAL）里的会话状态 |
+| `audit/` | （M3a）`send_gate.py` 唯一的发送出口；`backends/`（`base.py` 协议、错误分类、输出校验；`fake.py`；`openai_compatible.py`）；`verdict.py` 二次裁决；`cache.py`；`auditor.py` 把它们串起来；`prompt.py` 与 `prompts/audit_system.md` |
+| `llmcheck.py` | （M3a）`boundkeep llm check` |
 | `redact.py`、`logstore.py`、`fsperm.py` | 脱敏、JSONL 审计日志、目录与文件的私有性检查 |
 | `settings_io.py`、`install.py`、`claude_settings.py` | 读写 Claude Code 的 settings、合并与移除 hook 条目、自检、清单 |
 | `hookcmd.py` | 选择并校验 hook 要启动的解释器 |
@@ -54,7 +57,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 - `decision` 是抽象的：**Claude Code 的输出格式只由客户端生成**（`json.dumps(ensure_ascii=True)`），所以"stdout 总是合法的纯 ASCII JSON 或为空"只需要在一处保证。
 - `none` 表示"无决定"：退出 0、什么都不输出，调用交还给 Claude Code 原有的权限流程。M0 从不返回 `allow`（`emit_allow` 默认关闭，M0 也没有实现开启）。
 - 协议层的错误（过大、超时、处理器异常）用占位 id `-` 回应；客户端据此按降级处理。
-- `ping` 只用于 `boundkeep doctor`：有应答、不写日志、不经过判定线程池（判定卡住时 ping 照样即时应答）。应答的 `reason` 是状态文本：`mode=…; requests=N; timeouts=N; stuck=N; config_dir=<路径或 ->`，策略不可用时再加 `; policy error: …`。`timeouts` 是迄今因超过期限而被放弃的判定数，`stuck` 是此刻仍在运行的被放弃的工作线程数，`config_dir` 是常驻进程自己环境里的 `CLAUDE_CONFIG_DIR`（`doctor` 拿它与自己的环境比对，见 §6）。
+- `ping` 只用于 `boundkeep doctor`：有应答、不写日志、不经过判定线程池（判定卡住时 ping 照样即时应答）。应答的 `reason` 是状态文本：`mode=…; requests=N; timeouts=N; stuck=N; session=ok|unavailable; llm=<后端或 none>; powershell=…; config_dir=<路径或 ->`（`session` 与 `llm` 是 M3a 加的，放在 PowerShell 字段之前，`config_dir` 仍在最后），策略不可用时再加 `; policy error: …`。`timeouts` 是迄今因超过期限而被放弃的判定数，`stuck` 是此刻仍在运行的被放弃的工作线程数，`config_dir` 是常驻进程自己环境里的 `CLAUDE_CONFIG_DIR`（`doctor` 拿它与自己的环境比对，见 §6）。
 - 任何不符合的请求或应答都是 `ProtocolError`；协议改动必须升版本号。
 
 ## 4. 本机 IPC
@@ -100,6 +103,8 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 - **判定在事件循环之外、带期限地运行**：PreToolUse 的整个判定（策略重读、normalize、规则）交给一个有界的守护线程池（默认 4 个线程，`Daemon(pool_size=…)`），用 `asyncio.wait` 等结果，期限默认 2.0 秒（`Daemon(decision_timeout_s=…)`；hook 客户端自己的 PreToolUse 预算是 10 秒）。原因：一条恶意构造的几 KB 命令（例如 `cd src && cd src && …` 的长链）可以让解析器算上十几秒，同步运行会卡死事件循环，连 ping 和其他请求都得不到应答（审查实测）。超过期限时：应答 `ask`，理由 `boundkeep: review took too long`，审计记录 `decision: ask`、`decided_by: timeout`，只记命令的长度（`command_chars`），不记命令正文，常驻进程继续服务。
 - **被放弃的线程**：线程无法被杀死，超时后工作线程继续跑到自己结束。它被记为"卡住"，同时补一个新线程顶替它的位置（容量不减半）。卡住的线程数达到池大小时，新的 PreToolUse 请求不再起任何工作，立即应答 `ask`（`boundkeep: daemon busy`，`decided_by: busy`，同样只记长度），直到有线程返回为止；线程总数因此不超过池大小的两倍。排在队列里、还没开始的判定在超时时被取消，不会白跑。`ping` 与非 PreToolUse 事件不经过线程池，不会排在卡住的判定后面。线程池的线程是守护线程：停止（`serve` 的 stop）与进程退出都不等它们，不会被一个卡住的判定拖住（`ThreadPoolExecutor` 会在退出时 join 线程，所以没有用它）。
 - **策略热加载**：每个请求检查策略文件的修改时间与大小，变了就重读（PreToolUse 在持锁的工作线程里重读；ping 与其他事件在事件循环上重读，只有文件真的变了时才有这点开销），所以 `boundkeep mode` 立即生效。策略不可用时 PreToolUse 一律 `ask`，直到修好；文件没变但上次读失败（编辑器或杀毒软件暂时占用）时，每秒最多重读一次，所以占用解除后自己恢复。重读的任何失败（包括 `PolicyError` 之外的异常，以及 `runtime_policy_checked` 报告的运行期规则问题）都记成策略错误，**绝不**让旧策略在"没有错误"的状态下继续生效；文件的 (mtime, size) 键只在新结果（策略或错误）存好之后才前移。
+- **M3a 之后的判定管线**：normalize → 规则（带这次调用所处的会话污染状态，规则用 `session_read_untrusted` 看它）→ 污染一步（不是规则给出的 allow、动作带敏感标签、会话在污染窗口内 → ask）→ 灰色且配置了后端时交给 LLM 审计 → 代码的二次裁决（§6b）。没有后端时灰色仍是 `ask`。
+- **期限（M3a）**：规则仍是 2.0 秒；策略配置了 LLM 后端时再加 LLM 的预算（`timeout_ms`，最多 6 秒）与 0.5 秒余量，从提交时算。预算有两个来源，取较大者：提交时上一次加载的策略（排队等工作线程的请求也有这段时间），以及工作线程重读策略之后告诉等待的事件循环的那个（第一次请求时策略还没加载）。策略只在工作线程里重读，不上事件循环。超时时，带 LLM 审计的审查在 enforce 下按 `on_failure` 回答（`decided_by: timeout-llm`），`audit-only` 下与其他超时一样是 ask。hook 客户端自己的 PreToolUse 预算是 10 秒，所以 2 + 6 + 0.5 秒之内一定有回答。没有审查就回答的调用（繁忙，或排队时就超时、根本没开始）仍在单独的线程里给来源工具打污染标记。
 - **`CLAUDE_CONFIG_DIR`**：常驻进程从**自己的**环境读它，用来给那个目录里的 settings 与凭据加保护规则；Claude Code 的环境可能不同，而 hook 客户端只转发 `CLAUDE_PROJECT_DIR`。`doctor` 在自己的环境设了它时给 INFO（常驻进程必须以同样的值启动），并在 ping 状态里的 `config_dir` 与自己的环境不同时给 WARN。
 - **失败也留痕**：处理请求时出现内部错误，除了返回错误应答，还会往审计日志写一条 `decision: error`、`decided_by: internal-error` 的记录。
 - **输出不阻塞**：常驻进程的报告行经有界队列由单独线程写 stderr，满了就丢；没人读的 stderr 管道不会再把事件循环卡死。`console.out/err` 容忍没有 stdout/stderr（`pythonw.exe`）。
@@ -107,6 +112,20 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 - **日志写入**：先脱敏，再把每个字符串截到 4096 字符，一次 `os.write`；写失败只记录并返回 `False`，从不改变判定；Windows 上轮转因文件被占用而失败时继续写旧文件，稍后重试，不丢事件。5 MiB 轮转，保留 5 份。**追加用只写句柄**：Windows 上只申请 `FILE_APPEND_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE`（POSIX 是 `O_WRONLY | O_APPEND`）。早先的实现为了偷看最后一个字节而申请了读权限，在 Windows Defender 实时扫描下每次打开要 20 到 80 毫秒（实测：带读权限 26 毫秒中位数，只写 0.35 毫秒）。"文件是否以换行结尾"改为内存里的状态：进程启动后的第一次追加、轮转之后、清空之后、写失败之后各用一次单独的读打开检查，其余时候信任它（我们写的每条记录都以换行结尾），所以崩溃留下的半行仍然不会吞掉下一条记录。追加本身在事件循环上做（不占判定线程）。
 - **单实例**：文件锁（Windows `msvcrt.locking`，POSIX `flock`）加 pid 文件；再加管道的首实例标志。锁随进程消失，崩溃不会留下死锁。
 - **停止**：Ctrl+C、Ctrl+Break（Windows）、SIGTERM 都会让它清理退出。
+
+## 6a. 会话状态（M3a，`session/`）
+
+- **存储**：`<home>/session.sqlite`，WAL，`synchronous=NORMAL`；一个连接、一把锁，读改写都在 `BEGIN IMMEDIATE` 事务里，所以并行的工具调用不丢更新（另一个进程开同一个文件也一样，它会等忙超时）。表 `sessions`：会话 id、首次与最近出现的时间、距上次污染来源调用的工具调用次数（NULL：没有过）、来源工具名；表 `prompts`：最近几条任务意图（只在配置了 LLM 后端且允许发送时才写）。实测（本机，Python 3.12.11）：干净会话的一次 PreToolUse 只读不写，p50 约 0.008 毫秒；被污染过的会话每次调用写一次计数，p50 约 0.03 毫秒。
+- **事件**：UserPromptSubmit 存任务意图；PostToolUse 对来源工具打标记；PreToolUse 计数，并把这次调用判在"它之前"的状态里（来源调用自己不算被污染），来源调用在这里也打标记（PostToolUse 失败时 hook 客户端什么也不做，只靠它会失败即放行）。prompt 与 post 事件的写入在 `asyncio.to_thread` 里做：不占事件循环，也不排在判定线程池后面。
+- **失败即关闭**：状态库打不开（损坏、未知的 schema 版本、目录不可写）时换成一个替身，每次调用都返回"状态未知"，管线把它当作已污染；启动时与 `ping` 的状态（`session=unavailable`）里说明。单次读写失败同样返回"未知"，守护进程按 1、10、100…… 次报告。
+- **清理**：守护进程启动时与每小时一次：30 天没有活动的会话连同任务意图删除；超过 5000 个会话时最久没活动的先删。保留期长是因为 resume 会沿用旧的 session_id。
+
+## 6b. LLM 审计（M3a，`audit/`，可选）
+
+- **只审灰色**：规则的 deny / ask / allow 从不发给模型。
+- **流程**：没有被完整分析的灰色调用（`pipeline.incomplete_analysis`）不送审，直接 ask → `send_gate` 取白名单字段、脱敏，看不全、有控制字符、秘密跨词出现、再脱敏会变、含环境里秘密变量的值就不发 → 缓存（键 = 后端、模型、传输方式、提示词哈希、发送内容；只存合法的模型结论，内存，TTL）→ 后端（`openai_compatible`：httpx 直接 POST `<base_url>/chat/completions`，每次尝试一个事件循环、一个客户端、一个 `asyncio.timeout` 硬期限，不跟随重定向，只收未压缩、≤ 256 KiB 的回答，至多重试一次）→ `parse_verdict`（恰好五个字段、类型与长度都对、无重复键，否则 `invalid_output`）→ `verdict.rule_on`（§9.5）。任何失败都是 `on_failure`。
+- **给 Claude Code 的理由**只由结构化字段组成；模型写的文字只进审计日志。
+- **`boundkeep llm check`**：用同一套发送出口发一次固定的无害请求，只打印结论、检查了什么与 token 用量。
 
 ## 7. ConfigChange 的自我保护
 
@@ -132,6 +151,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 | `logs/audit.jsonl`（及 `.1` 到 `.5`） | 审计日志 |
 | `serve.lock`、`serve.pid` | 单实例锁与 pid |
 | `backups/` | `init`、`uninstall` 改动前的 settings 副本 |
+| `session.sqlite`（及 `-wal`、`-shm`） | （M3a）会话状态：污染标记，配置了 LLM 后端时另有任务意图（§6a、`docs/privacy.md`） |
 
 目录与文件都对当前用户私有：POSIX 用 0700 / 0600，Windows 用只含当前用户与 SYSTEM 的受保护 DACL；`doctor` 逐项回读检查。
 

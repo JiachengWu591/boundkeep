@@ -9,7 +9,7 @@
 - 假机器：Windows（`C:\Users\testuser`，项目 `C:\Users\testuser\proj`）、POSIX（`/home/testuser`，项目 `/home/testuser/proj`）。样本里的路径用这两个。
 - 策略：默认是随附的 `policies/default.yaml`；`--policy` 可指定别的文件。报告记录策略文本的 SHA-256，所以一份报告对应哪一版规则是可查的。
 - `trusted_projects` 默认关闭（假机器的项目不受信任），报告里的开发工具命令（`pytest`、`ruff` 等）因此是 ask。受信任项目只作为第 5 节的参考列。
-- 样本里的 `tainted` / `taint_sources` / `task_intent` 对 `rules-only` 没有影响（规则层不看会话状态）；它们是给 `rules+taint` 与 LLM 行准备的字段。
+- 样本里的 `tainted` / `taint_sources` / `task_intent` 对 `rules-only` 没有影响（每个样本都在干净的会话里判）；`rules+taint` 用前两个（第 6 节），`task_intent` 留给 LLM 行。
 
 ## 2. 裁决如何折成指标
 
@@ -71,9 +71,16 @@ test 切分在 M2 之后已被污染（规则在看过 test 结果之后改过�
 - **入库**：人确认后 `boundkeep eval promote FILE` 把已确认的样本移到 `eval/datasets/benign/real.jsonl`（并整体重新校验：重复、泄漏、切分）。样本 id 取决于调用在会话里的位置，重新导入同一会话不会产生冲突的 id。
 ## 5. 参考列：受信任项目
 
-同一批样本再跑一遍，只把假机器的项目列入 `trusted_projects`，作为独立的参考表（不是消融行，也不是头条数字），用来量化
+同一批样本再跑一遍，只把假机器的项目列入 `trusted_projects`，作为独立的参考表（不是消融行，也不是头条数字），用来量化开发工具的询问有多少来自"项目没有被信任"。
 
-报告固定四行：`rules-only`、`rules+taint`（M3a，无 LLM）、`rules+LLM`、`rules+LLM+taint`（M3b）。不能运行的行写"未运行"，不写数字。结论**不跨模型外推**：换后端或模型就重跑并另列一行。
+## 6. 消融行与 `rules+taint`（M3a 补充，2026-10-30）
+
+报告固定四行：`rules-only`、`rules+taint`（M3a，无 LLM）、`rules+LLM`、`rules+LLM+taint`（M3b）。不能运行的行写"未运行"，不写数字。结论**不跨模型外推**：换后端或模型就重跑并另列一行。**每次运行都测量全部不需要网络与密钥的配置**（今天是 `rules-only` 与 `rules+taint`），同一批样本、同一份策略、同一天，各写 `eval/results/<配置>.json`；`--config` 只决定报告里展开哪一个的明细。这是新增的配置，不改变任何已有指标的定义，所以指标版本仍是 3。
+
+- **`rules+taint` 怎么模拟会话**：每个样本（每台机器）在一个真实的 `SessionStore`（内存库）里有自己的会话。标了 `tainted` 的样本先收到一次污染来源工具的 PostToolUse（`taint_sources` 的标签对应的工具：`web-content` → `WebFetch`、`web-search` → `WebSearch`、`mcp` → 一个 `mcp__` 工具；没有标签时用 `WebFetch`），像 hook 事件那样经过同一个 `tool_result`；然后样本自己的调用经 `tool_call` 计数，并在存储报告的状态里判（窗口内、`session_read_untrusted` 成立）。没标 `tainted` 的样本在干净的会话里判。没有 LLM，所以任务意图不用，有效裁决的折算与 `rules-only` 相同（灰色 → ask）。延迟包含会话存储的这两次操作。
+- **报告的"变化"表**：逐个样本比较两种配置，分开数"有效裁决变了"与"只有策略自己的结论变了"（例如 `gray` 变成规则的 `ask`：有效裁决都是 ask，但规则认出了它）。
+- **参考表"每个样本都在刚读过不可信内容的会话里"**：不是消融行。数据集里没有一条正常样本标了 `tainted`，所以 `rules+taint` 本身量不出污染层对正常操作的代价；这张表把全部样本都放进刚调用过来源的会话里再判一次（未受信任与受信任两种机器），给出这个代价的上限。
+- **量不到的**：样本是单次调用，跨多步的链（先写测试文件、再运行 pytest）只能由单元测试覆盖（`tests/unit/test_m3a_pipeline.py`）。
 
 ## 7. 复现
 
@@ -82,10 +89,10 @@ uv run python eval/run_eval.py --check
 ```
 
 ```bash
-uv run python eval/run_eval.py --config rules-only
+uv run python eval/run_eval.py --config rules+taint --test-contaminated
 ```
 
-第一条只校验数据集并打印两个切分的指纹；第二条离线运行（不需要网络、密钥或 Claude Code）并写 `eval/report.md` 与 `eval/results/rules-only.json`。Windows 主机上 PowerShell 样本需要 PowerShell 解析辅助进程（Windows PowerShell 5.1 或 pwsh）；没有它时这些样本被跳过并在报告里列出，不计入任何数字。
+第一条只校验数据集并打印两个切分的指纹；第二条离线运行（不需要网络、密钥或 Claude Code），测量 `rules-only` 与 `rules+taint`，写 `eval/report.md`、`eval/results/rules-only.json` 与 `eval/results/rules+taint.json`（`--test-contaminated`：test 切分在 M2 之后已被污染，报告必须这样声明）。Windows 主机上 PowerShell 样本需要 PowerShell 解析辅助进程（Windows PowerShell 5.1 或 pwsh）；没有它时这些样本被跳过并在报告里列出，不计入任何数字。
 
 ## 8. 已知局限
 

@@ -72,7 +72,7 @@ Planned ablation: rules only, rules + taint, rules + LLM, rules + LLM + taint. P
 
 ## Privacy
 
-With no LLM backend configured, nothing leaves your machine. With a backend, only structured metadata about the action (tool, normalized command, paths, domains, a short task summary) is sent, after redaction; file contents and raw tool output are never sent. See `docs/privacy.md` (TODO) for each backend.
+With no LLM backend configured, nothing leaves your machine. With a backend, only structured metadata about the action (tool, normalized command, paths, domains, a short task summary) is sent, after redaction; file contents and raw tool output are never sent. See `docs/privacy.md` for exactly what is sent and what is stored.
 
 ## What it is not
 

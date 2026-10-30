@@ -1,4 +1,4 @@
-# 策略文件参考（M1）
+# 策略文件参考（M1 起；M3a 补会话污染与 LLM 审计的键）
 
 策略文件是安全配置：拼写错误必须大声失败，不能被悄悄忽略。所以所有层级都是严格模式（未知键报错、不做类型转换），错误信息带行号和字段路径。默认文件在 `policies/default.yaml`，更严的在 `policies/strict.yaml`；`boundkeep init` 把默认策略写到 `~/.boundkeep/policy.yaml`（已有的文件不会被覆盖，`--reset-policy` 才会，并保留备份与当前 mode）。
 
@@ -11,8 +11,8 @@ version: 1                     # 必须是整数 1
 mode: enforce                  # enforce | audit-only
 defaults:
   emit_allow: false            # true：规则判为 allow 时向 Claude Code 输出 allow（替用户自动批准）
-llm_audit: {...}               # 只校验结构（M3 才有后端）
-taint: {sources: [WebFetch, WebSearch, "mcp__*"]}   # 决定 PostToolUse 的 matcher
+llm_audit: {...}               # 可选的 LLM 审计（M3a：openai_compatible 适配器；默认 none）
+taint: {sources: [WebFetch, WebSearch, "mcp__*"], window: 8, sensitive_tags: [...]}   # 会话污染（M3a）
 trusted_projects: []           # 你明确信任的项目目录（默认空），见下面的"受信任的项目"
 mcp_read_only: []              # 你声明只读的 MCP 工具（默认空），见下面的"MCP 工具"
 rules: [...]
@@ -22,7 +22,8 @@ tests: [...]
 - `mode: audit-only`：不向 Claude Code 返回任何决定，只在审计日志里记录 `would_be`（enforce 下会给出的决定）。先用它观察再切 enforce。
 - `emit_allow` 默认关闭：ALLOW 的输出是"无决定"，Claude Code 照常走它自己的权限流程。打开后 boundkeep 会替你跳过本该弹出的确认（E11：压不过你自己的 ask / deny 规则），`doctor` 会对此告警。
 - 只含 M0 那四个键（`version`、`mode`、`defaults`、`taint`）的旧文件仍然合法，但没有规则：所有 shell 命令都会 ask，`doctor` 会提示运行 `init --reset-policy`。
-- `llm_audit`：`backend` 为 `none | openai_compatible | anthropic`；`on_failure` 只能是 `ask` 或 `deny`（写 `allow` 有专门的报错）；`base_url` 必须是 https（本机回环地址除外）且不带凭据；`api_key_env` 必须是环境变量名，不能是 `ANTHROPIC_API_KEY`。**策略里任何形似密钥的字符串都会被拒绝加载**，错误只给字段路径，不回显值。
+- `llm_audit`：`backend` 为 `none | openai_compatible | anthropic`（`anthropic` 还没有适配器：写了它，每个灰色动作都按 `on_failure` 处理）；`on_failure` 只能是 `ask` 或 `deny`（写 `allow` 有专门的报错）；`timeout_ms` 是一次审计的总预算（含一次重试），守护进程最多用 6000 毫秒（hook 客户端自己 10 秒内必须回答）；`send_task_intent` 为 true 时，任务意图（用户最近 `intent_prompts` 条提示，默认 3，范围 1 到 10；每条最多 `intent_chars` 字，默认 300，范围 40 到 2000；宿主拼进来的 `<ide_*>` 块去掉、粘贴的文字不取、先脱敏再截断）随审计请求发出，也只有这时才存进会话状态；`cache_ttl_s` 是模型结论在内存里缓存的秒数（0 关闭）。`openai_compatible`：`base_url` 必须是 https（本机回环地址除外）且不带凭据，请求发到 `<base_url>/chat/completions`；`model` 是厂商的模型名（配置项，不写死）；`transport` 为 `tool_call`（默认，命名的 `tool_choice` 强制调用 `report_verdict`）或 `json_object`（`response_format`，提示词同时要求只输出 JSON）；`extra_body` 原样并入请求体（例如 DeepSeek 的 `thinking: {type: disabled}`），但不能设置适配器自己设的键（`model`、`messages`、`tools`、`tool_choice`、`response_format`、`stream`、`n` 等，加载报错）；`api_key_env` 必须是环境变量名，不能是 `ANTHROPIC_API_KEY`。**策略里任何形似密钥的字符串都会被拒绝加载**，错误只给字段路径，不回显值。用 `boundkeep llm check` 对配置好的后端发一次固定的无害请求。发送与保存哪些内容见 `docs/privacy.md`，局限见 `docs/threat-model.md`。
+- `taint`（M3a）：`sources` 是会污染会话的工具（名字或 `前缀*`，也决定 PostToolUse 的 matcher）；来源工具的调用在 PreToolUse 与 PostToolUse 两处都打标记。`window`（默认 8，范围 1 到 1000）：来源调用之后接下来这么多次工具调用算"被污染"。`sensitive_tags`（默认全部五个风险标签）：被污染期间，**不是规则给出的** allow（LLM 审计的 allow、"什么都不碰的工具"）遇到带这些标签的动作时改为 ask；规则自己的 allow 不受影响。规则要看"会话是否读过不可信内容"时用匹配字段 `session_read_untrusted`（没有窗口，会话里任何时候调用过来源都算）。
 
 ## 规则
 
@@ -69,6 +70,7 @@ rules:
 | `destination` | `known` 或 `unknown`，需要联网：`known` 至少有一个已知域名，`unknown` 一个都没有（配置好的 git 远端或包源、运行时拼出的主机、变量里的 URL）。M2 之后加入，用来把"目的地无法确定"和"主机不在白名单"分成两条规则 |
 | `mcp_server` | MCP 工具的 server 名。**区分大小写**（`GitHub` 不是 `github`） |
 | `mcp_read_only: true` | 该动作是顶层 `mcp_read_only` 里声明过的 MCP 工具的调用，而且它的灰色原因**只有** `mcp-tool-not-reviewed`（参数里有命令、可能写入的 SQL、读不懂的 URL 等都会多一个原因）。只有带这个字段的 allow 规则能放行这样一个灰色动作；单独写它不满足 allow 规则必须点名工具或程序的检查 |
+| `session_read_untrusted: true` | （M3a）这个会话里**任何时候**调用过 `taint.sources` 里的工具（网页、搜索结果、MCP 的返回值进了 agent 的上下文）。没有窗口：粘住，直到会话结束（`/clear` 换新的 `session_id`；resume 与 compact 不换）。会话状态未知（没有 `session_id`、状态库坏了）算命中。**只能用在 deny / ask 规则里**（allow 规则写它加载报错：只在读过不可信内容之后才成立的 allow 放宽的正好是危险的情形）。`boundkeep test` 的用例用 `tainted: true` 模拟这种会话，`boundkeep explain --tainted` 同理 |
 
 所有布尔字段只能写 `true`，列表不能为空。**任何 match 字段、`tool`、`platform` 都不能写成 null**（`key:` 后面留空、`null`、`~`）：缺省才表示"不限"，一个悄悄等价于缺省的 null 会让 `path_inside_project:` 这样的笔误把 allow 规则放宽。加载时报 `rules[0].match.path_inside_project: ... is null`，带行号。
 
@@ -114,7 +116,8 @@ trusted_projects:
 
 - 一次工具调用归一化为**一个或多个** Action（一条 shell 命令行里每个简单命令一个）。每个 Action 取命中规则中最严的：`deny` > `ask` > `allow`；一条都没命中就是**灰色**。
 - 整体取各 Action 最严的：任一 deny → deny；否则任一 ask → ask；否则任一灰色 → 灰色；**全部**为 allow 才是 allow；没有 Action 也是灰色。
-- 灰色在没有 LLM 后端时输出 `ask`（`llm_audit.backend: none`）。
+- 灰色在没有 LLM 后端时输出 `ask`（`llm_audit.backend: none`）；配置了后端时交给 LLM 审计，最终判决由代码按规格 §9.5 计算（模型偏离任务或风险 ≥ 2 至少 ask，风险 3 一律 deny，被污染窗口内的敏感动作不能 allow，任何失败都是 `on_failure`）。规则给出的 deny / ask / allow 都不会发给模型。
+- 污染一步（规格 §7）：会话被污染期间，**不是规则给出的** allow 遇到带 `taint.sensitive_tags` 的动作时改为 ask（`decided_by: taint`）。
 - **带 `gray` 标记的 Action（解析不了、动态内容、未知工具、PowerShell 里解析不了或动态的构造）永远不会命中 allow 规则**；deny / ask 规则仍按已知部分匹配。
 - 内部出错对 deny / ask 规则算"命中"，对 allow 规则算"不命中"：失败只会更严。
 - 内置规则 `m0-canary`（命令文本里含 `BOUNDKEEP_CANARY` → deny）总是最先评估，不写在 YAML 里。
@@ -142,7 +145,7 @@ tests:
   - { tool: Bash, cwd: "/home/dev/proj", project_dir: "/home/dev/proj", input: { command: "rm -rf build" }, expect: gray }
 ```
 
-`expect` 取 `deny | ask | allow | gray`（`gray` = 规则层不应定案，用来防止规则过宽）。可选字段 `platform`、`cwd`、`project_dir`，以及 `session_id`（事件的会话 id，默认是一个不是 UUID 的固定值，所以默认没有任何路径在"会话 scratchpad"或会话的 tool-results 目录里；测 `path_in_scratchpad` 或 tool-results 要写一个 UUID；项目 memory 目录不看会话 id，看 `project_dir`）。`boundkeep test [--policy 文件] [--platform windows|posix|all]` 用**假机器**（Windows：`C:\Users\testuser`，POSIX：`/home/testuser`）跑真实的管线，所以 Windows 路径的用例在任何平台都能通过；默认两个平台都跑。
+`expect` 取 `deny | ask | allow | gray`（`gray` = 规则层不应定案，用来防止规则过宽）。可选字段 `platform`、`cwd`、`project_dir`、`tainted`（M3a：`true` 表示这个用例的会话刚调用过污染来源，窗口内且 `session_read_untrusted` 成立；默认是一个干净的会话），以及 `session_id`（事件的会话 id，默认是一个不是 UUID 的固定值，所以默认没有任何路径在"会话 scratchpad"或会话的 tool-results 目录里；测 `path_in_scratchpad` 或 tool-results 要写一个 UUID；项目 memory 目录不看会话 id，看 `project_dir`）。`boundkeep test [--policy 文件] [--platform windows|posix|all]` 用**假机器**（Windows：`C:\Users\testuser`，POSIX：`/home/testuser`）跑真实的管线，所以 Windows 路径的用例在任何平台都能通过；默认两个平台都跑。
 
 `boundkeep explain <事件.json|->` 用**本机的真实环境**（你的主目录与环境变量、事件里的 `cwd` 与 `project_dir`）解释一个事件：每个动作的程序、路径（规范键与 `inside_project`）、域名、风险标签、命中的规则、最终判决和 hook 实际会输出什么。
 
@@ -227,6 +230,7 @@ tests:
 | `allow-cd-family` | allow | **仅 default（M1c-3）。** 改工作目录的命令：Bash `cd`、`pushd`，PowerShell `Set-Location`、`Push-Location`（别名 `sl`、`chdir`、`cd`、`pushd` 在归一化层已是这两个规范名；`-Path`、`-LiteralPath`、`-PassThru`、`-StackName` 照常）。`cd` 只改目录：不读、不写、不运行、不联网，之前每一行 `Set-Location 'proj'; <任何命令>` 即使后面全是 allow 也整行灰色（一行要所有命令都是 allow 才 allow）。匹配条件：`paths_read_only` + **`path_inside_project`（目标必须已知在项目内；有意不放宽）**。原因：`git status`、`pwd` 这类**不带路径**的命令的工作目录来自前面的 cd，没有任何路径可供规则判断，若放行出项目的 cd，`cd ../other && git status` 会是 allow，而 `git -C ../other status` 是 ask（`ask-git-read-outside-project`），形成绕过。所以出项目、指向变量或命令替换或通配符（`cd $x`、`cd "$(pwd)"`、`cd *`）、`cd -`、光秃秃的 `cd`（回到主目录）、`popd` / `Pop-Location` / 不带参数的 `pushd`（没有路径可证明）都保持原状（灰色）。**cd 目标由谁判定：** 受保护的位置（`~/.ssh`、`~/.aws`、`.env`、凭据库）由已有的 deny / ask 规则通过 cd 携带的目录路径（read）判定，如 `cd ~/.ssh` 是 deny（`no-secret-read`），allow 规则不会削弱它们（最严者胜）；项目内的 `.git`、`.claude`、`certs` 目录本身没有规则保护（只有里面的文件有），cd 进去是 allow，但**之后的命令按新目录判定**：`cd .git && cat config` 是 deny（`no-credential-store-read`），`cd .. && cat .env` 是 deny（`no-secret-read`），`cd src && cat ../.env` 是 deny。`cd` 可能失败，所以旧目录与新目录同时保持可能：`cd src && cat ../README.md`（从项目根看 `..` 在项目外）灰色。带 `sudo` / `env` / `nohup` / `time` 的 cd、重定向（`cd src > out.txt`）、灰色动作（通配符、`HKLM:`、`-Credential`、未解析的参数）、`if` / `foreach` 等复合语句里的 cd 都不匹配。残余：cd 到项目外或未知目录、后面又是带路径未知的命令，整行仍是灰色或 ask；Bash 的 `cd a b`（两个参数）在 zsh 里是"替换"，归一化层只把第一个词当目标（建议以后在归一化层把多参数的 cd 标灰，见 `docs/reports/M1c3.md`）。strict 没有这条规则 |
 | `allow-session-scratchpad` | allow | **仅 default（M1c-4）。** `tool: [Write, Edit, MultiEdit, NotebookEdit, Read, Grep, Glob]` + `path_in_scratchpad: true`：Claude Code 每个会话的 scratchpad（`<临时目录>/claude/<slug>/<会话 id>/scratchpad`）里的读写与搜索不再问，目录本身也算（`Grep` / `Glob` 的 `path`）。只认**当前会话**、**本机守护进程的临时目录**之下、`session_id` 是 UUID 的情形；其他会话、`scratchpad2`、临时目录及其上级、`..` 走出去的、含变量或通配符的、会话 id 缺失或畸形的、符号链接 / junction 指向别处的，一律不匹配。**Shell 工具（Bash、PowerShell）不在工具清单里**：`python <scratchpad>\x.py`、`cat <scratchpad>\x.py` 与以前完全一样（灰色）。所有 deny / ask 规则仍然最严者胜：`Write <scratchpad>\.env` 是 ask（`ask-secret-file-write`），`Read <scratchpad>\.env`、`Read <scratchpad>\id_rsa` 是 deny，`Write <scratchpad>\Makefile` / `package.json` / `conftest.py` 是 ask；`Grep` 目录时仍会扫描子树里的受保护名字。strict 没有这条规则。见"Session scratchpad"一节 |
 | `ask-devtools-path-outside-project` | ask | **仅 default。** 下一行 allow 规则的搭档（模式同 `ask-shell-read-outside-project`）：dev 工具命令可以没有任何路径，所以 allow 规则不能要求 `path_inside_project`；这条让任何不能证明在项目内的路径（操作数、`-c` 文件、路径限定的 python 或工具本身的可执行文件）都 ask。程序清单与 allow 规则相同（有测试检查）。带 `project_trusted: true`，所以不信任的项目里它不出声（那里本来就没有 allow，命令是灰色）；无法判断项目时算命中。没有 `path_glob` / `access`，原因同上面的守卫规则 |
+| `ask-devtools-after-untrusted-content` | ask | （M3a，X1 审查 M-2，default 与 strict 相同）会话读过网页、搜索结果或 MCP 返回值之后（`session_read_untrusted`，粘住，等不过去），`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint` 一律再问，受信任项目也一样：这就是"先写测试文件、再运行 pytest"的 write-then-run 链。写成 ask 规则而不是给 allow 规则加条件：加条件只会让命令变灰色，而灰色在配置了 LLM 后端时交给模型。程序清单与 allow 规则相同（有测试检查）；会话状态未知时也问 |
 | `allow-devtools-trusted-project` | allow | **仅 default，且只在 `trusted_projects` 里的项目生效**（默认列表为空：没有项目被信任，这些命令仍是灰色 ask）。`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`（也包括 `python -m 工具`、`.exe`、项目自己虚拟环境里按路径写的形式）。`flags_none` 就是 `programs.DEVTOOL_RISKY_FLAGS`（各工具的清单合并，有测试保证两边相等）。见"Dev-tools preset"一节 |
 
 ### 日常 allow 规则（M1c，仅 default）
@@ -264,12 +268,12 @@ default 加了上面这批 allow 规则，strict 没有（它的唯一 allow 规
 
 ### Dev-tools preset (trusted projects)
 
-**A trusted project is one whose own code you let tools run without asking. Together with the Write/Edit allow rules this forms a write-then-run chain: a prompt injection that gets the agent to write a test file (tests/test_x.py is an ordinary project file) and run pytest executes that code unreviewed. Trust only repositories you wrote or audited; the session taint tracking planned for M3 is meant to tighten this.**
+**A trusted project is one whose own code you let tools run without asking. Together with the Write/Edit allow rules this forms a write-then-run chain: a prompt injection that gets the agent to write a test file (tests/test_x.py is an ordinary project file) and run pytest executes that code unreviewed. Trust only repositories you wrote or audited. Since M3a, a session that has read web or MCP content (`ask-devtools-after-untrusted-content`) asks again before any dev tool runs; injected text that arrives any other way (a cloned repository, a downloaded file, `curl`) is not seen by that rule.**
 
 - **默认策略没有任何受信任的项目**（`trusted_projects` 缺省为空），所以默认用户完全不受影响：`pytest`、`ruff` 等仍是灰色（ask）。**strict 永远不放行**（它没有 dev-tool 规则，信任与否都一样）。
 - **怎么开启**：在你自己的终端里运行 `boundkeep trust add`（在项目目录里，或 `--project-dir <目录>`）。这个命令在 stdin 不是终端时拒绝；在 Claude Code 启动的进程里（环境里有 `CLAUDECODE` 或 `CLAUDE_CODE_ENTRYPOINT`，子进程会继承）也拒绝，要在 Claude Code 之外的终端里运行；策略里的 `deny-boundkeep-state-commands` 也拒绝 agent 直接运行任何 `boundkeep trust ...`（含 `list`、`remove`）。
 - **条目的范围（X1 审查 M-3）**：条目是"这个目录和它下面的一切"，所以往里 `git clone` 的任何仓库、在其中打开的任何会话也被信任。`trust add` 因此在目录**下面**（三层之内，最多 5000 个条目，不进 `.git`、`node_modules`、`.venv`、不跟随链接）发现别的仓库时列出它们并要求输入 `yes`，否则不写（目录本身没有 `.git` 只是提示一行）。主目录里的钥匙、设置与应用数据目录（`.ssh`、`.gnupg`、`.aws`、`.azure`、`.kube`、`.docker`、`.config`、`.claude`、`.boundkeep`、`.password-store`、`.terraform.d`、`.vscode`、`.cache`、`.local`、`AppData`、`Library` 及其下的一切）不能作为条目：**`trust add` 拒绝，`doctor` 对已经在列表里的条目警告并给出 `trust remove` 的提示；策略加载器不拒绝**（X1 复审 R-6：升级前写进策略的条目不能让整份策略加载失败、守护进程对每个事件都 ask；agent 本来就改不了策略文件，加载器这一道没有安全收益）。
-- **推荐用法（X1 审查 M-2）**：见下面"已知缺口（响亮版）"：先写测试文件、再运行 pytest 这条链在受信任的项目里没有任何一步弹框，而规则看不到上一次调用写了什么。能收紧它的是 M3a 的会话污染位（读过网页或 MCP 结果之后，受信任项目的开发工具回到 ask），**在它存在之前，`trusted_projects` 保持默认关闭，不要把它当作推荐设置**（也不要写进面向用户的 README）；只对你写的或审计过的仓库开，并且知道这一点。`.venv` / `site-packages` / `node_modules` 的写入已经改成 ask（`ask-installed-package-dirs-write`）：这是这条链上唯一便宜且不伤正常工作流的一环。
+- **推荐用法（X1 审查 M-2）**：见下面"已知缺口（响亮版）"：先写测试文件、再运行 pytest 这条链在受信任的项目里没有任何一步弹框，而规则看不到上一次调用写了什么。**M3a 加了会话污染位**（`ask-devtools-after-untrusted-content`：会话读过网页、搜索结果或 MCP 返回值之后，开发工具回到 ask，受信任项目也一样，等多少次调用都不会过期）；它只看污染来源工具，经 `curl`、`git clone`、下载的文件进来的文字看不见（`docs/threat-model.md`）。**`trusted_projects` 是否因此改为推荐设置，等 M3a 的 X1 审查之后由使用者决定；在那之前仍保持默认关闭，不作为推荐设置**（也不要写进面向用户的 README）；只对你写的或审计过的仓库开，并且知道这一点。`.venv` / `site-packages` / `node_modules` 的写入已经改成 ask（`ask-installed-package-dirs-write`）。
 - **会话快照（X1 审查 H-5）**：这三道检查都能被一个 agent 绕过（见上，终端检查拦不住它的子进程），所以守护进程另外对每个会话记下它**第一个事件**时的 `trusted_projects`：之后加进策略文件的条目**对那个会话不生效**，只对以后开始的会话生效（守护进程在日志里记一条 `trust-changed`，并在控制台提示）；删掉的条目立刻失效；没有可用 `session_id` 的事件没有任何受信任的项目。所以注入的会话不能给自己加信任；**你自己运行 `trust add` 之后，要新开一个会话才生效**。快照在内存里：守护进程重启后重新开始记（重启前不久加的条目会对重启后遇到的会话生效，这个限制要知道）。
 - **怎么看**：`boundkeep trust list`（在你自己的终端里）和 `boundkeep doctor`（会列出受信任的项目，指出过期、被重定向或多余的条目）。
 - **允许的形式**：`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`，裸名、`.exe`、路径限定（项目自己的 `.venv\Scripts\ruff.exe`），或 `python [无害选项] -m <工具>`（`python` / `python3` / `python3.N` / `py`，无害选项是 `-I -u -B -E -s -S -q -O -OO`、`-X 项`、`-W 项`；**X1 审查 L-1**：`-X` 的值只认 `dev`、`utf8[=0|1]`、`faulthandler`、`importtime`、`tracemalloc[=N]`、`frozen_modules=on|off`、`int_max_str_digits=N`、`no_debug_ranges`、`warn_default_encoding`、`perf`、`cpu_count=N|default`、`gil=0|1`；`-W` 的值是 `动作[:消息[:类别[:模块[:行号]]]]`，类别含 `.`（一个会被导入的模块，`-W error::pkg.Cls`）就不行。`python -X pycache_prefix=<路径> -m pytest` 往任意目录写字节码，`-W` 的带点类别在启动时导入模块，所以它们不再是开发工具调用，退回普通的 `python` 调用）。**另外**，工具参数里出现盘符相对路径（`--debug=C:x`、`-oD:x`、`C:file.py`；是"那个盘当前目录"下的文件，路径层不认）是灰色 `devtool-drive-relative`。PowerShell 里的 `& '.\.venv\Scripts\ruff.exe' check .` 同样。归一化层对它们给出：程序名就是工具、已知、`exec` 标签、**没有灰色原因、没有包装器标记**，操作数是访问方式 `unknown` 的路径（这些工具可能写：`--fix`、`black`、`isort`、缓存），路径限定的工具或解释器的可执行文件作为读路径列出。
@@ -293,7 +297,7 @@ default 加了上面这批 allow 规则，strict 没有（它的唯一 allow 规
 
 - 规则是**一条**，各工具的清单合并：副作用：某个工具的危险选项对七个工具一起生效，例如 `mypy -p 包名`（对 mypy 它只是包名）和 `pylint --src` 也会 ask，因为 `-p`、`--src` 在别的工具里是危险的。想精确可以拆成每工具一条规则（`DEVTOOL_RISKY_FLAGS` 本来就按工具分）。
 - 仍然要问或拒绝的：操作数是密钥、凭据、`.claude/settings*.json`、`.boundkeep/**`、`.mcp.json`（deny）；操作数是 `Makefile`、`pyproject.toml`、`conftest.py`、CI 文件、`.git/**`、`mypy.ini` 等会运行代码的文件（ask，`ruff check --fix Makefile`、`black pyproject.toml`）；任何不在项目内的路径（`ask-devtools-path-outside-project`）；网络地址。
-- **已知缺口（响亮版）**：规则看不到"上一次调用写了什么"。agent 先用 Write 写 `tests/test_x.py`（普通项目文件，`allow-project-file-writes` 放行），下一次调用再运行 `pytest`，这两步各自都是 allow：写后运行的链在跨调用时没有任何规则能拦住。只有同一行里的"写后运行"会被识别（`exec-of-written-file`）。所以只信任你自己写的或审计过的仓库；M3 计划的会话污点追踪才是真正收紧这条链的办法。`conftest.py`、`mypy.ini`、`pytest.ini` 等配置文件本身的写入是 ask。
+- **已知缺口（响亮版）**：规则看不到"上一次调用写了什么"。agent 先用 Write 写 `tests/test_x.py`（普通项目文件，`allow-project-file-writes` 放行），下一次调用再运行 `pytest`，这两步各自都是 allow：写后运行的链在跨调用时没有任何规则能拦住。只有同一行里的"写后运行"会被识别（`exec-of-written-file`）。所以只信任你自己写的或审计过的仓库。M3a 收紧了其中一种情形：会话读过网页、搜索结果或 MCP 返回值之后，开发工具一律再问（`ask-devtools-after-untrusted-content`，匹配字段 `session_read_untrusted`，受信任项目也一样）；没有读过不可信内容的会话里，这条链仍然通（被注入的文字也可能来自仓库本身）。`conftest.py`、`mypy.ini`、`pytest.ini` 等配置文件本身的写入是 ask。
 
 **硬链接（X1 审查 H-6；M1 起是已知局限，现在有修法）**：硬链接是同一个文件的另一个名字，按名字判断的规则（`protect-guard-config`、凭据与秘密规则、`path_inside_project`）都看不到。两处修补：（一）路径层的磁盘解析（`resolve_on_disk`，每个路径本来就要 `realpath` 一次）现在对已存在的**普通文件**再读一次 `st_nlink`，大于 1 的路径带原因 `hard-linked`：它的 `inside_project` 不再是 `true`（变成"不确定"，`path_outside_project` 的 ask 规则会命中，所有 `path_inside_project` 的 allow 规则不再匹配），`in_scratchpad` 为 `false`；名字本身照旧交给 deny / ask 规则。这是一次多出来的 `stat`，不占用磁盘查询预算。代价：一个正好有多个名字的文件（pnpm 的 `node_modules`、`uv` 装进 `.venv` 的包、`git clone --local` 的对象）的读写会多问一次。（二）创建链接那一刻拒绝：`deny-link-to-guard-files`、`deny-link-copy-of-guard-files`（见规则表）。**（三）目录读（X1 复审 R-3）**：`Grep` / `Glob` / `rg` / `grep -r` 对目录的子树扫描（`normalize/subtree.py`）只比对名字，而硬链接名字普通（`notes.txt` → `~/.ssh/id_rsa`），所以扫描对每个**会被这个命令读的**普通文件也取 `st_nlink`（Windows 上 `DirEntry.stat()` 报告 0，要多一次 `os.stat`，约 5 微秒一个文件，时间预算因此从 0.2 秒提到 0.35 秒，条目上限 30000 不变），发现一个就给灰色 `recursive-scan-hardlink`（不判断它指向哪里）。被 Grep 的 `glob` 排除的文件和 `skip_names`（`.git` 等）不查。`Glob` 只列名字，不读内容，不受影响。代价：pnpm 的 `node_modules`、`uv` 装进 `.venv` 的包这类本来就有多个名字的树，对整个项目目录做 `Grep` 会变灰（问一次）；对子目录或带 `glob` 的 `Grep` 不受影响。没有解决的：链接已经存在、而用户之前已经批准了创建它（现在创建受保护文件的链接是 deny，不是 ask），或者链接是 boundkeep 之外的进程建的，那么对它的读写会因（一）变成 ask，而不是 deny。
 

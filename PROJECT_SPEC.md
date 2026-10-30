@@ -12,14 +12,14 @@
 >
 > **修订 4（2026-10-18）**：采纳 M1+M1b 的 X1 安全审查（`docs/reviews/M1-M1b-security-review.md`）与复审（`docs/reviews/M1-M1b-fixes-rereview.md`）提出的规格变更：§1 核心承诺补"在 `enforce` 下可日常使用"这一前置条件；§3 范围外写明同一用户的进程可以冒充守护进程；§5.1 管道令牌只防其他用户、DACL 收紧只是提高门槛、客户端永不输出 `allow`（除非 `--emit-allow`）；§7 目录目标的读类动作要检查子树、预算耗尽不得使已可见的 deny 变弱、实测 hook 的 `ask` 优先于 `permissions.allow` 与 `bypassPermissions`；§10 增加"hook 配置层与会话目录不匹配"与"settings 被削弱"两行。
 
-> **当前进度（2026-10-29）**
+> **当前进度（2026-10-30）**
 >
 > - **已完成并有标签**：M0a、M0、M1、M1b、M1c、M1c-2、M1c-3、M1c-4、M2（`m2-baseline`）。M1+M1b、M1c / M1c-2 的独立 X1 审查与复审都已做完，高危、中危清零，修复已提交（M1c / M1c-2 的规则冻结在 `6821142`，标签 `m1c2-x1-rereview2-fixes-done`；审查在 `docs/reviews/`，修复报告 `docs/reports/M1c2-review-fixes*.md`）。M1c-4 的真实会话手工验收未做（`docs/reports/M1c4.md`）。
 > - **M2**：评测集 633 条（恶意 241、正常 392，全部经使用者确认）、评测框架 `src/boundkeep/evalkit` 与 `eval/run_eval.py`、`rules-only` 基线（报告 `docs/reports/M2.md`，口径 `docs/eval-methodology.md`）。**已知缺口：obfuscation 只有 11 条（目标 30 条）**。
 > - **M2 之后的规则改动**（`m2-baseline` 标签仍是改动之前的规则；`eval/report.md` 随每次改动重新生成；test 切分已声明被污染）：`git add` / `commit` / `stash`（`docs/reports/M2-rules-1.md`）；只读信息命令（`M2-rules-2.md`）；MCP 参数进入 deny / ask 规则（`mcp_read_only`）、网络按目的地拆分、项目之外的持久化等由 ask 改为 deny（`M2-rules-3.md`）；当前会话的 tool-results 目录可读（同一报告第 9 节）；当前项目的 auto memory 可读、写要问（`docs/reports/holdout-h2.md` 第 7 节）。
 > - **留出集**（分批，口径第 4b 节）：h1、h2 各打开过一次（`M2-rules-3.md` 第 8 节、`holdout-h2.md` 第 6 节），之后都改过规则，**都已被污染**；再要无偏的数字需要新的批次（h3）。
 > - **未做 / 等你做**：真实 Claude Code 里的手工验收（包括在 Claude Code 之外的终端里运行 `trust add`）；Linux 容器套件；补 obfuscation 样本；L-1 的选项白名单（会改规则）。
-> - **进行中**：M3a（会话状态与污染标记，含推迟过来的 M-2"先写后运行"；LLM 后端接口与假后端、二次裁决、`rules+taint` 评测），2026-10-29 开始。
+> - **M3a 已实现并提交，等 X1 审查**（2026-10-30，代码提交 `46169eb`，报告 `docs/reports/M3a.md`）：SQLite 会话状态（任务意图、污染窗口与粘性位、并发、清理）、M-2 的 ask 规则 `ask-devtools-after-untrusted-content`、后端接口与假后端、OpenAI 兼容适配器（只对本地假服务测过）、发送出口、二次裁决、缓存、`boundkeep llm check`、一致性测试、`rules+taint` 评测行（相对 `rules-only` 的增量为 0，原因见报告）。报告第 7 节的规格变更提案 P1 到 P12 已由使用者于 2026-10-30 接受，**还没有写进本文件的设计章节**。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -731,7 +731,7 @@ boundkeep/
 | M1c-3 | 放行项目内的 `cd` 族（`allow-cd-family`，必须带 `path_inside_project`） | `cd` 之后的命令仍按新目录判断；项目外与动态目标的 `cd` 仍是灰色 | 已完成（标签 `m1c3-done`；未单独做手工验收） |
 | M1c-4 | 放行当前会话自己的 scratchpad 目录（`path_in_scratchpad`，只对文件工具） | 只认当前会话 id 与守护进程临时目录下的精确结构；现有 deny/ask 仍然优先；shell 命令不受影响 | **完成**（`m1c4-done`；真实会话手工验收未做） |
 | M2 | 评测集 v1（含 Windows 样本）+ `run_eval.py` + `rules-only` 基线 | 产出第一份 `report.md`（基线数字，按平台分别报告） | **已完成**（标签 `m2-baseline`；obfuscation 类样本不足 30 条，已知缺口）；之后的规则改动与留出集 h1、h2 见开头"当前进度" |
-| M3a | 会话状态、污染标记、后端接口与假后端、OpenAI 兼容适配器（对本地假服务测试）、二次裁决、`rules+taint` 评测、`llm check` | 不需要网络与密钥；一致性测试通过；`rules+taint` 行完整 | 进行中（2026-10-29 开始） |
+| M3a | 会话状态、污染标记、后端接口与假后端、OpenAI 兼容适配器（对本地假服务测试）、二次裁决、`rules+taint` 评测、`llm check` | 不需要网络与密钥；一致性测试通过；`rules+taint` 行完整 | 已实现并提交（2026-10-30，`46169eb`，`docs/reports/M3a.md`）；X1 审查待做 |
 | M3b | 真实 LLM 后端评测（可推迟） | 你自备密钥并确认费用、在本地运行；`rules+LLM` 与 `rules+LLM+taint` 两行完整，增量如实报告 | 未开始 |
 | M4 | 策略校验 + 自然语言策略编译（含离线模式） | 输入一句话，得到规则 + 测试用例 + 回放影响的 diff，确认后写入并通过 `test`；离线模式不需要任何后端 | 未开始 |
 | M5 (v0.5) | 只读 Web 日志查看器 | 实时事件流 + 会话时间线；安全约束见 §11 | 未开始 |
