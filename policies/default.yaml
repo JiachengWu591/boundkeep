@@ -30,20 +30,29 @@ defaults:
   emit_allow: false
 
 llm_audit:
-  backend: none            # none | openai_compatible | anthropic (M3; none = gray actions ask)
-  timeout_ms: 4000
+  backend: none            # none | openai_compatible | anthropic (not implemented) ; none = gray actions ask
+  timeout_ms: 4000         # one audit, a retry included (at most 6000 ms is used)
   on_failure: ask          # ask | deny, never allow: a failing auditor must not wave things through
-  send_task_intent: true
+  send_task_intent: true   # with a backend: the user's latest prompts (IDE blocks and pasted text removed)
+  intent_prompts: 3        # how many of them
+  intent_chars: 300        # how long each may be, after secrets are redacted
   cache_ttl_s: 600
   # To use a backend, set `backend` and add its block, for example:
   # openai_compatible:
   #   base_url: https://llm.example.com/v1   # https only (plain http only for localhost)
   #   model: your-model-name
   #   api_key_env: BOUNDKEEP_LLM_API_KEY      # the NAME of an environment variable, never the key
+  #   transport: tool_call                    # tool_call | json_object
+  # `boundkeep llm check` sends one harmless request and checks the answer.
 
-# Tools whose results mark the session as tainted (used from M3a). A name ending in "*" is a prefix.
+# Tools whose results mark the session as tainted. A name ending in "*" is a prefix. For `window`
+# tool calls after a call of one of them the session is tainted (an allow no rule made, such as the
+# LLM audit's, of an action with a sensitive tag then asks); rules with session_read_untrusted see
+# any such call in the session, however long ago.
 taint:
   sources: [WebFetch, WebSearch, "mcp__*"]
+  window: 8
+  sensitive_tags: [network_egress, file_write, exec, secret_access, config_tamper]
 
 # MCP tools you declare read-only: "mcp__server__tool" or "mcp__server__prefix*" (the server in
 # full). Calls of a declared tool can be allowed by allow-declared-read-only-mcp below when
@@ -1392,6 +1401,22 @@ rules:
       path_outside_project: true
     action: ask
     reason: "a path that is not inside the project directory"
+  - id: ask-devtools-after-untrusted-content
+    # Write-then-run (X1 review of M1c-2, M-2): an injected agent writes a test file (a project
+    # write, allowed) and then runs pytest (allowed in a trusted project): the file's code runs and
+    # nobody was asked. Injected text arrives through the taint sources (web pages, search results,
+    # MCP answers), so once the session has called one, at any point (session_read_untrusted is
+    # sticky: no taint window to wait out), these tools ask again, trusted project or not. An ask
+    # rule and not a condition on the allow rule: a condition would leave the command gray, and a
+    # gray command goes to the LLM audit when one is configured. A session whose state is not known
+    # counts as having read untrusted content. Same program list as the allow rule (a test checks
+    # it); strict has the same rule.
+    tool: [Bash, PowerShell]
+    match:
+      program: [pytest, ruff, mypy, black, isort, flake8, pylint]
+      session_read_untrusted: true
+    action: ask
+    reason: "this session has read web or MCP content: running the project's own code needs confirmation"
   # ---- allow rules for everyday use ----------------------------------------------------------
   # With defaults.emit_allow false an `allow` verdict is "no decision": Claude Code's own permission
   # flow still decides, so these rules only stop boundkeep from asking about actions that are well
@@ -2641,6 +2666,14 @@ tests:
   - { tool: Bash, input: { command: "ruff check --fix Makefile" }, expect: ask }
   - { tool: PowerShell, platform: [windows], input: { command: "pytest -q" }, expect: gray }
   - { tool: PowerShell, platform: [windows], input: { command: "pytest .env" }, expect: deny }
+  # After the session read web or MCP content the dev tools ask (write-then-run, X1 review M-2);
+  # the deny rules still win, and other commands are not affected.
+  - { tool: Bash, tainted: true, input: { command: "pytest -q tests" }, expect: ask }
+  - { tool: Bash, tainted: true, input: { command: "python -m pytest -q" }, expect: ask }
+  - { tool: Bash, tainted: true, input: { command: "pytest .env" }, expect: deny }
+  - { tool: Bash, tainted: true, input: { command: "git status" }, expect: allow }
+  - { tool: Read, tainted: true, input: { file_path: "./src/app.py" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], tainted: true, input: { command: "ruff check ." }, expect: ask }
   # Configuration files of the dev tools that load code named in them.
   - { tool: Write, input: { file_path: "mypy.ini", content: "x" }, expect: ask }
   - { tool: Write, input: { file_path: ".mypy.ini", content: "x" }, expect: ask }

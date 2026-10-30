@@ -495,6 +495,7 @@ MATCH_FIELD_SAMPLES: dict[str, Any] = {
     "domain_in": ["github.com"],
     "mcp_server": ["github"],
     "mcp_read_only": True,
+    "session_read_untrusted": True,
 }
 
 

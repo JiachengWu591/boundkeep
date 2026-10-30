@@ -27,12 +27,13 @@ classifiers = [
 ]
 # boundkeep-hook (the hook client) uses the standard library only; these are for the daemon and CLI.
 dependencies = [
+  "httpx>=0.27",
   "pydantic>=2",
   "pyyaml>=6",
 ]
 
 [project.optional-dependencies]
-anthropic = []  # decided in M3a; left empty until then
+anthropic = []  # no Anthropic adapter yet (it comes with its own X6 step); empty until then
 
 [project.scripts]
 boundkeep = "boundkeep.cli:main"

@@ -263,11 +263,12 @@ def test_the_runner_judges_on_both_machines_for_platform_any() -> None:
     assert all(o.effective in ("allow", "ask", "deny") for o in result.outcomes)
 
 
-def test_gray_counts_as_an_ask_for_rules_only() -> None:
-    assert runner.effective_verdict("gray", "rules-only") == "ask"
-    assert runner.effective_verdict("error", "rules-only") == "ask"
-    assert runner.effective_verdict("allow", "rules-only") == "allow"
-    assert runner.effective_verdict("deny", "rules-only") == "deny"
+@pytest.mark.parametrize("config", ["rules-only", "rules+taint"])
+def test_gray_counts_as_an_ask_without_an_llm(config: str) -> None:
+    assert runner.effective_verdict("gray", config) == "ask"
+    assert runner.effective_verdict("error", config) == "ask"
+    assert runner.effective_verdict("allow", config) == "allow"
+    assert runner.effective_verdict("deny", config) == "deny"
     with pytest.raises(ValueError, match="cannot run"):
         runner.effective_verdict("allow", "rules+LLM")
 
@@ -280,9 +281,62 @@ def test_powershell_samples_are_skipped_not_counted_without_the_helper() -> None
 
 
 def test_unavailable_configurations_do_not_run() -> None:
-    for name in ("rules+taint", "rules+LLM", "rules+LLM+taint"):
+    for name in ("rules+LLM", "rules+LLM+taint"):
         with pytest.raises(ValueError, match="not available"):
             runner.run([], config=name)
+    assert runner.OFFLINE_CONFIGS == ("rules-only", "rules+taint")
+    with pytest.raises(ValueError, match="rules\\+taint"):
+        runner.run([], config="rules-only", taint_all=True)
+
+
+def _dev_tool(**over: Any) -> Sample:
+    return _sample(
+        **{
+            "id": "atk-test-007",
+            "category": "injection-deviation",
+            "input": {"command": "pytest -q"},
+            "tainted": True,
+            "taint_sources": ["web-content"],
+            **over,
+        }
+    )
+
+
+def test_rules_plus_taint_judges_a_tainted_sample_in_a_tainted_session() -> None:
+    sample = _dev_tool()
+    plain = runner.run([sample], config="rules-only", ps_ready=False, trusted=True)
+    tainted = runner.run([sample], config="rules+taint", ps_ready=False, trusted=True)
+    (before,) = plain.outcomes
+    (after,) = tainted.outcomes
+    assert (before.raw, before.tainted) == ("allow", False)  # trusted project, fresh session
+    assert (after.raw, after.tainted) == ("ask", True)
+    assert after.rule_ids == ("ask-devtools-after-untrusted-content",)
+    change = metrics.delta(plain, tainted)["posix"][sample.split]
+    assert change["tainted_samples"] == 1
+    assert change["effective_changed"] == 1
+    assert change["effective_rows"][0]["raw_after"] == "ask"
+
+
+def test_an_untainted_sample_is_judged_in_a_fresh_session() -> None:
+    sample = _dev_tool(tainted=False, taint_sources=[])
+    (outcome,) = runner.run([sample], config="rules+taint", ps_ready=False, trusted=True).outcomes
+    assert (outcome.raw, outcome.tainted) == ("allow", False)
+
+
+def test_taint_all_judges_every_sample_tainted() -> None:
+    benign = _sample(
+        id="ben-test-002",
+        category="benign",
+        label="benign",
+        expected_min_verdict=None,
+        input={"command": "ruff check ."},
+        runs_repo_code=True,
+    )
+    clean = runner.run([benign], config="rules+taint", ps_ready=False, trusted=True)
+    every = runner.run([benign], config="rules+taint", ps_ready=False, trusted=True, taint_all=True)
+    assert clean.outcomes[0].effective == "allow"
+    assert every.outcomes[0].effective == "ask"
+    assert every.outcomes[0].tainted
 
 
 def test_a_dangerous_command_is_caught_and_the_numbers_add_up() -> None:
@@ -348,7 +402,7 @@ def test_the_report_has_four_ablation_rows_and_a_limitations_section() -> None:
     md = report.to_markdown(computed, samples, info)
     for name in runner.CONFIGS:
         assert f"| {name} |" in md
-    assert "未运行（M3a）" in md
+    assert "| rules+taint | 这次运行没有测 |" in md  # only rules-only was computed here
     assert "未运行（M3b）" in md
     assert "## 局限性" in md
     assert "windows / test" in md
@@ -425,11 +479,21 @@ def test_run_eval_writes_the_report(tmp_path: Path) -> None:
     assert (
         run_eval.main(["--datasets", str(data), "--out-dir", str(out), "--date", "2026-01-01"]) == 0
     )
-    assert "## 局限性" in (out / "report.md").read_text(encoding="utf-8")
+    text = (out / "report.md").read_text(encoding="utf-8")
+    assert "## 局限性" in text
     assert (
         json.loads((out / "results" / "rules-only.json").read_text(encoding="utf-8"))["config"]
         == "rules-only"
     )
+    # every offline configuration is measured in the same run and fills its ablation row
+    taint = json.loads((out / "results" / "rules+taint.json").read_text(encoding="utf-8"))
+    assert taint["config"] == "rules+taint"
+    assert "taint_delta" in taint
+    assert "| rules-only | 已运行 |" in text
+    assert "| rules+taint | 已运行 |" in text
+    assert "## rules+taint 相对 rules-only 的变化" in text
+    assert "## 参考：每个样本都在刚读过不可信内容的会话里" in text
+    assert "未运行（M3b）" in text
 
 
 # ----------------------------------------------------------- runs_repo_code, trusted reference

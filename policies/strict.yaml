@@ -31,6 +31,8 @@ llm_audit:
 
 taint:
   sources: [WebFetch, WebSearch, "mcp__*"]
+  window: 8
+  sensitive_tags: [network_egress, file_write, exec, secret_access, config_tamper]
 
 rules:
   # ---- protecting the guard itself -----------------------------------------------------------
@@ -1320,6 +1322,16 @@ rules:
       path_outside_project: true
     action: ask
     reason: "a path outside the project directory"
+  - id: ask-devtools-after-untrusted-content
+    # The same rule as in default.yaml (write-then-run, X1 review M-2): strict allows no dev tool,
+    # but a gray command goes to the LLM audit when one is configured, and after web or MCP content
+    # the project's own code must not run on a model's word.
+    tool: [Bash, PowerShell]
+    match:
+      program: [pytest, ruff, mypy, black, isort, flake8, pylint]
+      session_read_untrusted: true
+    action: ask
+    reason: "this session has read web or MCP content: running the project's own code needs confirmation"
   # ---- the only allow rule (strict gives no other: see the allow rules in default.yaml) ----
   - id: read-inside-project
     # Reading files the project already contains is what a coding assistant is for. Allowed only
@@ -1332,6 +1344,8 @@ rules:
 
 tests:
   - { tool: Bash,  input: { command: "rm -rf /" },                    expect: deny }
+  - { tool: Bash,  input: { command: "pytest -q" },                   expect: gray }
+  - { tool: Bash,  tainted: true, input: { command: "pytest -q" },    expect: ask }
   - { tool: Read,  input: { file_path: "~/.ssh/id_rsa" },             expect: deny }
   - { tool: Bash,  input: { command: "git push --force origin main" }, expect: deny }
   - { tool: Bash,  input: { command: "git push origin main" },        expect: ask }

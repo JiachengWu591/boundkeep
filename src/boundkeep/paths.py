@@ -11,6 +11,7 @@ Layout under the home directory (all private to the current user, see ``fsperm``
     <home>/logs/audit.jsonl  audit log (rotated: audit.jsonl.1, audit.jsonl.2, ...)
     <home>/serve.lock, serve.pid  single-instance lock and pid of the running daemon
     <home>/backups/          copies of settings files taken before ``init`` modifies them
+    <home>/session.sqlite    session state (taint marks, task intent), with -wal / -shm (M3a)
 
 ``BOUNDKEEP_HOME`` overrides the home directory; tests always set it to a temporary directory so
 they never touch the real one.
@@ -91,3 +92,7 @@ def pid_file(home: str | None = None) -> str:
 
 def backups_dir(home: str | None = None) -> str:
     return _under("backups", home)
+
+
+def session_db_file(home: str | None = None) -> str:
+    return _under("session.sqlite", home)

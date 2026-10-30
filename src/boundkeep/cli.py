@@ -1,4 +1,4 @@
-"""The ``boundkeep`` command line: init, uninstall, serve, mode, trust, log, doctor.
+"""The ``boundkeep`` command line: init, uninstall, serve, mode, trust, log, doctor, llm check.
 
 ``init`` validates everything first (hook command, settings file, policy, a self check that
 launches the hook the way Claude Code does) and only then writes anything, so a failure leaves the
@@ -579,10 +579,30 @@ def _summary(record: dict[str, object]) -> str:
     return head + (f"({_printable(str(verdict))})" if isinstance(verdict, str) else "")
 
 
+def _purge_task_intents() -> str:
+    """Delete the stored task intents (the user's prompt excerpts); taint marks stay."""
+    from boundkeep.session.store import SessionStore, SessionStoreError
+
+    path = paths.session_db_file()
+    if not os.path.exists(path):
+        return "no session database"
+    try:
+        store = SessionStore(path)
+    except SessionStoreError as exc:
+        return f"the session database could not be opened ({exc})"
+    try:
+        removed = store.purge_prompts()
+    finally:
+        store.close()
+    if removed is None:
+        return f"the stored task intents could not be removed ({store.last_error})"
+    return f"removed {removed} stored task intent(s)"
+
+
 def cmd_log(args: argparse.Namespace) -> int:
     log = AuditLog(paths.audit_log_file())
     if args.purge:
-        console.out(f"removed {log.purge()} log file(s)")
+        console.out(f"removed {log.purge()} log file(s); {_purge_task_intents()}")
         return EXIT_OK
     for record in log.tail(args.tail):
         if args.json:
@@ -614,6 +634,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     from boundkeep import doctor
 
     return doctor.run(args)
+
+
+def cmd_llm_check(args: argparse.Namespace) -> int:
+    from boundkeep import llmcheck
+
+    return llmcheck.run(args)
 
 
 # --------------------------------------------------------------------------------------------
@@ -687,7 +713,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("log", help="show the recent audit log")
     p.add_argument("--tail", type=int, default=20, help="number of records (default 20)")
     p.add_argument("--json", action="store_true", help="one JSON object per line")
-    p.add_argument("--purge", action="store_true", help="delete the audit log")
+    p.add_argument(
+        "--purge",
+        action="store_true",
+        help="delete the audit log and the stored task intents (taint marks are kept)",
+    )
     p.set_defaults(func=cmd_log)
 
     p = sub.add_parser(
@@ -705,7 +735,21 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("explain", help="explain the verdict for one hook event (a JSON file or -)")
     p.add_argument("event", help="a PreToolUse event as JSON; '-' reads stdin")
     p.add_argument("--policy", help="a policy file (default: the active policy)")
+    p.add_argument(
+        "--tainted",
+        action="store_true",
+        help="judge the event as if the session had just read untrusted content (a taint source)",
+    )
     p.set_defaults(func=cmd_explain)
+
+    p = sub.add_parser("llm", help="the optional LLM audit: 'llm check' tests the backend")
+    llm_sub = p.add_subparsers(dest="llm_command", required=True, metavar="llm-command")
+    q = llm_sub.add_parser(
+        "check",
+        help="send one fixed, harmless request to the configured backend and check the answer",
+    )
+    q.add_argument("--policy", help="a policy file (default: the active policy)")
+    q.set_defaults(func=cmd_llm_check)
 
     p = sub.add_parser("doctor", help="check that the gate is installed and cannot be silently off")
     p.add_argument("--project-dir", help="the project to check (default: current directory)")

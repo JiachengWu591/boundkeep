@@ -27,6 +27,7 @@ from boundkeep.policy import (
     load_policy,
     parse_policy_text,
 )
+from boundkeep.session.facts import FRESH, SessionFacts, tainted_facts
 
 EXIT_OK = 0
 EXIT_PROBLEM = 1
@@ -74,7 +75,10 @@ def _run_one(
     cwd: str | None,
     project: str | None,
     session_id: str | None = None,
+    session: SessionFacts = FRESH,
 ) -> pipeline.Review:
+    """One event on the fake machine; ``session`` is the taint state it is judged in (default: a
+    fresh session that read nothing untrusted)."""
     fake = _FAKE[platform]
     payload = {
         "tool_name": tool,
@@ -89,7 +93,13 @@ def _run_one(
     # The fake machines are not on this disk: a look into real directories would make the verdict
     # depend on whatever the host happens to hold (`../..` from the fake project is a real dir).
     return pipeline.review(
-        payload, runtime, platform=platform, env=fake["env"], home=fake["home"], scan_disk=False
+        payload,
+        runtime,
+        platform=platform,
+        env=fake["env"],
+        home=fake["home"],
+        scan_disk=False,
+        session=session,
     )
 
 
@@ -136,9 +146,12 @@ def cmd_test(args: argparse.Namespace) -> int:
                 case.cwd,
                 case.project_dir,
                 case.session_id,
+                tainted_facts() if case.tainted else FRESH,
             )
             got = result.verdict.decision
             label = f"#{index} {case.tool} {json.dumps(case.input.thaw(), ensure_ascii=False)[:90]}"
+            if case.tainted:
+                label += " (tainted session)"
             if got == case.expect:
                 console.out(f"  [PASS] {label} -> {got}")
             else:
@@ -205,6 +218,30 @@ def _project_dir(payload: Mapping[str, Any]) -> tuple[str | None, str]:
     return None, "nowhere: no CLAUDE_PROJECT_DIR, project_dir or cwd"
 
 
+class _FixedSession:
+    """A session store that always answers with the same facts and records nothing (explain)."""
+
+    def __init__(self, facts: SessionFacts) -> None:
+        self._facts = facts
+
+    def tool_call(
+        self,
+        session_id: object,
+        tool: object,
+        *,
+        sources: tuple[str, ...],
+        window: int,
+        intents: int = 0,
+    ) -> SessionFacts:
+        return self._facts
+
+    def tool_result(self, session_id: object, tool: object, *, sources: tuple[str, ...]) -> bool:
+        return True
+
+    def add_prompt(self, session_id: object, text: str, *, keep: int) -> bool:
+        return False
+
+
 def _runtime(policy: Policy, env: Mapping[str, str], home: str | None) -> tuple[Policy, str | None]:
     """The policy the daemon would run (machine-dependent rules added), and why that failed."""
     return pipeline.runtime_policy_checked(policy, env, home)
@@ -246,10 +283,22 @@ def cmd_explain(args: argparse.Namespace) -> int:
     else:
         payload.pop("project_dir", None)
     runtime, problem = _runtime(policy, os.environ, home)
-    result = pipeline.review(payload, runtime, platform=platform, env=os.environ, home=home)
+    session = tainted_facts() if getattr(args, "tainted", False) else FRESH
+    result = pipeline.review(
+        payload, runtime, platform=platform, env=os.environ, home=home, session=session
+    )
     shown_tool = printable(str(payload.get("tool_name")), _TOOL_CHARS)
     console.out(f"tool: {shown_tool}   platform: {platform}   policy: {printable(active, 300)}")
     console.out(f"project dir: {printable(project or '-', 300)} (from {project_source})")
+    console.out(
+        "session: "
+        + (
+            "judged as having just read untrusted content (--tainted)"
+            if session.tainted
+            else "judged as fresh (explain has no session history; --tainted judges it as if a "
+            "taint source had just been called)"
+        )
+    )
     if problem:
         console.out(
             f"warning: {printable(problem, _REASON_CHARS)}; the daemon treats the policy as "
@@ -294,6 +343,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
         platform=platform,
         env=os.environ,
         home=home,
+        session=_FixedSession(session) if session.tainted else None,
     )
     rule_ids = printable(", ".join(final.rule_ids) or "-", 300)
     console.out(f"verdict: {final.decision}   rules: {rule_ids}")

@@ -39,6 +39,10 @@ The contract is docs/m1-design.md ("模块 D"); the short version:
   ANY domain outside the list); ``domain_in`` needs ``network`` and at least one domain and ALL
   of them in the list. Host comparison is exact or a true subdomain (``evilgithub.com`` and
   ``github.com.evil.com`` are not ``github.com``).
+* ``session_read_untrusted`` matches when the session has called a taint source at some point
+  (``SessionFacts.read_untrusted``, sticky), and when the session state is not known (the usual
+  direction: only deny and ask rules may use the field). The facts come from the caller
+  (``evaluate(..., session=...)``); none given means a fresh session (``boundkeep test``).
 * A gray ``Action`` never matches an allow rule, and neither does an ``Action`` with ``wrappers``
   (``sudo ls``, ``env X=1 ls``: a different action than ``ls``); deny and ask rules still match
   the known parts of both.
@@ -63,6 +67,7 @@ from boundkeep.normalize.model import Action, PathRef, Platform
 from boundkeep.normalize.psprograms import is_cmdlet_name
 from boundkeep.policy.glob import MAX_KEY_LENGTH, first_match
 from boundkeep.policy.schema import Match, Policy, Rule, mcp_declared_read_only
+from boundkeep.session.facts import FRESH, SessionFacts
 
 # the gray reason the normalizer gives every MCP call (normalize/event.py MCP_GRAY; not imported
 # from there: the matcher stays free of the normalizer's internals)
@@ -266,11 +271,13 @@ def _match_detail(
     platform: Platform,
     trusted: tuple[str, ...] = (),
     mcp_read_only: tuple[str, ...] = (),
+    session: SessionFacts = FRESH,
 ) -> tuple[str, ...] | None:
     """Why ``rule`` matches ``action`` (one line per matched field), or None if it does not.
 
     ``trusted``: the policy's ``trusted_projects`` (canonical keys) for ``project_trusted``.
     ``mcp_read_only``: the policy's declared read-only MCP tools, for the field of that name.
+    ``session``: the session's taint state, for ``session_read_untrusted``.
     """
     if rule.platform is not None and platform not in rule.platform:
         return None
@@ -388,6 +395,19 @@ def _match_detail(
         if not declared:
             return None
         details.append(f"mcp_read_only: {action.tool} is declared read-only")
+    if match.session_read_untrusted is not None:
+        if session.known and not session.read_untrusted:
+            return None
+        if rule.action == "allow":
+            return None  # the schema refuses this combination; never loosen if one slips through
+        details.append(
+            "session_read_untrusted: "
+            + (
+                f"the session read untrusted content ({', '.join(session.sources[:3]) or '?'})"
+                if session.known
+                else "the session state is not known (a match)"
+            )
+        )
     return tuple(details)
 
 
@@ -397,9 +417,10 @@ def _safe_detail(
     platform: Platform,
     trusted: tuple[str, ...] = (),
     mcp_read_only: tuple[str, ...] = (),
+    session: SessionFacts = FRESH,
 ) -> tuple[str, ...] | None:
     try:
-        return _match_detail(rule, action, platform, trusted, mcp_read_only)
+        return _match_detail(rule, action, platform, trusted, mcp_read_only, session)
     except Exception:  # noqa: BLE001 - matching must never raise; fail toward deny/ask
         if rule.action == "allow":
             return None
@@ -413,15 +434,19 @@ def match_rule(
     platform: Platform,
     trusted_projects: tuple[str, ...] = (),
     mcp_read_only: tuple[str, ...] = (),
+    session: SessionFacts = FRESH,
 ) -> bool:
     """True if ``rule`` matches ``action`` on a resident process running on ``platform``.
 
     Pure and total: it never raises. An unexpected internal error counts as a match for deny and
     ask rules and as no match for allow rules. ``trusted_projects`` is ``Policy.trusted_projects``
     (only ``project_trusted`` looks at it; none given means no project is trusted);
-    ``mcp_read_only`` is ``Policy.mcp_read_only`` (none given: no tool is declared).
+    ``mcp_read_only`` is ``Policy.mcp_read_only`` (none given: no tool is declared); ``session``
+    the session's taint state (none given: a fresh session that read nothing untrusted).
     """
-    return _safe_detail(rule, action, platform, trusted_projects, mcp_read_only) is not None
+    return (
+        _safe_detail(rule, action, platform, trusted_projects, mcp_read_only, session) is not None
+    )
 
 
 def explain_rule(
@@ -431,9 +456,10 @@ def explain_rule(
     platform: Platform,
     trusted_projects: tuple[str, ...] = (),
     mcp_read_only: tuple[str, ...] = (),
+    session: SessionFacts = FRESH,
 ) -> tuple[str, ...] | None:
     """Like ``match_rule`` but returns one line per matched field (None: no match)."""
-    return _safe_detail(rule, action, platform, trusted_projects, mcp_read_only)
+    return _safe_detail(rule, action, platform, trusted_projects, mcp_read_only, session)
 
 
 # --------------------------------------------------------------------------- evaluation
@@ -448,14 +474,16 @@ def _canary_hit(action: Action) -> RuleHit | None:
 
 
 def _evaluate_action(
-    policy: Policy, action: Action, index: int, platform: Platform
+    policy: Policy, action: Action, index: int, platform: Platform, session: SessionFacts
 ) -> ActionVerdict:
     hits: list[RuleHit] = []
     canary = _canary_hit(action)
     if canary is not None:
         hits.append(canary)
     for rule in policy.rules:
-        detail = _safe_detail(rule, action, platform, policy.trusted_projects, policy.mcp_read_only)
+        detail = _safe_detail(
+            rule, action, platform, policy.trusted_projects, policy.mcp_read_only, session
+        )
         if detail is not None:
             hits.append(RuleHit(rule.id, rule.action, rule.reason, detail))
     decision: VerdictDecision = "gray"
@@ -468,15 +496,21 @@ def _evaluate_action(
 
 
 def evaluate(
-    policy: Policy, actions: tuple[Action, ...] | list[Action], *, platform: Platform
+    policy: Policy,
+    actions: tuple[Action, ...] | list[Action],
+    *,
+    platform: Platform,
+    session: SessionFacts = FRESH,
 ) -> Verdict:
     """Merge the per-action outcomes into one ``Verdict`` (strictest wins; see module docs).
 
     ``actions`` empty is gray: nothing was understood, so nothing can be allowed. Pure; never
     allows unless every action was matched by at least one allow rule and by no deny or ask rule.
+    ``session`` is the taint state of the call's session (``session_read_untrusted``).
     """
     results = tuple(
-        _evaluate_action(policy, action, index, platform) for index, action in enumerate(actions)
+        _evaluate_action(policy, action, index, platform, session)
+        for index, action in enumerate(actions)
     )
     if not results:
         return Verdict("gray", ("no action to evaluate",), (), ())

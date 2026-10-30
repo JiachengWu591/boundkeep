@@ -6,12 +6,21 @@ The policy file is re-read whenever its modification time or size changes, so ``
 takes effect on the next event without restarting the daemon. An unreadable or invalid policy
 makes PreToolUse answer ``ask`` until it is fixed.
 
-The decision itself (normalize the tool call, evaluate the rules, and the policy reload) does not
-run on the event loop: a hostile command can make the parser work for seconds, and a blocked loop
-would stall every other request, ``ping`` included. PreToolUse decisions run on a small pool of
-daemon threads under a deadline. When the deadline passes the client is answered ``ask`` and the
-worker is abandoned (a thread cannot be killed); how many abandoned workers may pile up is
-bounded, see :class:`_DecisionPool`.
+The decision itself (normalize the tool call, evaluate the rules, the LLM audit, and the policy
+reload) does not run on the event loop: a hostile command can make the parser work for seconds,
+and a blocked loop would stall every other request, ``ping`` included. PreToolUse decisions run on
+a small pool of daemon threads under a deadline (the rules' 2 s, plus the LLM budget and
+``LLM_SLACK_S`` when an audit is configured, counted from the submission, so a queued job gets it
+too). When the deadline passes the client is answered ``ask`` (``llm_audit.on_failure`` in enforce
+mode when an audit was configured) and the worker is abandoned (a thread cannot be killed); how
+many abandoned workers may pile up is bounded, see :class:`_DecisionPool`. A call answered without
+a review (late before it started, or the daemon busy) still marks a taint source.
+
+Session state (M3a) lives in ``<home>/session.sqlite`` (``session.store``). UserPromptSubmit and
+PostToolUse only write to it; they run in a worker thread too (``asyncio.to_thread``), never on
+the loop and never in the decision pool, so a stuck review cannot hold up a taint mark. A store that
+cannot be opened is replaced by a stand-in that judges every call as tainted (fail closed); the
+console and ``ping`` say so. Idle sessions are cleaned up at start and every hour.
 """
 
 from __future__ import annotations
@@ -29,26 +38,33 @@ from dataclasses import dataclass
 from typing import Any
 
 from boundkeep import console, install, paths, protocol
+from boundkeep.audit.auditor import Auditor
 from boundkeep.daemon import pipeline
 from boundkeep.ipc.base import DEFAULT_INSTANCES, create_server
 from boundkeep.ipc.endpoint import Endpoint
 from boundkeep.logstore import AuditLog
 from boundkeep.normalize import psparse
 from boundkeep.policy import Policy, PolicyError, load_policy
+from boundkeep.policy.schema import LlmAudit
+from boundkeep.session.store import SessionStore, UnavailableStore, open_store
 
 POLICY_RETRY_S = (
     1.0  # an unusable policy is read again after this long, even if the file is unchanged
 )
 DEFAULT_DECISION_TIMEOUT_S = 2.0  # the hook client's own budget for a PreToolUse is 10 s
 DEFAULT_POOL_SIZE = 4
+SESSION_CLEANUP_EVERY_S = 3600.0
 
+LLM_SLACK_S = 0.5  # on top of the LLM budget: the auditor's own bookkeeping and the late check
 REASON_TOO_SLOW = "boundkeep: review took too long"
+REASON_LLM_TOO_SLOW = "boundkeep: the review with the LLM audit took too long"
 REASON_BUSY = "boundkeep: daemon busy (earlier reviews are still stuck)"
 DECIDED_BY_TIMEOUT = "timeout"
+DECIDED_BY_LLM_TIMEOUT = "timeout-llm"  # abandoned while an LLM audit may have been running
 DECIDED_BY_BUSY = "busy"
 # For these the audit record carries the command's length, never its text: the review never
 # finished, so nothing is known about what the text is.
-_NO_COMMAND_LOG = frozenset({DECIDED_BY_TIMEOUT, DECIDED_BY_BUSY})
+_NO_COMMAND_LOG = frozenset({DECIDED_BY_TIMEOUT, DECIDED_BY_BUSY, DECIDED_BY_LLM_TIMEOUT})
 _PS_POLL_TICKS = 4  # the serve loop wakes every 0.5 s: poll the PowerShell helper every 2 s
 
 _LOG_FIELDS = (
@@ -110,6 +126,10 @@ def build_record(
         record["programs"] = list(decision.programs)
     if decision.gray_reasons:
         record["gray_reasons"] = list(decision.gray_reasons)
+    if decision.taint is not None:
+        record["taint"] = dict(decision.taint)
+    if decision.llm is not None:
+        record["llm"] = dict(decision.llm)
     for key in _LOG_FIELDS:
         value = payload.get(key)
         if isinstance(value, str):
@@ -187,18 +207,20 @@ class _DecisionPool:
         self._queue.put(job)
         return job
 
-    def abandon(self, job: _Job) -> None:
-        """The caller gives up on ``job``: a queued job is dropped, a running one is "stuck"."""
+    def abandon(self, job: _Job) -> bool:
+        """The caller gives up on ``job``: a queued job is dropped, a running one is "stuck".
+        True when the job never started (and now never will)."""
         if job.future.cancel():
-            return  # it never started and now never will
+            return True
         with self._lock:
             if job.finished or job.abandoned:
-                return
+                return False
             job.abandoned = True
             self._stuck += 1
             if self._stuck <= self._size and not self._closed:
                 job.replaced = True
                 self._spawn_locked()
+        return False
 
     def close(self) -> None:
         """Stop idle workers; never waits for stuck ones."""
@@ -305,9 +327,14 @@ class Daemon:
         report: Callable[[str], None] = console.err,
         decision_timeout_s: float = DEFAULT_DECISION_TIMEOUT_S,
         pool_size: int = DEFAULT_POOL_SIZE,
+        session: SessionStore | UnavailableStore | None = None,
+        auditor_factory: Callable[[LlmAudit], Auditor | None] = Auditor.build,
     ) -> None:
         """``decision_timeout_s`` is the deadline of one PreToolUse decision (normalize, rules and
-        policy reload); ``pool_size`` the number of worker threads (and of stuck ones tolerated)."""
+        policy reload; an LLM audit's budget comes on top); ``pool_size`` the number of worker
+        threads (and of stuck ones tolerated). ``session``: the session store (default: the one in
+        the home directory); ``auditor_factory`` builds the LLM auditor of a policy (tests pass
+        one with a fake backend)."""
         if decision_timeout_s <= 0:
             raise ValueError("decision_timeout_s must be positive")
         if pool_size < 1:
@@ -330,6 +357,19 @@ class Daemon:
         self._timeouts = 0
         self._log_failures = 0
         self._last_audit_ms: float | None = None
+        self._session = (
+            session if session is not None else open_store(paths.session_db_file(self._home))
+        )
+        if isinstance(self._session, UnavailableStore):
+            self._report(
+                f"session state unavailable: {self._session.reason}; every tool call is judged "
+                "as if the session had read untrusted content"
+            )
+        self._auditor_factory = auditor_factory
+        self._auditor: Auditor | None = None
+        self._auditor_llm: LlmAudit | None = None
+        self._retired_auditors: list[Auditor] = []
+        self._session_failures = 0
 
     @property
     def requests_served(self) -> int:
@@ -393,6 +433,7 @@ class Daemon:
             self._set_error(f"the policy could not be loaded ({detail})", retry=True)
             self._policy_key = key
             return
+        self._update_auditor(policy.llm_audit)
         if problem is not None:
             # An unusable runtime addition (e.g. the CLAUDE_CONFIG_DIR protection) is an error:
             # the gate would have a hole nobody knows about.
@@ -403,6 +444,42 @@ class Daemon:
         self._state = _PolicyState(runtime, policy.mode, None)
         self._policy_key = key
         self._report(f"policy loaded: mode={policy.mode}, {len(policy.rules)} rules")
+
+    def _update_auditor(self, llm: LlmAudit) -> None:
+        """Rebuild the LLM auditor when the policy's ``llm_audit`` changed (under the policy lock).
+
+        The old one is not closed here: a review on another thread may still be using its client;
+        it is closed when the daemon stops.
+        """
+        if llm == self._auditor_llm:
+            return
+        try:
+            auditor = self._auditor_factory(llm)
+        except Exception as exc:  # noqa: BLE001 - an unbuildable auditor is reported, never fatal
+            self._report(f"the LLM audit could not be set up ({type(exc).__name__})")
+            auditor = Auditor(llm, None, "the LLM audit could not be set up")
+        if self._auditor is not None:
+            self._retired_auditors.append(self._auditor)
+        self._auditor, self._auditor_llm = auditor, llm
+        if auditor is None:
+            return
+        backend = auditor.backend
+        if backend is None:
+            self._report(
+                f"LLM audit ({llm.backend}) is configured but not usable; gray actions get "
+                f"on_failure ({llm.on_failure})"
+            )
+        else:
+            self._report(
+                f"LLM audit: {backend.name}, model {backend.model}, transport "
+                f"{backend.transport}, budget {auditor.budget_s:g} s"
+            )
+
+    def _current_auditor(self, state: _PolicyState) -> Auditor | None:
+        policy = state.policy
+        if policy is None or policy.llm_audit.backend == "none":
+            return None
+        return self._auditor
 
     def _session_policy(self, state: _PolicyState, payload: dict[str, Any]) -> Policy | None:
         """``state.policy`` with the ``trusted_projects`` that count for this event's session."""
@@ -448,20 +525,10 @@ class Daemon:
             if request.event == protocol.EVENT_PRE:
                 decision, mode = await self._decide_off_loop(request)
             else:
-                # Nothing to review (the pipeline answers "no decision" at once): no pool, so
-                # these never queue behind a stuck review.
-                state = self._refresh_policy()
-                self._session_policy(state, request.payload)  # the session is first seen here
-                decision = pipeline.decide(
-                    request.event,
-                    request.payload,
-                    mode=state.mode,
-                    policy=state.policy,
-                    policy_error=state.error,
-                    env=os.environ,
-                    home=self._user_home,
-                )
-                mode = state.mode
+                # Nothing to review (the pipeline answers "no decision" at once, after the session
+                # bookkeeping): no pool, so these never queue behind a stuck review, and a thread
+                # of their own so a slow disk never blocks the loop.
+                decision, mode = await asyncio.to_thread(self._observe, request)
             self._audit(request, decision, mode, started)
             self._requests += 1
             return protocol.encode_response(
@@ -474,9 +541,35 @@ class Daemon:
                 request.request_id, protocol.ERR_INTERNAL, "internal error"
             )
 
-    def _review(self, request: protocol.Request) -> tuple[pipeline.Decision, str]:
-        """The decision for one PreToolUse event (runs on a pool thread) and the mode it used."""
+    def _observe(self, request: protocol.Request) -> tuple[pipeline.Decision, str]:
+        """A prompt, post or config event: the session bookkeeping, then "no decision"."""
         state = self._refresh_policy()
+        self._session_policy(state, request.payload)  # the session is first seen here
+        decision = pipeline.decide(
+            request.event,
+            request.payload,
+            mode=state.mode,
+            policy=state.policy,
+            policy_error=state.error,
+            env=os.environ,
+            home=self._user_home,
+            session=self._session,
+        )
+        self._check_session()
+        return decision, state.mode
+
+    def _review(
+        self, request: protocol.Request, extra: list[float] | None = None
+    ) -> tuple[pipeline.Decision, str]:
+        """The decision for one PreToolUse event (runs on a pool thread) and the mode it used.
+
+        ``extra`` receives the LLM budget as soon as the policy is known, so that the waiting loop
+        can extend the deadline by it (the policy is only loaded here, off the event loop).
+        """
+        state = self._refresh_policy()
+        auditor = self._current_auditor(state)
+        if extra is not None and auditor is not None:
+            extra.append(auditor.budget_s)
         decision = pipeline.decide(
             request.event,
             request.payload,
@@ -485,31 +578,67 @@ class Daemon:
             policy_error=state.error,
             env=os.environ,
             home=self._user_home,
+            session=self._session,
+            auditor=auditor,
         )
+        self._check_session()
         return decision, state.mode
 
+    def _check_session(self) -> None:
+        """Report new session store errors (now and then, not on every event)."""
+        count = self._session.error_count
+        if count <= self._session_failures:
+            return
+        before, self._session_failures = self._session_failures, count
+        if any(n in (1, 10, 100) or n % 1000 == 0 for n in range(before + 1, count + 1)):
+            self._report(
+                f"session state: {self._session.last_error} ({count} failure(s) so far); calls "
+                "whose state could not be read were judged as tainted"
+            )
+
     async def _decide_off_loop(self, request: protocol.Request) -> tuple[pipeline.Decision, str]:
-        """Run the review on the pool, under the deadline; ``ask`` when it is late or no worker is
-        free. Raises whatever the review raised (``handle`` turns that into an error response)."""
+        """Run the review on the pool, under the deadline (the rules' own, plus the LLM budget
+        when the review's policy has an audit); ``ask`` when it is late or no worker is free.
+        Raises whatever the review raised (``handle`` turns that into an error response)."""
         if self._pool.stuck >= self._pool.size:
+            self._mark_unreviewed(request)
             return self._gave_up(DECIDED_BY_BUSY, REASON_BUSY)
-        job = self._pool.submit(lambda: self._review(request))
+        # The LLM budget extends the deadline. It is known from the last policy at once (a job
+        # that waits in the queue needs it as much as a running one) and from the worker's own
+        # policy once that is loaded; the larger counts.
+        known = self._current_auditor(self._state)
+        extra: list[float] = [known.budget_s] if known is not None else []
+        job = self._pool.submit(lambda: self._review(request, extra))
         waiter = asyncio.wrap_future(job.future)
+        deadline = self._deadline_s
+        waited = 0.0
         try:
-            done, _pending = await asyncio.wait({waiter}, timeout=self._deadline_s)
+            while True:
+                budget = self._deadline_s + (max(extra) + LLM_SLACK_S if extra else 0.0)
+                if budget <= waited:
+                    done: set[Any] = set()
+                    break
+                deadline = budget
+                done, _pending = await asyncio.wait({waiter}, timeout=budget - waited)
+                waited = budget
+                if done:
+                    break
         except asyncio.CancelledError:
             waiter.cancel()
             self._pool.abandon(job)
             raise
         if not done:
             waiter.cancel()
-            self._pool.abandon(job)
+            if self._pool.abandon(job):
+                self._mark_unreviewed(request)  # it never ran: its taint mark has to be made here
             self._timeouts += 1
             if self._timeouts in (1, 10, 100) or self._timeouts % 1000 == 0:
                 self._report(
-                    f"a review took longer than {self._deadline_s:g} s and was abandoned "
+                    f"a review took longer than {deadline:g} s and was abandoned "
                     f"({self._timeouts} so far, {self._pool.stuck} still running)"
                 )
+            if extra:
+                return self._llm_gave_up()
             return self._gave_up(DECIDED_BY_TIMEOUT, REASON_TOO_SLOW)
         decision, mode = waiter.result()
         return decision, mode
@@ -519,6 +648,34 @@ class Daemon:
             pipeline.Decision(protocol.DECISION_ASK, reason, decided_by),
             self._state.mode,
         )
+
+    def _llm_gave_up(self) -> tuple[pipeline.Decision, str]:
+        """A review with an LLM audit ran out of time: ``llm_audit.on_failure``, as for any other
+        failure of the audit (the rules may have finished long before). In audit-only mode it is
+        ``ask``, like every review the daemon gave up on."""
+        policy = self._state.policy
+        on_failure = policy.llm_audit.on_failure if policy is not None else "ask"
+        if on_failure != "deny" or self._state.mode == pipeline.MODE_AUDIT_ONLY:
+            return self._gave_up(DECIDED_BY_LLM_TIMEOUT, f"{REASON_LLM_TOO_SLOW}; asking")
+        reason = f"{REASON_LLM_TOO_SLOW}; refusing (llm_audit.on_failure)"
+        decision = pipeline.Decision(protocol.DECISION_DENY, reason, DECIDED_BY_LLM_TIMEOUT)
+        return decision, self._state.mode
+
+    def _mark_unreviewed(self, request: protocol.Request) -> None:
+        """A PreToolUse that is answered without a review still marks a call of a taint source
+        (the user may approve it). In a thread of its own, best effort: the answer does not wait."""
+        payload = request.payload
+        sources, _window = pipeline.taint_settings(self._state.policy)
+        session = self._session
+
+        def mark() -> None:
+            with contextlib.suppress(Exception):
+                session.tool_result(
+                    payload.get("session_id"), payload.get("tool_name"), sources=sources
+                )
+
+        with contextlib.suppress(Exception):
+            threading.Thread(target=mark, name="boundkeep-taint-mark", daemon=True).start()
 
     def _audit(
         self, request: protocol.Request, decision: pipeline.Decision, mode: str, started: float
@@ -560,9 +717,14 @@ class Daemon:
             ps_text += "; powershell_job=no"
         if ps.get("throttled_s"):
             ps_text += f"; powershell_throttled_s={int(ps['throttled_s'])}"
+        store = getattr(self, "_session", None)
+        session = "ok" if isinstance(store, SessionStore) else "unavailable"
+        llm = state.policy.llm_audit.backend if state.policy is not None else "-"
+        # session and llm come before the PowerShell fields: config_dir stays last (doctor reads
+        # it up to "; policy error:") and "powershell=...; config_dir" keeps its old shape
         text = (
             f"mode={state.mode}; requests={self._requests}; timeouts={self._timeouts}; "
-            f"stuck={self._pool.stuck}; {ps_text}; "
+            f"stuck={self._pool.stuck}; session={session}; llm={llm}; {ps_text}; "
             f"config_dir={os.environ.get('CLAUDE_CONFIG_DIR') or '-'}"
         )
         if state.error is not None:
@@ -646,6 +808,8 @@ class Daemon:
             f"listening on {server.address} (mode={self._state.mode}, "
             f"policy={self._policy_path}, log={self._log.path})"
         )
+        await asyncio.to_thread(self.clean_sessions)
+        next_cleanup = time.monotonic() + SESSION_CLEANUP_EVERY_S
         try:
             ticks = 0
             while not stop.is_set():
@@ -657,9 +821,33 @@ class Daemon:
                     # half-open breaker or an unavailable retry run without waiting for a request.
                     with contextlib.suppress(Exception):
                         psparse.warm_up()
+                if time.monotonic() >= next_cleanup:
+                    next_cleanup = time.monotonic() + SESSION_CLEANUP_EVERY_S
+                    await asyncio.to_thread(self.clean_sessions)
         finally:
             await server.close()
             self._pool.close()  # stuck workers are daemon threads: they cannot hold us up
             psparse.shutdown()
+            self._close_session_and_auditors()
             self._log_lifecycle("stop")
             self._report("stopped")
+
+    def clean_sessions(self) -> int | None:
+        """Delete idle session state (``session.store`` cleanup policy). Never raises."""
+        try:
+            removed = self._session.cleanup()
+        except Exception as exc:  # noqa: BLE001 - upkeep must not take the daemon down
+            self._report(f"session cleanup failed ({type(exc).__name__})")
+            return None
+        if removed is None and not isinstance(self._session, UnavailableStore):
+            self._report(f"session cleanup failed: {self._session.last_error}")
+        elif removed:
+            self._report(f"session cleanup: {removed} idle session(s) removed")
+        return removed
+
+    def _close_session_and_auditors(self) -> None:
+        for auditor in (*self._retired_auditors, self._auditor):
+            if auditor is not None:
+                auditor.close()
+        with contextlib.suppress(Exception):
+            self._session.close()

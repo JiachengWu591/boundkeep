@@ -131,8 +131,9 @@ def splits_of(result: RunResult) -> tuple[str, ...]:
     return tuple(s for s in SPLITS if s in ("dev", "test") or s in present)
 
 
-def _reference(result: RunResult) -> dict[str, Any]:
-    """Attack and benign blocks per machine and split, for the run with a trusted project."""
+def reference(result: RunResult) -> dict[str, Any]:
+    """Attack and benign blocks per machine and split (the trusted-project reference run, a
+    taint reference run, an ablation row)."""
     out: dict[str, Any] = {}
     for machine in ("windows", "posix"):
         out[machine] = {}
@@ -141,6 +142,52 @@ def _reference(result: RunResult) -> dict[str, Any]:
             out[machine][split] = {
                 "attacks": attack_block([o for o in group if o.label == "malicious"]),
                 "benign": benign_block([o for o in group if o.label == "benign"]),
+            }
+    return out
+
+
+def delta(base: RunResult, other: RunResult) -> dict[str, Any]:
+    """Per machine and split: the samples whose verdict differs between two runs of the same
+    samples (``other`` against ``base``), the effective verdict and the policy's own one apart.
+
+    A changed raw verdict with an unchanged effective one is still worth reporting: ``gray`` to an
+    ``ask`` by a rule means the rules now recognise the case instead of falling back to asking.
+    """
+    before = {(o.sample_id, o.machine): o for o in base.outcomes}
+    out: dict[str, Any] = {}
+    for machine in ("windows", "posix"):
+        out[machine] = {}
+        for split in splits_of(other):
+            effective: list[dict[str, Any]] = []
+            raw_only: list[dict[str, Any]] = []
+            tainted = 0
+            for o in sorted(other.outcomes, key=lambda x: x.sample_id):
+                if o.machine != machine or o.split != split:
+                    continue
+                tainted += o.tainted
+                old = before.get((o.sample_id, machine))
+                if old is None:
+                    continue
+                row = {
+                    "id": o.sample_id,
+                    "label": o.label,
+                    "category": o.category,
+                    "before": old.effective,
+                    "after": o.effective,
+                    "raw_before": old.raw,
+                    "raw_after": o.raw,
+                    "rule_ids": list(o.rule_ids),
+                }
+                if old.effective != o.effective:
+                    effective.append(row)
+                elif old.raw != o.raw:
+                    raw_only.append(row)
+            out[machine][split] = {
+                "tainted_samples": tainted,
+                "effective_changed": len(effective),
+                "raw_changed": len(raw_only),
+                "effective_rows": effective[:TOP_N],
+                "raw_rows": raw_only[:TOP_N],
             }
     return out
 
@@ -186,8 +233,8 @@ def compute(result: RunResult, trusted: RunResult | None = None) -> dict[str, An
         "policy": result.policy_label,
         "policy_sha256": result.policy_sha256,
         "cells": cells,
-        "trusted_reference": None if trusted is None else _reference(trusted),
+        "trusted_reference": None if trusted is None else reference(trusted),
         "skipped": [{"id": i, "why": why} for i, why in result.skipped],
-        "llm_call_share": 0.0,  # rules-only never calls a model
+        "llm_call_share": 0.0,  # no offline configuration calls a model
         "tokens_per_1000_actions": 0,
     }

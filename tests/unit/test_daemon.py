@@ -487,7 +487,15 @@ def test_when_every_worker_is_stuck_new_reviews_are_answered_ask_without_startin
         await asyncio.gather(
             harness.asend("pre", shell("SLOW a"), "s0"), harness.asend("pre", shell("SLOW b"), "s1")
         )
+        # Both timed out. The first review loads the policy (about 0.25 s for the default one,
+        # longer than this test's 0.2 s deadline), so a worker may still be on its way into the
+        # stuck review: wait until both are in it before counting.
+        for _ in range(500):
+            if slow.started == 2:
+                break
+            await asyncio.sleep(0.01)
         before = slow.started
+        assert before == 2
         busy = await harness.asend("pre", shell("SLOW c"), "busy")
         assert slow.started == before  # no work was started for it
         return busy

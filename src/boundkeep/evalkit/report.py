@@ -140,26 +140,125 @@ def _machine_split(machine: str, split: str, cell: dict[str, Any]) -> list[str]:
 
 
 def _ablation(metrics: dict[str, Any]) -> list[str]:
+    """The four rows; every configuration measured in this run gets numbers (``ablation``: the
+    blocks of each, from the same samples, policy and date)."""
     split = _headline_split(metrics)
+    measured: dict[str, Any] = dict(metrics.get("ablation") or {})
+    if metrics["config"] not in measured:
+        measured[metrics["config"]] = {
+            m: {split: metrics["cells"][m][split]} for m in ("windows", "posix")
+        }
+    machines = ("windows", "posix")
     out = [
         "| 配置 | 状态 | "
-        + " | ".join(f"{m} 拦截（{split}）" for m in ("windows", "posix"))
+        + " | ".join(f"{m} 拦截（{split}）" for m in machines)
         + " | "
-        + " | ".join(f"{m} 误报（{split}）" for m in ("windows", "posix"))
+        + " | ".join(f"{m} 达到要求（{split}）" for m in machines)
+        + " | "
+        + " | ".join(f"{m} 误报（{split}）" for m in machines)
         + " |",
-        "|---|---|---:|---:|---:|---:|",
+        "|---|---|---:|---:|---:|---:|---:|---:|",
     ]
     for name, available in CONFIGS.items():
-        if available and name == metrics["config"]:
-            cells = [metrics["cells"][m][split] for m in ("windows", "posix")]
-            row = [pct(c["attacks"]["block_rate"]) for c in cells] + [
-                pct(c["benign"]["false_positive_rate"]) for c in cells
-            ]
+        if available and name in measured:
+            cells = [measured[name][m][split] for m in machines]
+            row = (
+                [pct(c["attacks"]["block_rate"]) for c in cells]
+                + [pct(c["attacks"]["meets_expected_rate"]) for c in cells]
+                + [pct(c["benign"]["false_positive_rate"]) for c in cells]
+            )
             out.append(f"| {name} | 已运行 | " + " | ".join(row) + " |")
+        elif available:
+            out.append(f"| {name} | 这次运行没有测 | — | — | — | — | — | — |")
         else:
-            reason = "未运行（M3a）" if name == "rules+taint" else "未运行（M3b）"
-            out.append(f"| {name} | {reason} | — | — | — | — |")
+            out.append(f"| {name} | 未运行（M3b） | — | — | — | — | — | — |")
     return out
+
+
+def _delta_rows(rows: list[dict[str, Any]]) -> list[str]:
+    out = [
+        "| id | 类别 | 之前（rules-only） | 之后（rules+taint） | 规则 |",
+        "|---|---|---|---|---|",
+    ]
+    for row in rows:
+        before = f"{row['before']}（{row['raw_before']}）"
+        after = f"{row['after']}（{row['raw_after']}）"
+        rules = ", ".join(row["rule_ids"]) or "—"
+        out.append(f"| {row['id']} | {row['category']} | {before} | {after} | {rules} |")
+    return out
+
+
+def _taint_delta(metrics: dict[str, Any]) -> list[str]:
+    changes = metrics.get("taint_delta")
+    if changes is None:
+        return []
+    out = [
+        "## rules+taint 相对 rules-only 的变化",
+        "",
+        "同一批样本、同一份策略、同一次运行。`rules+taint` 给每个样本一个自己的会话（真实的 "
+        "`SessionStore`，内存库）：标了 `tainted` 的样本先收到一次污染来源的 PostToolUse，再判它"
+        "自己的调用；其余样本在干净的会话里判。括号里是策略自己的结论（`gray` = 规则判不了）。",
+        "",
+        "| 机器 / 切分 | 在污染会话里判的样本 | 有效裁决改变 | 只有规则结论改变（有效裁决相同） |",
+        "|---|---:|---:|---:|",
+    ]
+    for machine in ("windows", "posix"):
+        for split, cell in changes[machine].items():
+            out.append(
+                f"| {machine} / {split} | {cell['tainted_samples']} | {cell['effective_changed']} | "
+                f"{cell['raw_changed']} |"
+            )
+    out.append("")
+    for machine in ("windows", "posix"):
+        for split, cell in changes[machine].items():
+            rows = cell["effective_rows"] + cell["raw_rows"]
+            if not rows:
+                continue
+            out += [f"{machine} / {split} 里变化的样本（前 10 条）：", "", *_delta_rows(rows), ""]
+    return out
+
+
+def _taint_sensitivity(metrics: dict[str, Any]) -> list[str]:
+    ref = metrics.get("taint_sensitivity")
+    if ref is None:
+        return []
+    benign_tainted = _benign_tainted(metrics)
+    if benign_tainted == 0:
+        why = (
+            "数据集里的正常样本没有一条标了 `tainted`，所以上面的 `rules+taint` 量不出污染层对正常"
+            "操作的代价。"
+        )
+    else:
+        why = (
+            f"数据集里只有 {benign_tainted} 条正常样本标了 `tainted`，上面的 `rules+taint` 只量到"
+            "它们。"
+        )
+    out = [
+        "## 参考：每个样本都在刚读过不可信内容的会话里",
+        "",
+        f"不是消融行，也不是头条数字：{why}这里把全部样本（正常的也算）都放进刚调用过污染来源的"
+        "会话里再判一次，给出这个代价的上限；“会话干净”两列取自 `rules-only`（没有一个样本在"
+        "污染会话里）；“受信任”两列是假机器的项目列入 `trusted_projects` 时的同一组数字（开发"
+        "工具的放行只在那里出现）。",
+        "",
+        "| 机器 / 切分 | 正常误报率：会话干净 | 正常误报率：全部污染 | 受信任：会话干净 | 受信任：全部污染 |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for machine in ("windows", "posix"):
+        for split in ref["clean"][machine]:
+            values = [
+                ref[key][machine][split]["benign"]["false_positive_rate"]
+                for key in ("clean", "tainted", "trusted_clean", "trusted_tainted")
+            ]
+            out.append(f"| {machine} / {split} | " + " | ".join(pct(v) for v in values) + " |")
+    return [*out, ""]
+
+
+def _benign_tainted(metrics: dict[str, Any]) -> int | None:
+    """How many benign samples are marked ``tainted`` (None: the run did not say)."""
+    ref = metrics.get("taint_sensitivity")
+    value = ref.get("benign_tainted") if isinstance(ref, dict) else None
+    return value if isinstance(value, int) else None
 
 
 def limitations(
@@ -190,6 +289,20 @@ def limitations(
             f"- 以下攻击类别不足 {MIN_PER_CATEGORY} 条，这些类别的比例只能当作粗略的提示："
             + "、".join(short)
             + "。"
+        )
+    if metrics.get("taint_delta") is not None:
+        benign_tainted = _benign_tainted(metrics)
+        cost = (
+            "数据集里没有一条正常样本标了 `tainted`，污染层对正常操作的代价只能看“全部污染”的参考表。"
+            if benign_tainted == 0
+            else f"数据集里标了 `tainted` 的正常样本有 {benign_tainted} 条，"
+            "污染层对其余正常操作的代价看“全部污染”的参考表。"
+            if benign_tainted is not None
+            else "污染层对正常操作的代价看“全部污染”的参考表。"
+        )
+        lines.append(
+            "- `rules+taint` 的会话是模拟的：每个样本是单独一次调用，污染只是它之前的一次来源调用；"
+            "跨多步的链（例如先写测试文件、再运行 pytest）不在样本集里，只有单元测试覆盖。" + cost
         )
     if info.get("test_contaminated"):
         lines.append(
@@ -275,7 +388,8 @@ def to_markdown(metrics: dict[str, Any], samples: Sequence[Sample], info: dict[s
         "",
         f"LLM 行：{LLM_NOTE}。",
         "",
-        "## 结果（按平台与切分分别报告，不合并）",
+        *_taint_delta(metrics),
+        f"## 结果（`{metrics['config']}`，按平台与切分分别报告，不合并）",
         "",
     ]
     for machine in ("windows", "posix"):
@@ -284,6 +398,7 @@ def to_markdown(metrics: dict[str, Any], samples: Sequence[Sample], info: dict[s
             lines += _machine_split(machine, split, cell)
     lines += [
         *_trusted_reference(metrics),
+        *_taint_sensitivity(metrics),
         "## 局限性",
         "",
         *limitations(samples, metrics, info),

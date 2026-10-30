@@ -169,8 +169,48 @@ def check_daemon(endpoint: Endpoint | None) -> list[Check]:
     checks = [Check("daemon", status, f"running ({response.reason}); ping {elapsed_ms:.1f} ms")]
     checks += check_config_dir(response.reason)
     checks += check_powershell_parser(response.reason)
+    checks += check_session_state(response.reason)
     if endpoint.transport == TRANSPORT_NAMED_PIPE and sys.platform == "win32":
         checks += _check_pipe_acl(endpoint)
+    return checks
+
+
+_STATUS_SESSION = re.compile(r"(?:^|; )session=(\w+)")
+_STATUS_LLM = re.compile(r"(?:^|; )llm=([\w-]+)")
+
+
+def check_session_state(daemon_status: str) -> list[Check]:
+    """M3a: the daemon keeps taint marks (and, with an LLM backend, task intents) in
+    ``session.sqlite``. One that cannot open it judges every call as if the session had read
+    untrusted content (fail closed): visible here, since the daemon only says so on its console."""
+    checks: list[Check] = []
+    found = _STATUS_SESSION.search(daemon_status)
+    if found is not None:
+        if found.group(1) == "ok":
+            checks.append(Check("session-state", OK, "the session state database is in use"))
+        else:
+            checks.append(
+                Check(
+                    "session-state",
+                    WARN,
+                    "the session state database could not be opened: every tool call is judged "
+                    "as if the session had read untrusted content (dev tools ask, an LLM allow of "
+                    "a sensitive action becomes an ask)",
+                    "stop the daemon, move session.sqlite* out of the boundkeep home and start "
+                    "'boundkeep serve' again (its console said why the database failed)",
+                )
+            )
+    llm = _STATUS_LLM.search(daemon_status)
+    if llm is not None and llm.group(1) not in ("none", "-"):
+        checks.append(
+            Check(
+                "llm-audit",
+                INFO,
+                f"an LLM audit is configured ({llm.group(1)}): gray actions are sent to it "
+                "(docs/privacy.md says what is sent)",
+                "'boundkeep llm check' sends one harmless request and checks the answer",
+            )
+        )
     return checks
 
 

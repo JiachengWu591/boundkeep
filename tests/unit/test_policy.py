@@ -1112,7 +1112,8 @@ def test_default_file_has_the_four_m0_keys_plus_the_m1_ones() -> None:
         "tests",
     }
     assert set(raw["defaults"]) == {"emit_allow"}
-    assert set(raw["taint"]) == {"sources"}
+    # M3a states the taint window and the sensitive tags explicitly (their defaults)
+    assert set(raw["taint"]) == {"sources", "window", "sensitive_tags"}
 
 
 def test_default_policy_comes_from_package_data_when_present(

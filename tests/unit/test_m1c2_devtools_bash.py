@@ -257,6 +257,8 @@ def test_b_tilde_and_variable_program_words_are_not_recognised() -> None:
 
 # --- D / NOT a dev-tool form: classified exactly as before -----
 # (program, flags, tags, gray reasons, wrappers) per action, measured on the code before M1c-2.
+# M3a changed one thing on purpose: a program the tables do not classify (`pythonw`, a project
+# script by path) now carries `exec` (normalize/event.py; tags decide no rule, only the taint step).
 
 _EX = ("exec",)
 _PQ = "program-path-qualified"
@@ -304,7 +306,7 @@ UNCHANGED: list[tuple[str, tuple[tuple[Any, ...], ...]]] = [
     ("python -m", (_PY_DASH_M,)),
     ("python", (_act("python"),)),
     ("python3.12.1 -m pytest", (_act("python3.12.1", ("-m",)),)),
-    ("pythonw -m pytest", (_act("pythonw", ("-m",), ()),)),
+    ("pythonw -m pytest", (_act("pythonw", ("-m",)),)),
     (
         "python $X -m pytest",
         (
@@ -329,8 +331,8 @@ UNCHANGED: list[tuple[str, tuple[tuple[Any, ...], ...]]] = [
         (_act("python", ("-c",), gray=("inline-code:-c", _PQ)), _INLINE_C),
     ),
     ("./.venv/bin/node x.js", (_act("node", gray=(_PQ,)),)),
-    ("./tools/pytest-wrapper -q", (_act("pytest-wrapper", ("-q",), (), (_PQ,)),)),
-    ("./bin/mytool check .", (_act("mytool", (), ("file_write",), (_PQ,)),)),
+    ("./tools/pytest-wrapper -q", (_act("pytest-wrapper", ("-q",), _EX, (_PQ,)),)),
+    ("./bin/mytool check .", (_act("mytool", (), ("file_write", "exec"), (_PQ,)),)),
     (
         "/opt/x/pip install y",
         (_act("pip", (), ("network_egress", "file_write", "exec"), (_PQ,)),),

@@ -96,6 +96,34 @@ _CD_FLAGS = frozenset({"-L", "-P", "-e", "-@", "--"})
 _PLACEHOLDER = "./{}"  # stands for the arguments xargs appends
 _SYNTHETIC_KEY = "{args-from-stdin}"
 
+# Package managers, task runners and build tools: most of their subcommands run the project's own
+# code (scripts in package.json, a Makefile, setup hooks, build scripts, ``uv run``, ``npx``). The
+# tables know some of them, so the ``exec`` tag below does not come from "not known" alone.
+_CODE_RUNNERS: Final = frozenset(
+    {
+        "npm", "npx", "pnpm", "pnpx", "yarn", "bun", "bunx", "deno", "corepack",
+        "pip", "pip3", "pipx", "pipenv", "poetry", "pdm", "hatch", "uv", "uvx", "rye", "tox", "nox",
+        "conda", "mamba", "micromamba", "pixi", "invoke", "inv",
+        "composer", "cargo", "go", "gradle", "gradlew", "mvn", "mvnw", "ant", "sbt", "lein",
+        "make", "gmake", "nmake", "cmake", "ninja", "meson", "bazel", "bazelisk", "buck", "scons",
+        "rake", "bundle", "gem", "dotnet", "msbuild", "just", "task", "mix", "swift", "flutter",
+        "dart",
+    }
+)  # fmt: skip
+_EXE_SUFFIXES: Final = (".exe", ".cmd", ".bat", ".ps1", ".com")
+
+
+def _runs_project_code(program: str | None) -> bool:
+    if not program:
+        return False
+    name = program.lower()
+    for suffix in _EXE_SUFFIXES:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name in _CODE_RUNNERS
+
+
 # Variables whose reassignment changes what "~", "$HOME" and relative paths mean.
 _WATCHED_VARS = frozenset({"HOME", "PWD", "OLDPWD"})
 _ASSIGNERS = frozenset(
@@ -1517,6 +1545,12 @@ def _command_action(
         gray_reasons.append("unc-network")
     network = info.network or bool(info.urls) or bool(unc_names) or unc_unknown
     tags: list[RiskTag] = list(info.tags)
+    if (not info.known or _runs_project_code(program)) and "exec" not in tags:
+        # A program the tables do not classify (a build tool, a project script, a path-qualified
+        # executable, an unknown subcommand), or a package manager or task runner, runs code
+        # nobody looked at. Tags decide no rule; they feed the taint step of the LLM audit
+        # (PROJECT_SPEC.md §9.5) and what the auditor sees.
+        tags.append("exec")
     if network and "network_egress" not in tags:
         tags.append("network_egress")
     if "file_write" not in tags and any(ref.access == "write" for ref in refs):
@@ -1599,7 +1633,11 @@ def _shell_actions(ctx: _Ctx, tool: str, shell: Shell, command: str) -> list[Act
             marker = _budget_action(ctx, tool, exc, **common)
     if result.gray or not result.commands:
         reasons = result.gray or ("empty-command",)
-        tags_extra: tuple[RiskTag, ...] = ("exec",) if result.exec_reasons else ()
+        # nothing of the line understood: it may run anything (the same reading as an unknown
+        # program, for the taint step)
+        tags_extra: tuple[RiskTag, ...] = (
+            ("exec",) if result.exec_reasons or not result.commands else ()
+        )
         actions.append(_gray(ctx, tool, *reasons, risk_tags=tags_extra, **common))
     elif result.exec_reasons:
         # The line runs code the parser cannot see inside (eval, python -c, curl | sh).
@@ -2175,7 +2213,9 @@ def _mcp_actions(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> list[Ac
         domains=names,
         network=network,
         inside_project=_inside(refs),
-        risk_tags=("network_egress",) if network else (),
+        # a server does whatever its tool does, and may reach the network whatever the arguments
+        # show: for the taint step it is code that runs and data that may leave
+        risk_tags=("network_egress", "exec"),
         gray=True,
         gray_reasons=tuple(dict.fromkeys((MCP_GRAY, *notes))),
         mcp_server=server,
@@ -2310,4 +2350,4 @@ def _dispatch(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> list[Actio
         return [Action(tool=tool, **ctx.base)]
     if tool.startswith("mcp__"):
         return _mcp_actions(ctx, tool, tool_input)
-    return [_gray(ctx, tool, "unknown-tool")]
+    return [_gray(ctx, tool, "unknown-tool", risk_tags=("exec",))]

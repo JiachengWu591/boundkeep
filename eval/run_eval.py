@@ -1,10 +1,12 @@
-"""Run the evaluation: ``uv run python eval/run_eval.py --config rules-only``.
+"""Run the evaluation: ``uv run python eval/run_eval.py --config rules+taint``.
 
 Offline (no network, no key, no Claude Code): the samples under eval/datasets go through the real
-rule pipeline on the fake machines of ``boundkeep test``. Writes eval/report.md and
-eval/results/<config>.json.
+pipeline on the fake machines of ``boundkeep test``. Every run measures every offline configuration
+(rules-only and rules+taint, from the same samples, policy and date) and writes
+eval/results/<config>.json for each; eval/report.md has all of them in the ablation table, the
+rules+taint changes against rules-only, and the details of the --config one.
 
-    python eval/run_eval.py --config rules-only            # run and write the report
+    python eval/run_eval.py --config rules+taint           # run and write the report
     python eval/run_eval.py --check                         # validate the datasets, show counts
     python eval/run_eval.py --stamp eval/datasets/x.jsonl   # fill in / correct the splits
     python eval/run_eval.py --config rules-only --open-holdout h2   # measure one sealed batch too
@@ -124,9 +126,31 @@ def main(argv: list[str] | None = None) -> int:
     date = args.date or datetime.datetime.now(datetime.UTC).date().isoformat()
     _, policy_sha = runner.policy_fingerprint(args.policy)
     seals = {b: holdout.status(args.ledger, b, hashes[b], policy_sha) for b in names}
-    result = runner.run(measured, config=args.config, policy_file=args.policy)
-    trusted = runner.run(measured, config=args.config, policy_file=args.policy, trusted=True)
-    computed = metrics.compute(result, trusted)
+    ps_ready = runner.ps_helper_ready() if any(s.tool == "PowerShell" for s in measured) else False
+
+    def run(config: str, **options: bool) -> runner.RunResult:
+        return runner.run(
+            measured, config=config, policy_file=args.policy, ps_ready=ps_ready, **options
+        )
+
+    plain = {name: run(name) for name in runner.OFFLINE_CONFIGS}
+    trusted = {name: run(name, trusted=True) for name in runner.OFFLINE_CONFIGS}
+    every = {name: metrics.compute(plain[name], trusted[name]) for name in runner.OFFLINE_CONFIGS}
+    ablation = {name: metrics.reference(plain[name]) for name in runner.OFFLINE_CONFIGS}
+    taint_delta = metrics.delta(plain["rules-only"], plain["rules+taint"])
+    # "clean" is rules-only, where no sample is in a tainted session (in rules+taint the samples
+    # marked tainted are, benign ones included once there are any)
+    taint_sensitivity = {
+        "clean": metrics.reference(plain["rules-only"]),
+        "tainted": metrics.reference(run("rules+taint", taint_all=True)),
+        "trusted_clean": metrics.reference(trusted["rules-only"]),
+        "trusted_tainted": metrics.reference(run("rules+taint", trusted=True, taint_all=True)),
+        "benign_tainted": sum(1 for s in measured if s.label == "benign" and s.tainted),
+    }
+    computed = dict(every[args.config])
+    computed["ablation"] = ablation
+    computed["taint_delta"] = taint_delta
+    computed["taint_sensitivity"] = taint_sensitivity
     info = {
         "date": date,
         "version": __version__,
@@ -168,13 +192,18 @@ def main(argv: list[str] | None = None) -> int:
         )
     out_dir: Path = args.out_dir
     (out_dir / "results").mkdir(parents=True, exist_ok=True)
-    (out_dir / "results" / f"{args.config}.json").write_text(
-        report.to_json(computed, info), encoding="utf-8", newline="\n"
-    )
+    for name in runner.OFFLINE_CONFIGS:
+        extra = {"taint_delta": taint_delta} if name == "rules+taint" else {}
+        if name == "rules+taint":
+            extra["taint_sensitivity"] = taint_sensitivity
+        (out_dir / "results" / f"{name}.json").write_text(
+            report.to_json({**every[name], **extra}, info), encoding="utf-8", newline="\n"
+        )
     (out_dir / "report.md").write_text(
         report.to_markdown(computed, samples, info), encoding="utf-8", newline="\n"
     )
-    print(f"wrote {out_dir / 'report.md'} and results/{args.config}.json")  # noqa: T201
+    written = ", ".join(f"results/{name}.json" for name in runner.OFFLINE_CONFIGS)
+    print(f"wrote {out_dir / 'report.md'} and {written}")  # noqa: T201
     return 0
 
 

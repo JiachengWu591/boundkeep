@@ -4,9 +4,18 @@ No Claude Code, no daemon, no network and no real disk: the same ``policycli._ru
 own tests use. A sample with platform ``any`` runs on both machines and counts once for each, so
 every number is per platform and nothing is merged.
 
-``rules-only`` is the only configuration that exists today. A gray verdict (the rules cannot say)
-is what a user would be asked about when no LLM is configured, so its effective verdict is ``ask``.
-A PowerShell sample on a host without the parser helper is skipped and listed, never counted.
+Configurations without an LLM (``OFFLINE_CONFIGS``):
+
+* ``rules-only``: every sample is judged as in a fresh session (the session layer is off).
+* ``rules+taint``: every sample gets a session of its own in a real ``SessionStore`` (in memory).
+  A sample marked ``tainted`` first gets one PostToolUse of a taint source (the tool its
+  ``taint_sources`` label stands for, ``TAINT_SOURCE_TOOLS``), as a hook event would deliver it;
+  then its own call is counted and judged in the state the store reports. Its task intent is not
+  used: without an LLM nothing reads it.
+
+A gray verdict (the rules cannot say) is what a user would be asked about when no LLM is
+configured, so its effective verdict is ``ask`` in both. A PowerShell sample on a host without the
+parser helper is skipped and listed, never counted.
 """
 
 from __future__ import annotations
@@ -21,6 +30,8 @@ from typing import Literal
 from boundkeep import policycli
 from boundkeep.evalkit.schema import FAKE_SESSION, Sample
 from boundkeep.policy import Policy, default_policy_text, parse_policy_text
+from boundkeep.session.facts import FRESH, SessionFacts
+from boundkeep.session.store import SessionStore
 
 Machine = Literal["posix", "windows"]
 MACHINES: tuple[Machine, ...] = ("windows", "posix")
@@ -28,9 +39,17 @@ MACHINES: tuple[Machine, ...] = ("windows", "posix")
 #: configuration -> whether it can run today (the four ablation rows of PROJECT_SPEC.md section 12)
 CONFIGS: dict[str, bool] = {
     "rules-only": True,
-    "rules+taint": False,  # M3a
+    "rules+taint": True,  # M3a: the session layer, no LLM
     "rules+LLM": False,  # M3b
     "rules+LLM+taint": False,  # M3b
+}
+#: the configurations that need no network and no key: every run measures all of them
+OFFLINE_CONFIGS: tuple[str, ...] = ("rules-only", "rules+taint")
+#: the tool call a sample's taint source label stands for in its simulated session
+TAINT_SOURCE_TOOLS: dict[str, str] = {
+    "web-content": "WebFetch",
+    "web-search": "WebSearch",
+    "mcp": "mcp__eval__tool",
 }
 
 
@@ -49,6 +68,7 @@ class Outcome:
     reasons: tuple[str, ...]
     latency_ms: float
     runs_repo_code: bool = False
+    tainted: bool = False  # the session the sample was judged in had read untrusted content
 
 
 @dataclass
@@ -57,15 +77,30 @@ class RunResult:
     policy_label: str
     policy_sha256: str
     trusted: bool = False  # the fake machine's project is listed in trusted_projects
+    taint_all: bool = False  # every sample was judged in a tainted session (a reference run)
     outcomes: list[Outcome] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)  # (sample id, why)
 
 
 def effective_verdict(raw: str, config: str) -> str:
     """What a verdict means to the user under ``config``. Gray and error end in a question."""
-    if config != "rules-only":
+    if config not in OFFLINE_CONFIGS:
         raise ValueError(f"configuration {config!r} cannot run yet")
     return raw if raw in ("allow", "deny") else "ask"
+
+
+def _session_for(
+    store: SessionStore | None, sample: Sample, machine: Machine, policy: Policy, taint_all: bool
+) -> SessionFacts:
+    """The session state ``sample`` is judged in (``rules+taint``); fresh without a store."""
+    if store is None:
+        return FRESH
+    sid = f"eval-{sample.id}-{machine}"
+    sources = policy.taint.sources
+    if sample.tainted or taint_all:
+        for label in sample.taint_sources or ("web-content",):
+            store.tool_result(sid, TAINT_SOURCE_TOOLS.get(label, "WebFetch"), sources=sources)
+    return store.tool_call(sid, sample.tool, sources=sources, window=policy.taint.window)
 
 
 def machines_for(sample: Sample) -> tuple[Machine, ...]:
@@ -112,18 +147,30 @@ def run(
     policy_file: str | None = None,
     ps_ready: bool | None = None,
     trusted: bool = False,
+    taint_all: bool = False,
 ) -> RunResult:
     """Every sample on every machine it applies to. Never raises: a pipeline failure is ``error``
-    (fail-closed, counts as an ask)."""
+    (fail-closed, counts as an ask). ``taint_all`` (``rules+taint`` only) judges every sample, the
+    benign ones too, in a session that has just read untrusted content: a reference for what the
+    taint layer costs, not an ablation row."""
     if not CONFIGS.get(config, False):
         raise ValueError(f"configuration {config!r} is not available")
+    if taint_all and config != "rules+taint":
+        raise ValueError("taint_all needs the rules+taint configuration")
     label, digest = policy_fingerprint(policy_file)
-    result = RunResult(config=config, policy_label=label, policy_sha256=digest, trusted=trusted)
+    result = RunResult(
+        config=config,
+        policy_label=label,
+        policy_sha256=digest,
+        trusted=trusted,
+        taint_all=taint_all,
+    )
     items = list(samples)
     powershell = any(s.tool == "PowerShell" for s in items)
     if ps_ready is None:
         ps_ready = ps_helper_ready() if powershell else False
     policies = {m: _policy_for(policy_file, m, trusted) for m in MACHINES}
+    store = SessionStore(":memory:") if config == "rules+taint" else None
     for machine in MACHINES:  # warm-up: imports, compiled patterns, the first policy lookup
         policycli._run_one(policies[machine], machine, "Bash", {"command": "true"}, None, None)
     for sample in items:
@@ -132,9 +179,19 @@ def run(
                 result.skipped.append((sample.id, "PowerShell parser helper not available"))
                 continue
             started = time.perf_counter()
+            tainted = False
             try:
+                session = _session_for(store, sample, machine, policies[machine], taint_all)
+                tainted = session.read_untrusted
                 review = policycli._run_one(
-                    policies[machine], machine, sample.tool, sample.input, None, None, FAKE_SESSION
+                    policies[machine],
+                    machine,
+                    sample.tool,
+                    sample.input,
+                    None,
+                    None,
+                    FAKE_SESSION,
+                    session,
                 )
                 raw = str(review.verdict.decision)
                 rule_ids = tuple(review.verdict.rule_ids)
@@ -157,6 +214,9 @@ def run(
                     reasons=reasons,
                     latency_ms=elapsed,
                     runs_repo_code=sample.runs_repo_code,
+                    tainted=tainted,
                 )
             )
+    if store is not None:
+        store.close()
     return result

@@ -11,8 +11,8 @@ coercion). Top-level keys:
 * ``defaults.emit_allow``: whether an ALLOW verdict is emitted as an explicit hook "allow"
   (which skips Claude Code's own confirmation) instead of "no decision".
 * ``taint.sources``: tool names (or ``prefix*`` patterns) whose results taint the session. They
-  decide the PostToolUse matcher.
-* ``llm_audit`` (M1: structure only, no backend is implemented): see ``LlmAudit``.
+  decide the PostToolUse matcher. ``taint.window`` and ``taint.sensitive_tags``: see ``Taint``.
+* ``llm_audit``: the optional LLM audit of gray actions, see ``LlmAudit``.
 * ``trusted_projects``: directories whose own code the user lets tools run (see
   ``Policy.trusted_projects``); the ``project_trusted`` match field refers to them.
 * ``rules``: ``Rule`` entries (see ``policy/matcher.py`` for the exact semantics).
@@ -61,6 +61,18 @@ Mode = Literal["enforce", "audit-only"]
 MAX_TAINT_SOURCES = 64
 MAX_TAINT_SOURCE_LENGTH = 128
 DEFAULT_TAINT_SOURCES: tuple[str, ...] = ("WebFetch", "WebSearch", "mcp__*")
+DEFAULT_TAINT_WINDOW = 8
+MAX_TAINT_WINDOW = 1000
+# The risk tags of normalize.model.RiskTag (kept equal by a unit test; the schema does not import
+# the normalizer's model for a Literal)
+RiskTagName = Literal["network_egress", "file_write", "exec", "secret_access", "config_tamper"]
+DEFAULT_SENSITIVE_TAGS: tuple[RiskTagName, ...] = (
+    "network_egress",
+    "file_write",
+    "exec",
+    "secret_access",
+    "config_tamper",
+)
 
 # Letters, digits, underscore, hyphen and dot, then at most one trailing "*". An explicit ASCII
 # class and ``fullmatch`` (not ``$``, which tolerates a trailing newline, and not ``\w``, which
@@ -108,7 +120,7 @@ class Defaults(BaseModel):
 
 
 class Taint(BaseModel):
-    """Taint sources.
+    """Taint sources, the taint window and the tags taint makes stricter (PROJECT_SPEC.md §7).
 
     ``sources`` is a tuple, not a list: a frozen model with a mutable list inside is not frozen
     (any holder of a shared ``Policy`` could append an unvalidated entry, and the model would not
@@ -119,6 +131,11 @@ class Taint(BaseModel):
     list so an absurdly long file is still refused. An empty list is valid (no taint source), but
     it has no PostToolUse matcher: ``taint_sources_to_matcher`` refuses it and callers must
     handle that case themselves (for example by not registering the PostToolUse hook).
+
+    ``window``: the session is "tainted" for the next ``window`` tool calls after a call of a
+    source. ``sensitive_tags``: while tainted, an allow that no rule made (the LLM audit's) of an
+    action with one of these risk tags becomes an ask. Neither touches an allow that a rule made;
+    rules that care about untrusted content say so with ``session_read_untrusted``.
     """
 
     model_config = _STRICT
@@ -126,14 +143,21 @@ class Taint(BaseModel):
     # The per-item validator gives errors the index (``sources[1]``); the validator below adds
     # the count limit and the de-duplication.
     sources: tuple[Annotated[str, AfterValidator(check_taint_source)], ...] = DEFAULT_TAINT_SOURCES
+    window: Annotated[int, Field(ge=1, le=MAX_TAINT_WINDOW)] = DEFAULT_TAINT_WINDOW
+    sensitive_tags: tuple[RiskTagName, ...] = DEFAULT_SENSITIVE_TAGS
 
-    @field_validator("sources", mode="before")
+    @field_validator("sources", "sensitive_tags", mode="before")
     @classmethod
     def _list_to_tuple(cls, value: Any) -> Any:
         # Strict mode refuses a list for a tuple field, but YAML only produces lists. Convert
         # exactly that type: anything else (a string, a mapping, a tuple smuggled in through
         # model_validate) keeps failing as before.
         return tuple(value) if type(value) is list else value
+
+    @field_validator("sensitive_tags", mode="after")
+    @classmethod
+    def _unique_tags(cls, value: tuple[RiskTagName, ...]) -> tuple[RiskTagName, ...]:
+        return tuple(dict.fromkeys(value))
 
     @field_validator("sources", mode="after")
     @classmethod
@@ -840,8 +864,31 @@ def mcp_declared_read_only(tool: str, declared: tuple[str, ...]) -> bool:
     return any(tool.startswith(e[:-1]) if e.endswith("*") else tool == e for e in declared)
 
 
+# Request keys the adapter sets itself (audit/backends/openai_compatible.py): ``extra_body`` may add
+# vendor options (``thinking``, ``temperature``, ``max_tokens``, ``stop``, ``n``), never replace
+# the messages, the forced tool call or the response format, or switch to streaming. (``n`` above 1
+# is not refused here: an answer with more than one choice fails the output check anyway.)
+EXTRA_BODY_RESERVED: Final = frozenset(
+    {
+        "model",
+        "messages",
+        "tools",
+        "tool_choice",
+        "response_format",
+        "stream",
+        "stream_options",
+        "functions",
+        "function_call",
+        "parallel_tool_calls",
+    }
+)
+
+
 class OpenAICompatible(BaseModel):
-    """``llm_audit.openai_compatible``: any OpenAI-compatible chat endpoint (structure only)."""
+    """``llm_audit.openai_compatible``: any OpenAI-compatible chat endpoint.
+
+    ``base_url`` ends where ``/chat/completions`` is appended (``https://api.example.com/v1``).
+    """
 
     model_config = _STRICT
 
@@ -850,6 +897,19 @@ class OpenAICompatible(BaseModel):
     api_key_env: _EnvName = "BOUNDKEEP_LLM_API_KEY"
     transport: Literal["tool_call", "json_object"] = "tool_call"
     extra_body: _Frozen | None = None
+
+    @field_validator("extra_body")
+    @classmethod
+    def _no_reserved_keys(cls, value: FrozenMap | None) -> FrozenMap | None:
+        if value is None:
+            return value
+        reserved = sorted(key for key in value if key in EXTRA_BODY_RESERVED)
+        if reserved:
+            raise ValueError(
+                f"extra_body must not set {', '.join(reserved)}: boundkeep sets the messages, the "
+                "forced tool call and the response format itself (extra_body only adds options)"
+            )
+        return value
 
     @field_validator("base_url")
     @classmethod
@@ -881,10 +941,14 @@ class AnthropicBackend(BaseModel):
 
 
 class LlmAudit(BaseModel):
-    """The optional LLM intent audit. Validated here, implemented in M3.
+    """The optional LLM intent audit of gray actions (``boundkeep.audit``, PROJECT_SPEC.md §9).
 
     ``on_failure`` is ``ask`` or ``deny``, never ``allow``: a failing auditor must not wave
-    anything through. A backend named in ``backend`` must have its block.
+    anything through. A backend named in ``backend`` must have its block. ``timeout_ms`` is the
+    whole budget of one audit (a retry included); the daemon uses at most
+    ``audit.MAX_BUDGET_MS`` of it, so the hook client still answers inside its own deadline.
+    ``intent_prompts`` / ``intent_chars``: how many of the user's latest prompts the task intent
+    keeps and how long each may be (after the host's IDE blocks are removed and secrets redacted).
     """
 
     model_config = _STRICT
@@ -893,6 +957,8 @@ class LlmAudit(BaseModel):
     timeout_ms: Annotated[int, Field(ge=100, le=60_000)] = 4000
     on_failure: Literal["ask", "deny"] = "ask"
     send_task_intent: bool = True
+    intent_prompts: Annotated[int, Field(ge=1, le=10)] = 3
+    intent_chars: Annotated[int, Field(ge=40, le=2000)] = 300
     cache_ttl_s: Annotated[int, Field(ge=0, le=86_400)] = 600
     openai_compatible: OpenAICompatible | None = None
     anthropic: AnthropicBackend | None = None
@@ -976,6 +1042,10 @@ class Match(BaseModel):
     mcp_server: _Words | None = None  # case-sensitive: "GitHub" is not "github"
     # the action is a call of an MCP tool the policy's ``mcp_read_only`` declares read-only
     mcp_read_only: _TrueOnly | None = None
+    # the session has called a taint source (taint.sources) at some point: untrusted content is in
+    # the agent's context. Sticky (the taint window does not apply); a session whose state is not
+    # known counts as such. Only for deny and ask rules (see Rule._session_fields_only_tighten).
+    session_read_untrusted: _TrueOnly | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1081,6 +1151,16 @@ class Rule(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _session_fields_only_tighten(self) -> Rule:
+        if self.action == "allow" and self.match.session_read_untrusted is not None:
+            raise _at_error(
+                "session_read_untrusted is for deny and ask rules: an allow that only holds after "
+                "the session read untrusted content would loosen exactly the risky case",
+                "match",
+            )
+        return self
+
+    @model_validator(mode="after")
     def _allow_needs_a_condition(self) -> Rule:
         if self.action == "allow" and self.match.is_empty():
             raise _at_error(
@@ -1112,6 +1192,9 @@ class PolicyTest(BaseModel):
     # `<fake temp dir>/claude/<slug>/<session id>/scratchpad`, the tool-results directory
     # `<fake home>/.claude/projects/<slug>/<session id>/tool-results`.
     session_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    # the test's session has just called a taint source (inside the taint window, and
+    # ``session_read_untrusted`` holds); default: a fresh session that read nothing untrusted
+    tainted: bool = False
     expect: Expect
 
 
