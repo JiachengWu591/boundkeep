@@ -488,10 +488,10 @@ def test_sexagesimal_integer_bomb_is_rejected_fast() -> None:
 def test_node_count_cap_stops_huge_flow_collections_fast() -> None:
     items = ", ".join(["1"] * 60_000)  # 180 KB, under MAX_POLICY_BYTES
     start = time.monotonic()
-    fails(f"version: 1\ntaint:\n  sources: [{items}]\n", "more than 10000 nodes")
+    fails(f"version: 1\ntaint:\n  sources: [{items}]\n", "more than 20000 nodes")
     assert time.monotonic() - start < 2.0
     # Just under the cap is the schema's business (here: too many sources, and not strings).
-    fails("version: 1\ntaint:\n  sources: [" + ", ".join(["A"] * 9000) + "]\n", "64")
+    fails("version: 1\ntaint:\n  sources: [" + ", ".join(["A"] * 19_000) + "]\n", "64")
 
 
 @pytest.mark.parametrize("char", ["\x85", "\u2028", "\u2029"])

@@ -55,7 +55,9 @@ _NEUTRAL_HOME = "/home/boundkeep-policy-check"
 
 _MAX_DEPTH = 32
 _MAX_SCALAR_CHARS = 1024  # the longest legitimate value is a 128-character taint source
-_MAX_NODES = 10_000  # a real M0 policy has a few dozen nodes; M1 may raise this deliberately
+# Raised from 10_000 when the shipped default.yaml, tests: included, reached 9849 nodes
+# (2026-10-29). MAX_POLICY_BYTES binds first there: about 19 bytes a node, so near 14_000.
+_MAX_NODES = 20_000
 _MAX_MESSAGE_CHARS = 300
 _MAX_PATH_CHARS = 400
 _MAX_REPORTED_ERRORS = 5
