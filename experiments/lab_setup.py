@@ -10,6 +10,8 @@
     e12       E12：base + ConfigChange 记录器
     fail      E6 / E16 / E22：pre-iso 记录器 + 一个坏 hook（--fail 指定模式）
     e14       E14：pre-iso 记录器 + prompt 或 agent hook（--hooktype，--cob 加 continueOnBlock）
+    rr        M3a 复审的 P-R3 / P-R9：SessionStart、PreToolUse（pre-iso）、PostToolUse 记录器，外加权限提示
+              工具的 MCP 服务（mcp_permission_server.py）；--no-post 去掉 PostToolUse（延迟对照）
 """
 import argparse
 import json
@@ -21,6 +23,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "probe_hook.py")
 FAIL = os.path.join(HERE, "fail_hook.py")
 MCP = os.path.join(HERE, "mcp_echo_server.py")
+PERM = os.path.join(HERE, "mcp_permission_server.py")
 
 ALLOW_BASE = ["PowerShell(Write-Output *)", "Read", "Write"]
 UNICODE_DIR = "\u8def\u5f84 \u6d4b\u8bd5"  # "路径 测试"：含空格与中文
@@ -112,6 +115,17 @@ PROMPTS = {
     "prompt_resume.txt": """这是一个会话实验：请用 PowerShell 工具执行 Write-Output 'BK_RESUME'，然后只回复 DONE。
 """,
     "prompt_par.txt": """这是一个并行实验：请在同一条消息里同时调用三个工具（并行，不要分开发）：Read 读取 probe.txt、Read 读取 notes.txt、PowerShell 执行 Write-Output 'BK_PAR'。完成后只回复 DONE。
+""",
+    "prompt_rr3.txt": """这是一个 hook 行为实验。请按顺序逐条执行下面的 PowerShell 命令：每条单独调用一次 PowerShell 工具，不要合并，不要重试；即使被拒绝或报错也继续下一条。全部完成后，用一句话汇报每条的结果。
+1. Write-Output BK_PLAIN_MARK
+2. Write-Output BK_ASK_MARK_APPROVE
+3. Write-Output BK_ASK_MARK_DENYME
+""",
+    "prompt_rr9a.txt": """这是一个 hook 行为实验。用 PowerShell 工具执行：Write-Output BK_RR9_FIRST
+完成后只回复 DONE。
+""",
+    "prompt_rr9b.txt": """这是同一个实验的下一步。用 PowerShell 工具执行：Write-Output BK_RR9_NEXT
+完成后只回复 DONE。
 """,
     "prompt_lat.txt": """这是一个延迟测量实验。请按顺序调用 Glob 工具 10 次，一次只调用一个，不要并行，每次的模式依次是：*.txt、*.md、*.json、prompts/*、*.py、*.cmd、*.log、.claude/*、**/*.txt、*。每次调用后不要评论。全部完成后只回复 DONE。
 """,
@@ -291,6 +305,18 @@ def build(profile, py, lab, a):
             "PreToolUse": [entry([hook(py, "pre-iso", 10), ph], "*")],
             "PostToolUse": [entry([hook(py, "post-iso", 20)], "*")],
         }
+    elif profile == "rr":
+        settings["hooks"] = {
+            "SessionStart": [entry([hook(py, "session-start", 20)])],
+            "PreToolUse": [entry([hook(py, "pre-iso", 10)], "*")],
+        }
+        if not a.no_post:
+            settings["hooks"]["PostToolUse"] = [entry([hook(py, "post-iso", 20)], "*")]
+        allow += ["Glob"]
+        raw = os.path.join(HERE, "raw")
+        files["mcp.json"] = json.dumps(
+            {"mcpServers": {"bkperm": {"command": py, "args": ["-I", "-S", PERM], "env": {"BK_PROBE_DIR": raw}}}},
+            indent=2) + "\n"
     else:
         raise SystemExit("unknown profile: %s" % profile)
     if allow:
@@ -311,13 +337,14 @@ def write(path, text):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--profile", default="base", choices=["base", "matchers", "e11", "e12", "fail", "e14"])
+    ap.add_argument("--profile", default="base", choices=["base", "matchers", "e11", "e12", "fail", "e14", "rr"])
     ap.add_argument("--lab")
     ap.add_argument("--python", default=sys.executable)
     ap.add_argument("--fail", default="")
     ap.add_argument("--hooktype", default="prompt", choices=["prompt", "agent"])
     ap.add_argument("--cob", action="store_true", help="prompt hook 加 continueOnBlock")
     ap.add_argument("--cfg-block", action="store_true", help="e12：ConfigChange hook 阻止含 disableAllHooks 的变更")
+    ap.add_argument("--no-post", action="store_true", help="rr：不挂 PostToolUse（延迟对照）")
     a = ap.parse_args()
     lab = os.path.abspath(a.lab or default_lab(a.profile))
     marker = os.path.join(lab, ".bk-lab")

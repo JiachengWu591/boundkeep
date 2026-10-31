@@ -40,6 +40,8 @@ def main():
     ap.add_argument("--allow", action="append", default=[], help="额外的 --allowedTools 项，可重复")
     ap.add_argument("--setting-sources", default="project")
     ap.add_argument("--persist", action="store_true", help="保存会话（resume 实验需要）")
+    ap.add_argument("--permission-prompts", default="none", choices=["none", "host"],
+                    help="host：权限提示交给 --permission-prompt-tool（用 --arg 传）")
     ap.add_argument("--arg", action="append", default=[], help="原样传给 claude 的参数，写成 --arg=--flag，可重复")
     ap.add_argument("--timeout", type=int, default=300)
     a = ap.parse_args()
@@ -56,7 +58,7 @@ def main():
     cmd = [a.claude, "-p", "--model", a.model,
            "--output-format", "stream-json", "--verbose", "--include-hook-events",
            "--setting-sources", a.setting_sources,
-           "--permission-prompts", "none", "--max-budget-usd", a.budget]
+           "--permission-prompts", a.permission_prompts, "--max-budget-usd", a.budget]
     if not a.persist:
         cmd.append("--no-session-persistence")
     cmd += a.arg

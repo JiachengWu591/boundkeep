@@ -7,6 +7,8 @@
 | `probe_hook.py` | 观察用 hook（仅标准库）：记录原始事件，默认退出码 0、不输出；带总开关与测试标记（BK_EXIT1 / EXIT2 / DENY / ASK / ALLOW / SLEEP / NAIVE / CTX / UPS_CTX）；日志里不记录环境变量的值 |
 | `fail_hook.py` | "坏 hook"：非法 JSON、非 UTF-8 输出、各种退出码、不读 stdin 等 |
 | `mcp_echo_server.py` | 最小 MCP stdio 服务（E5 / E13） |
+| `mcp_resource_server.py` | 带一个资源的 MCP stdio 服务（P-F2：读 MCP 资源的工具在 hook 里叫什么） |
+| `mcp_permission_server.py` | 只有一个权限提示工具的 MCP stdio 服务（P-R3：询问被批准 / 拒绝之后 PostToolUse 是否触发） |
 | `lab_setup.py` | 在仓库之外建一次性实验目录并写项目级 hook 配置；`--profile base / matchers / e11 / e12 / fail / e14`；不动用户级 settings |
 | `run_cli_probe.py` | 用 `claude -p` 触发工具调用（极短提示词、最便宜的模型、设花费上限；子进程环境清除所有 `CLAUDE*` 变量；记录每条输出的到达时刻） |
 | `run_failmodes.py` | 逐个坏 hook 模式跑一轮（E6 / E16 / E22） |
@@ -68,6 +70,16 @@ python experiments\bench_hook_cold_start.py 60
 python experiments\bench_pipe_concurrency.py --threads 4 --per 50 --out experiments\evidence\pipe_concurrency_4x50.json
 python experiments\bench_pipe_concurrency.py --threads 32 --per 20 --out experiments\evidence\pipe_concurrency_32x20.json
 #   每次工具调用：prompt_lat.txt 在"有 hook"与"--arg=--settings --arg=<含 disableAllHooks 的文件>"下各跑两轮，再 analyze_latency.py
+
+# M3a 复审：P-R3（批准 / 拒绝的询问与 PostToolUse、tool_use_id）与 P-R9（fork 之后的 SessionStart）
+python experiments\lab_setup.py --profile rr --lab <临时目录>\bk-lab-rr --python <python.exe 的绝对路径>
+python experiments\run_cli_probe.py --name rr3_approve --prompt <lab>\prompts\prompt_rr3.txt --lab <lab> `
+  --permission-prompts host --arg=--permission-prompt-tool --arg=mcp__bkperm__approve `
+  --arg=--mcp-config --arg=<lab>\mcp.json --arg=--strict-mcp-config
+python experiments\run_cli_probe.py --name rr9_first --prompt <lab>\prompts\prompt_rr9a.txt --lab <lab> --persist
+#   取上一步 init 事件里的 session_id 作 S1
+python experiments\run_cli_probe.py --name rr9_fork --prompt <lab>\prompts\prompt_rr9b.txt --lab <lab> --persist --arg=--resume --arg=<S1> --arg=--fork-session
+python experiments\run_cli_probe.py --name rr9_resume --prompt <lab>\prompts\prompt_rr9b.txt --lab <lab> --persist --arg=--resume --arg=<S1>
 
 # E20 / E21（本地只读）
 powershell -NoProfile -ExecutionPolicy Bypass -File experiments\probe_env_windows.ps1

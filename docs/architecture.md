@@ -84,14 +84,16 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 
 降级表（每一行都有测试）：
 
-| 情形 | PreToolUse | PostToolUse、UserPromptSubmit | ConfigChange |
+| 情形 | PreToolUse | PostToolUse、UserPromptSubmit、SessionStart | ConfigChange |
 |---|---|---|---|
 | 常驻进程没起 / 端点文件缺失 | `ask` 并说明原因 | 无操作 | 本地判断，不需要它 |
 | 管道忙到预算用尽、超时、应答非法、应答是错误 | `ask` | 无操作 | — |
 | stdin 为空、非法 JSON、非 UTF-8、过大 | `ask` | 无操作 | 阻断（退出 2） |
 | 命令行参数缺失或与事件不一致 | `ask` | 无操作 | 阻断 |
 | 内部异常、总预算用尽 | `ask` | 无操作 | 阻断 |
-| 事件不是我们注册的类型（例如 SessionStart），且命令行参数也不是我们的子命令 | 什么都不输出 | 什么都不输出 | — |
+| 事件不是我们注册的类型（例如 SessionEnd），且命令行参数也不是我们的子命令 | 什么都不输出 | 什么都不输出 | — |
+
+SessionStart（规格修订 8，P-R9）没有可以降级的决定：失败时会话按守护进程已知的状态继续，fork 出来的、库里没有的会话从干净状态开始（`doctor` 检查它是否注册）。
 | 请求超过 8 MiB | `ask` | 无操作 | — |
 | stdout 写不出去 | 退出 2 | 退出 2 | 退出 2 |
 
@@ -104,7 +106,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 - **判定在事件循环之外、带期限地运行**：PreToolUse 的整个判定（策略重读、normalize、规则）交给一个有界的守护线程池（默认 4 个线程，`Daemon(pool_size=…)`），用 `asyncio.wait` 等结果，期限默认 2.0 秒（`Daemon(decision_timeout_s=…)`；hook 客户端自己的 PreToolUse 预算是 10 秒）。原因：一条恶意构造的几 KB 命令（例如 `cd src && cd src && …` 的长链）可以让解析器算上十几秒，同步运行会卡死事件循环，连 ping 和其他请求都得不到应答（审查实测）。超过期限时：应答 `ask`，理由 `boundkeep: review took too long`，审计记录 `decision: ask`、`decided_by: timeout`，只记命令的长度（`command_chars`），不记命令正文，常驻进程继续服务。
 - **被放弃的线程**：线程无法被杀死，超时后工作线程继续跑到自己结束。它被记为"卡住"，同时补一个新线程顶替它的位置（容量不减半）。卡住的线程数达到池大小时，新的 PreToolUse 请求不再起任何工作，立即应答 `ask`（`boundkeep: daemon busy`，`decided_by: busy`，同样只记长度），直到有线程返回为止；线程总数因此不超过池大小的两倍。排在队列里、还没开始的判定在超时时被取消，不会白跑。`ping` 与非 PreToolUse 事件不经过线程池，不会排在卡住的判定后面。线程池的线程是守护线程：停止（`serve` 的 stop）与进程退出都不等它们，不会被一个卡住的判定拖住（`ThreadPoolExecutor` 会在退出时 join 线程，所以没有用它）。
 - **策略热加载**：每个请求检查策略文件的修改时间与大小，变了就重读（PreToolUse 在持锁的工作线程里重读；ping 与其他事件在事件循环上重读，只有文件真的变了时才有这点开销），所以 `boundkeep mode` 立即生效。策略不可用时 PreToolUse 一律 `ask`，直到修好；文件没变但上次读失败（编辑器或杀毒软件暂时占用）时，每秒最多重读一次，所以占用解除后自己恢复。重读的任何失败（包括 `PolicyError` 之外的异常，以及 `runtime_policy_checked` 报告的运行期规则问题）都记成策略错误，**绝不**让旧策略在"没有错误"的状态下继续生效；文件的 (mtime, size) 键只在新结果（策略或错误）存好之后才前移。
-- **M3a 之后的判定管线**：normalize → 规则（带这次调用所处的会话污染状态与所有会话留下的项目标记，规则用 `session_read_untrusted`、`project_written_after_untrusted` 看它们）→ 污染一步（不是规则给出的 allow、动作带敏感标签、会话在污染窗口内 → ask）→ 灰色且配置了后端时交给 LLM 审计 → 代码的二次裁决（§6b）。没有后端时灰色仍是 `ask`。规格修订 7：读过不可信内容的会话里，可能写的动作在 normalize 之后、判决之前把写到的位置记成项目标记（`session.marks.written_locations` → `store.mark_written`）；判决之后，如果污染一步（管线自己的，或二次裁决里的 `tainted-sensitive`）把这次调用改成了 ask，而且是 enforce 模式，就用掉一次窗口（`store.taint_asked`）。
+- **M3a 之后的判定管线**：normalize → 规则（带这次调用所处的会话污染状态与所有会话留下的项目标记，规则用 `session_read_untrusted`、`project_written_after_untrusted` 看它们）→ 污染一步（不是规则给出的 allow、动作带敏感标签、会话在污染窗口内 → ask）→ 灰色且配置了后端时交给 LLM 审计 → 代码的二次裁决（§6b）。没有后端时灰色仍是 `ask`。规格修订 7：读过不可信内容的会话里，可能写的动作在 normalize 之后、判决之前把写到的位置记成项目标记（`session.marks.written_locations` → `store.mark_written`）。规格修订 8：来源调用（工具名在 `taint.sources` 里，或 `session.sources.network_source` 认出的、读远端文字的 shell 调用）按之前的状态判、按之后的状态打标记，所以它自己的写也记；看不到写路径的写（会运行代码的灰色动作、写文件的 MCP 工具、会改工作区的 git 子命令）记项目目录；带标记的项目里，带 `exec` 的灰色调用不送审（`decided_by: gray-marked-project`）。判决之后，如果污染一步（管线自己的，或二次裁决里的 `tainted-sensitive`）把这次调用改成了 ask，而且是 enforce 模式，就记下它的 `tool_use_id`（`store.taint_asked`）；同一个 id 的 PostToolUse 到达时才用掉一次窗口（`store.tool_result`）。读远端文字的 shell 调用在判决之后（不是 deny 时）把会话记成来源（`store.source_seen`）。
 - **期限（M3a）**：规则仍是 2.0 秒；策略配置了 LLM 后端时再加 LLM 的预算（`timeout_ms`，最多 6 秒）与 0.5 秒余量，从提交时算。预算有两个来源，取较大者：提交时上一次加载的策略（排队等工作线程的请求也有这段时间），以及工作线程重读策略之后告诉等待的事件循环的那个（第一次请求时策略还没加载）。策略只在工作线程里重读，不上事件循环。超时时，带 LLM 审计的审查在 enforce 下按 `on_failure` 回答（`decided_by: timeout-llm`），`audit-only` 下与其他超时一样是 ask。hook 客户端自己的 PreToolUse 预算是 10 秒，所以 2 + 6 + 0.5 秒之内一定有回答。没有审查就回答的调用（繁忙，或排队时就超时、根本没开始）仍在单独的线程里给来源工具打污染标记。
 - **`CLAUDE_CONFIG_DIR`**：常驻进程从**自己的**环境读它，用来给那个目录里的 settings 与凭据加保护规则；Claude Code 的环境可能不同，而 hook 客户端只转发 `CLAUDE_PROJECT_DIR`。`doctor` 在自己的环境设了它时给 INFO（常驻进程必须以同样的值启动），并在 ping 状态里的 `config_dir` 与自己的环境不同时给 WARN。
 - **失败也留痕**：处理请求时出现内部错误，除了返回错误应答，还会往审计日志写一条 `decision: error`、`decided_by: internal-error` 的记录。
@@ -116,8 +118,8 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 
 ## 6a. 会话状态（M3a，`session/`）
 
-- **存储**：`<home>/session.sqlite`，WAL，`synchronous=NORMAL`；一个连接、一把锁，读改写都在 `BEGIN IMMEDIATE` 事务里，所以并行的工具调用不丢更新（另一个进程开同一个文件也一样，它会等忙超时）。表 `sessions`：会话 id、首次与最近出现的时间、距上次污染来源调用的工具调用次数（NULL：没有过）、来源工具名；表 `prompts`：最近几条任务意图（只在配置了 LLM 后端且允许发送时才写）。实测（本机，Python 3.12.11）：干净会话的一次 PreToolUse 只读不写，p50 约 0.008 毫秒；被污染过的会话每次调用写一次计数，p50 约 0.03 毫秒。
-- **事件**：UserPromptSubmit 存任务意图；PostToolUse 对来源工具打标记；PreToolUse 计数，并把这次调用判在"它之前"的状态里（来源调用自己不算被污染），来源调用在这里也打标记（PostToolUse 失败时 hook 客户端什么也不做，只靠它会失败即放行）。prompt 与 post 事件的写入在 `asyncio.to_thread` 里做：不占事件循环，也不排在判定线程池后面。
+- **存储**：`<home>/session.sqlite`，WAL，`synchronous=NORMAL`；一个连接、一把锁，读改写都在 `BEGIN IMMEDIATE` 事务里，所以并行的工具调用不丢更新（另一个进程开同一个文件也一样，它会等忙超时）。表 `sessions`：会话 id、首次与最近出现的时间、上次污染来源调用之后被批准并执行了的污染询问的次数（NULL：没有过来源）、来源名；表 `pending_asks`（schema 3，规格修订 8）：还在等 PostToolUse 的污染询问的 `tool_use_id`，每个会话最多 64 个；表 `project_marks`：项目上的标记；表 `prompts`：最近几条任务意图（只在配置了 LLM 后端且允许发送时才写）。实测（本机，Python 3.12.11）：干净会话的一次 PreToolUse 只读不写，p50 约 0.008 毫秒；被污染过的会话每次调用写一次计数，p50 约 0.03 毫秒。
+- **事件**：SessionStart（修订 8）：`startup` / `clear` 记一行干净的会话，其他 `source`（resume、compact、fork……）遇到库里没有的会话 id 时按读过不可信内容开始；UserPromptSubmit 存任务意图；PostToolUse 对来源工具打标记，并对上等待中的污染询问（修订 8）；PreToolUse 计数，并把这次调用判在"它之前"的状态里（来源调用自己不算被污染），来源调用在这里也打标记（PostToolUse 失败时 hook 客户端什么也不做，只靠它会失败即放行）。session、prompt 与 post 事件的写入在 `asyncio.to_thread` 里做：不占事件循环，也不排在判定线程池后面。
 - **失败即关闭**：状态库打不开（损坏、未知的 schema 版本、目录不可写）时换成一个替身，每次调用都返回"状态未知"，管线把它当作已污染；启动时与 `ping` 的状态（`session=unavailable`）里说明。单次读写失败同样返回"未知"，守护进程按 1、10、100…… 次报告。
 - **清理**：守护进程启动时与每小时一次：30 天没有活动的会话连同任务意图删除；超过 5000 个会话时最久没活动的先删。保留期长是因为 resume 会沿用旧的 session_id。
 
@@ -134,7 +136,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 
 - 变更后的 settings 文件读不了或不是合法 JSON → 阻断；
 - `disableAllHooks` 取任何不是 `null` / `false` 的值 → 阻断；
-- 对 `init` 记录过的文件（记录按"同一个文件"匹配：联接点、`\\?\` 前缀、8.3 短名、大小写都算同一个）：被删除，或 boundkeep 的任一条目被删、被指向别处、被加了 `if` 等额外字段、`timeout` 不在允许范围（PreToolUse 11 到 3600 秒，其余 6 到 3600 秒）、PreToolUse / UserPromptSubmit / ConfigChange 的 matcher 被设成非空（ConfigChange 的 matcher 匹配的是变更来源，设了就可能永远不触发）或不是字符串、PostToolUse 的 matcher 与 `init` 记录的不同 → 阻断；
+- 对 `init` 记录过的文件（记录按"同一个文件"匹配：联接点、`\\?\` 前缀、8.3 短名、大小写都算同一个）：被删除，或 boundkeep 的任一条目被删、被指向别处、被加了 `if` 等额外字段、`timeout` 不在允许范围（PreToolUse 11 到 3600 秒，其余 6 到 3600 秒）、PreToolUse / UserPromptSubmit / ConfigChange / SessionStart 的 matcher 被设成非空（ConfigChange 的 matcher 匹配的是变更来源，设了就可能永远不触发）或不是字符串、PostToolUse 的 matcher 与 `init` 记录的不同 → 阻断（SessionStart 只在安装记录写明 `init` 装过它时才要求：修订 8 之前的安装没有它，不能因此挡住每一次 settings 修改）；
 - settings 的 `env` 块设置了 `BOUNDKEEP_*`、`USERPROFILE`、`HOME`、`HOMEDRIVE`、`HOMEPATH`、`APPDATA`、`LOCALAPPDATA`、`CLAUDE_CONFIG_DIR`、`CLAUDE_CODE_SIMPLE`、`CLAUDE_CODE_SAFE_MODE`（hook 客户端会因此找不到真的端点而去连别的东西，或 Claude Code 跳过 hook），或 `env` 不是对象 → 阻断；
 - 文件里含 `NaN`、`Infinity`（JavaScript 的 `JSON.parse` 拒绝它们）→ 按"无法评估"阻断；
 - 事件是设置类来源却没有 `file_path` → 阻断（无法评估）；来源是 `skills` → 放行（那不是 settings 文档）；

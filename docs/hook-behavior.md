@@ -25,7 +25,7 @@
 | E6 退出码与坏 hook | 已验证（CLI 引擎） | 23 种失败模式；**任何起不来或崩溃的 hook 都不阻断；非法 JSON 被当作"无决定"**。**VS Code 界面里 hook 出错、超时、崩溃时没有任何提示**；被阻断时理由显示在弹窗与工具调用卡片里 |
 | E7 同类项目 | 部分验证 | `docs/related-work.md` 已写完；cc-audit 有两个同名项目；来源是调研员的汇总，我只亲自复核了 cc-audit B 的 README，其余单元格未逐格复核 |
 | E8 ask | 部分验证 | `-p` 下 ask 被自动拒绝；VS Code 里 ask 会弹出确认，批准后命令执行；**确认框默认视图里不显示 hook 的理由**（只有命令与模型的描述；截图一次；折叠箭头展开后是否有理由未试） |
-| E9 并发与会话 | 部分验证 | resume / continue / compact 前后 session_id 不变；项目、local、`--settings` 三处 hook 合并；`/clear` 换新 session_id（SessionStart 的 `source` 为 `clear`）；并行工具调用没能让模型发出 |
+| E9 并发与会话 | 部分验证 | resume / continue / compact 前后 session_id 不变；项目、local、`--settings` 三处 hook 合并；`/clear` 换新 session_id（SessionStart 的 `source` 为 `clear`）；`--fork-session` 换新 session_id，`source` 为 `fork`，不带父会话的 id（2.1.304，见"M3a 复审的实测"）；并行工具调用没能让模型发出 |
 | E10 性能 | 已验证（本机微基准） | `python -I -S` 的 hook 进程约 30 ms；`.exe` 启动器 +17 ms；mise shim +64 ms；每次工具调用 hook 增量约 95 ms |
 | E11 allow 语义与权限模式 | 部分验证 | **hook 的 allow 会替用户跳过确认**，但压不过 ask / deny 规则；bypassPermissions 未测；auto 模式未生效 |
 | E12 配置篡改 | 已验证（CLI 引擎；M0 在真实实现上复测，见下方“M0 补充”） | `disableAllHooks` 一旦生效 hook 全停；会话中改动立刻生效；`ConfigChange` hook 能拦下这类改动，**包括把 boundkeep 自己的条目（连同 ConfigChange 的）一起删掉的编辑** |
@@ -283,6 +283,35 @@ M3a 的 X1 审查处理（`docs/reports/M3a-review-fixes.md`，提案 P-F2）要
 - 三个都触发 PreToolUse 与 PostToolUse，hook 事件的 `tool_name` 就是这三个名字，**不以 `mcp__` 开头**，所以默认来源 `mcp__*` 认不出它们。`tool_input`：`ListMcpResourcesTool` 是 `{}`；`ReadMcpResourceTool` 与 `ReadMcpResourceDirTool` 是 `{server, uri}`。顶层没有 `mcp_server` 字段（MCP 工具调用才有）。
 - PostToolUse 的 `tool_response`：`ListMcpResourcesTool` 是列表；`ReadMcpResourceTool` 是 `{contents}`（资源的文字就在里面）；`ReadMcpResourceDirTool` 是 `{error, resources}`，这个版本回答"Directory listing is not enabled in this build"，但 PostToolUse 照样触发。
 - 对设计：三个名字进默认与 strict 的 `taint.sources`（规格修订 7，§8）。VS Code 扩展里没有测，那里的名字预计相同（同一个内置二进制），没有实测记录。
+
+## M3a 复审的实测（2026-10-31，Claude Code 2.1.304，Windows 11，CLI 引擎 `claude -p`，haiku；P-R3、P-R9）
+
+M3a 修复的定向复审（`docs/reviews/M3a-rereview.md`）之后，提案 P-R3（窗口只被批准并执行了的询问消耗）与 P-R9（fork 换新 id）要先确认两件事。做法同上一节：一次性实验目录在会话的临时目录里，`experiments/lab_setup.py --profile rr` 写项目级 settings（SessionStart、PreToolUse `*`、PostToolUse `*` 各挂一个 `probe_hook.py` 记录器）；权限提示交给 `experiments/mcp_permission_server.py`（`--permission-prompts host --permission-prompt-tool mcp__bkperm__approve`：请求里含 `DENYME` 就拒绝，否则批准）。四次运行共约 0.23 美元，各一次观察。
+
+**P-R3：询问被批准之后 PostToolUse 是否触发，两个事件的 `tool_use_id` 是否相同**（运行 `rr3_approve`）。三条 PowerShell 命令，记录器对含 `BK_ASK` 的命令回答 `ask`：
+
+| 命令 | hook 的决定 | 权限提示工具 | 执行了吗 | PreToolUse 的 `tool_use_id` | PostToolUse |
+|---|---|---|---|---|---|
+| `Write-Output BK_PLAIN_MARK` | 无决定 | 没被调用（只读命令不需要批准） | 是 | `toolu_01J8…` | 有，同一个 id |
+| `Write-Output BK_ASK_MARK_APPROVE` | `ask` | 批准 | 是 | `toolu_012w…` | 有，同一个 id |
+| `Write-Output BK_ASK_MARK_DENYME` | `ask` | 拒绝 | 否（模型收到 `BK_PERM_DENIED`） | `toolu_01U4…` | **没有** |
+
+- hook 的 `ask` 会走到权限提示工具，工具收到的参数是 `{tool_name, input, tool_use_id}`，`tool_use_id` 与 PreToolUse 里的相同。
+- 被批准的调用，PostToolUse 带同一个 `tool_use_id`；被拒绝的没有 PostToolUse（与 M0a"被阻断或拒绝的调用只有 PreToolUse"一致）。`dontAsk` 与没有人批准的 `-p` 下 `ask` 被自动拒绝（M0a E8、E11），同样没有 PostToolUse。
+- PreToolUse 与 PostToolUse 的公共字段在这个版本里还有 `prompt_id`；PostToolUse 另有 `duration_ms`、`tool_response`。
+- 对设计：按 `tool_use_id` 对上 PostToolUse，就能只数"用户批准、工具真的运行了"的询问（规格修订 8，§7）。延迟没有另测：PostToolUse 挂到所有工具上，每次工具调用多一个 hook 进程，按 E10（每个 hook 事件约 45 ms）与 M3a 的 `scripts/bench_hook.py`（守护进程在线时 p50 48.6 ms）估计约多 45 到 50 ms，所以只在配置了 LLM 后端时挂 `*`。
+
+**P-R9：fork 之后 SessionStart 的 `source` 与 `session_id`**（运行 `rr9_first`、`rr9_fork`、`rr9_resume`，都带 `--persist`；会话文件留在 `~/.claude/projects/` 里这个实验目录对应的子目录）：
+
+| 运行 | 参数 | SessionStart 的 `source` | `session_id` | 之后 PreToolUse / PostToolUse 的 `session_id` |
+|---|---|---|---|---|
+| `rr9_first` | 无 | `startup` | `fe13d49b-…`（S1） | S1 |
+| `rr9_fork` | `--resume S1 --fork-session` | **`fork`** | **新的** `30409019-…` | 新的 id |
+| `rr9_resume` | `--resume S1` | `resume` | S1（不变） | S1 |
+
+- fork 的 SessionStart 字段是 `cwd`、`hook_event_name`、`session_id`、`source`、`transcript_path`，另有 `context_tokens`、`estimated_cache_write_usd`、`prompt_cache_likely_expired`、`seconds_since_last_response`（resume 也有这四个），**没有父会话的 id**；`transcript_path` 是新 id 的文件。所以守护进程认不出 fork 来自哪个会话，只能按"带着旧上下文、来历不明"处理（规格修订 8，§7）。
+- 普通 resume 在 2.1.304 上仍然沿用原来的 id，与 E9（2.1.291）一致。
+- 未测：`--continue --fork-session`、桌面应用与 VS Code 扩展里的 fork、`/compact` 在 2.1.304 上的 `source`、agent 团队的队友。
 
 ## 与官方文档的差异
 
