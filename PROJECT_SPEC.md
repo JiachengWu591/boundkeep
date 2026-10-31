@@ -1,4 +1,4 @@
-# boundkeep（守界）— 项目规格 v0（修订 7）
+# boundkeep（守界）— 项目规格 v0（修订 8）
 
 > 状态：设计稿。标注 `[待验证]` 的条目依赖外部产品的实际行为，编码前先用最小实验确认。
 > 本文件是开发会话的唯一事实来源：要改设计，先改这里，再改代码。
@@ -26,6 +26,12 @@
 > - §7：读过不可信内容的会话写过的项目带标记 `project_written_after_untrusted`，对所有会话生效，只有用户在终端运行 `boundkeep taint clear` 才解除（P-F1）；污染窗口只被"污染一步改成了 ask 的调用"消耗（P-F6）；请求装不下的代码与参数不送审（P-F34，代码已在 X1 处理里实现）。
 > - §8：默认 `taint.sources` 加上读 MCP 资源的三个工具（P-F2，hook 实测见 `docs/hook-behavior.md`）；`taint.window` 默认由 8 改为 3（P-F6）；新匹配字段 `project_written_after_untrusted`。
 > - §9.1：预算的硬期限包括名字解析（F5 的文字澄清）。§9.2：MCP 调用不送审。§10、§12：项目标记的失败行为与评测里的模拟。
+>
+> **修订 8（2026-10-31，使用者按草案接受："Yes, as drafted"）**：M3a 修复的定向复审（`docs/reviews/M3a-rereview.md`）之后的提案 P-R2、P-R3、P-R5、P-R6、P-R7、P-R9（`docs/reports/M3a-rereview-fixes.md` 第 7 节），按两次 hook 实测（Claude Code 2.1.304，`docs/hook-behavior.md`"M3a 复审的实测"）调整了写法。
+> - §5：配置了 LLM 后端时 PostToolUse 的 matcher 为 `*`；`init` 注册 SessionStart（P-R3、P-R9）。
+> - §7：窗口只被用户批准、工具真的运行了的询问消耗，按 `tool_use_id` 对上 PostToolUse（P-R3）；带网络的 shell 调用也是来源，只搬代码的 git 与包管理器子命令除外（P-R5）；看不到写路径的写、会改工作区的 git 子命令、来源调用自己的写也打项目标记（P-R6）；写到项目之外的开发工具配置文件记所在目录（P-R7）；带标记的项目里，带 `exec` 的灰色调用不送审（P-R2）；resume、compact、fork 遇到库里没有的会话时按"读过不可信内容"开始（P-R9）。
+> - §8：`taint.sources` 的含义（P-R5）。§10：PostToolUse 与 SessionStart 失败时的行为。§12：评测里的模拟。
+> - 实现时补了三处文字（`docs/reports/M3a-rereview-fixes-2.md` 第 4 节，待使用者一并确认）：`startup` / `clear` 的会话在库里记一行干净的状态；P-R6 里"规则没放行的 `exec` 动作"与"没有可写路径的 `file_write` 动作"的读法；没经过审查的 shell 调用按来源记。
 
 > **当前进度（2026-10-30）**
 >
@@ -35,7 +41,7 @@
 > - **留出集**（分批，口径第 4b 节）：h1、h2 各打开过一次（`M2-rules-3.md` 第 8 节、`holdout-h2.md` 第 6 节），之后都改过规则，**都已被污染**；再要无偏的数字需要新的批次（h3）。
 > - **未做 / 等你做**：真实 Claude Code 里的手工验收（包括在 Claude Code 之外的终端里运行 `trust add`）；Linux 容器套件；补 obfuscation 样本；L-1 的选项白名单（会改规则）。
 > - **M3a 已实现并提交**（2026-10-30，代码提交 `46169eb`，报告 `docs/reports/M3a.md`）：SQLite 会话状态（任务意图、污染窗口与粘性位、并发、清理）、M-2 的 ask 规则 `ask-devtools-after-untrusted-content`、后端接口与假后端、OpenAI 兼容适配器（只对本地假服务测过）、发送出口、二次裁决、缓存、`boundkeep llm check`、一致性测试、`rules+taint` 评测行（相对 `rules-only` 的增量为 0，原因见报告）。报告第 7 节的规格变更提案 P1 到 P12 已由使用者于 2026-10-30 接受，已写进本文件（修订 6）。
-> - **M3a 的 X1 审查**（2026-10-30）：中危 F1–F6，没有高危。F3、F4、F5 已修并提交（`1959969`、`4d723c0`）；F1、F6、P-F2、P-F34 的规格变更已接受（修订 7），实现记录在 `docs/reports/M3a-review-fixes-2.md`；之后做定向复审，再由使用者决定是否打 `m3a-done`。
+> - **M3a 的 X1 审查**（2026-10-30）：中危 F1–F6，没有高危。F3、F4、F5 已修并提交（`1959969`、`4d723c0`）；F1、F6、P-F2、P-F34 的规格变更已接受（修订 7），实现记录在 `docs/reports/M3a-review-fixes-2.md`。定向复审（2026-10-31）：中危 R-1 到 R-5；R-1、R-4、R-10 已修并提交（`f8b7a71`），其余写成修订 8 的草案，确认并实现之后再复审，再由使用者决定 `trusted_projects` 与 `m3a-done`。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -140,7 +146,7 @@ Claude Code
 
 - **为什么要常驻进程**：hook 每次都是新进程，冷启动和重复初始化会拖慢每一次工具调用。`boundkeep-hook` 只做转发，重逻辑都在常驻进程。冷启动开销已在开发机上实测（M0a E10；Windows 11、Python 3.12.7，p50）：`python -I -S` 的空进程约 18 ms，带日志的记录脚本约 30 ms，命名管道往返的客户端约 29 ms；挂 3 个 hook 进程时每次工具调用在 Claude 侧多约 95 ms（`docs/hook-behavior.md` E10）。具体预算以 M0 的实测为准。
 - **hook 通道不用 TCP**：避免浏览器可达的本地 TCP 端口，降低跨站请求伪造（CSRF）与 DNS 重绑定的攻击面。POSIX 用 Unix 套接字（权限 `0600`），Windows 用命名管道（显式 DACL，见 §5.1）；两者放在同一个 IPC 抽象（`ipc/`）后面，上层不感知差异。Web 控制台（v0.5+）才开 `127.0.0.1` TCP，且带本地令牌。
-- **hook 配置**（`boundkeep init` 写入 `.claude/settings.json` 或 `~/.claude/settings.json`）。用 exec 形式（`command` + `args`），可执行文件写**绝对路径**；PreToolUse 的 matcher 用 `*`，覆盖全部工具，未知工具名由常驻进程按"灰色"处理；PostToolUse 的 matcher 由 `taint.sources` 生成；UserPromptSubmit 不支持 matcher，不写：
+- **hook 配置**（`boundkeep init` 写入 `.claude/settings.json` 或 `~/.claude/settings.json`）。用 exec 形式（`command` + `args`），可执行文件写**绝对路径**；PreToolUse 的 matcher 用 `*`，覆盖全部工具，未知工具名由常驻进程按"灰色"处理；PostToolUse 的 matcher 由 `taint.sources` 生成，配置了 LLM 后端时为 `*`（修订 8，P-R3：窗口要按 `tool_use_id` 对上被批准的询问，见 §7；没有后端时污染一步实际上不会改出 ask，不必让每次工具调用多一个 hook 进程，按 M0a E10 与 M3a 的实测约多 45 到 50 ms）；SessionStart 不写 matcher（修订 8，P-R9，见 §7）；UserPromptSubmit 不支持 matcher，不写：
 
 ```json
 {
@@ -353,27 +359,32 @@ event(pre) ─> normalize ─> Action
 
 - **会话状态库**：存在 `~/.boundkeep/session.sqlite`。
   - 并发：WAL，一把锁加 `BEGIN IMMEDIATE`，并行的工具调用不丢计数，多个进程同时写也一样。
-  - 每个 `session_id` 只存：首次与最近出现的时间、自最近一次来源调用以来被污染一步改成 ask 的调用次数（修订 7，P-F6）、来源工具名（最多 16 个）。配置了 LLM 后端且 `send_task_intent` 时，另存任务意图（§9.2）。不存工具输入、工具输出与文件内容。
+  - 每个 `session_id` 只存：首次与最近出现的时间、自最近一次来源调用以来被用户批准并执行了的污染询问的次数（修订 7，P-F6；修订 8，P-R3）、来源名（最多 16 个）、还没有对上 PostToolUse 的污染询问的 `tool_use_id`（最多 64 个，修订 8，P-R3）。配置了 LLM 后端且 `send_task_intent` 时，另存任务意图（§9.2）。不存工具输入、工具输出与文件内容。
   - 另有一张不按会话分的表：被读过不可信内容的会话写过的位置（项目目录或路径的规范键，见下面"项目上的标记"），每个位置只存键、首次与最近标记的时间、标记它的来源工具名。
   - 清理：30 天不活动的会话删除；超过 5000 个会话时，先删最久不活动的；守护进程每小时清理一次。保留期刻意较长：resume 的会话沿用原来的 `session_id`，忘掉它就忘了它的上下文里有不可信内容。项目上的标记不随清理删除，只由用户解除。
   - 失败：库打不开或读写失败时，那次调用按"状态未知"判，即当作已污染（§10）。
+  - **带着旧上下文的新会话**（修订 8，P-R9；实测见 `docs/hook-behavior.md`"M3a 复审的实测"）：`init` 注册 `SessionStart`。`--resume <id> --fork-session` 的 SessionStart 带新的 `session_id`、`source` 为 `fork`，**不带父会话的 id**，所以 fork 不能沿用父会话的状态；清理之后 resume 的会话在库里也找不到。规则：SessionStart 的 `source` 不是 `startup` 或 `clear`（`resume`、`compact`、`fork`，以及将来出现的别的值），而 `session_id` 不在库里时，这个会话按"刚读过不可信内容"开始：粘性位为真、窗口从 0 开始，来源名记作 `inherited:<source>`。`source` 为 `startup` 或 `clear` 时，库里记下这个会话（干净的一行），否则没调用过来源的会话在库里没有记录，它之后的 resume 与 compact（长会话里自动压缩很常见）都会被当作不认识的会话（实现时发现，2026-10-31）；升级之前开始的会话没有这一行，第一次 resume 或 compact 时按读过不可信内容开始。代价：从一个干净会话 fork 出来的会话也被当作读过不可信内容，开发工具在里面再问，它的写会给项目打标记（解除用 `taint clear`）。SessionStart 没有可以降级的决定：守护进程那时不在、或写库失败，这个会话就从干净状态开始（局限，§10）。agent 团队里接收转述内容的队友（新 id、`source` 未测）不在这条规则之内。
 - **污染的计数**（细化下面"污染升级规则"的第一条）：
   - 来源工具的调用在 PreToolUse 与 PostToolUse 两处都打标记。PostToolUse 失败时，hook 客户端静默丢弃（它没有可以降级的决定），只在那里打标记会失效而放行；在 PreToolUse 打标记可能把随后被拒绝的调用也算进去，这是安全方向。
-  - 窗口只被**污染一步改成了 ask 的调用**消耗（修订 7，P-F6）：来源调用之后，会话一直是"被污染"的，直到污染一步（下一条，以及 §9.5 的同一条规则）已经把 `taint.window` 个调用从 allow 改成了 ask。别的调用（规则判定的、灰色却不敏感的、被问或被拒的、不敏感的）都不计数。理由：按调用次数计数时，agent 读网页之后先发 `window` 次无害的 `Read`，窗口就过去了，之后 LLM 对敏感动作的 allow 照常放行（X1 审查 F6）；现在要用完窗口，用户得被问 `window` 次。
-  - 计数在判决之后写：同一个会话里并行的调用可能都在窗口之内判，这是安全方向。来源调用自己按它之前的状态判；来源调用（PreToolUse 与 PostToolUse）让计数从 0 重新开始。
-  - 因超时或守护进程繁忙、没经过审查就回答的来源调用，仍然打标记。
-- **污染一步**：会话被污染期间，**不是规则给出的** allow（只有"什么都不碰的工具"这一种）遇到带 `taint.sensitive_tags` 的动作时，改为 ask（`decided_by: taint`），并消耗一次窗口。规则的 allow 不受影响；LLM 的 allow 在 §9.5 里经过同一条规则，同样消耗窗口。
+  - **经 shell 读进来的外部内容**（修订 8，P-R5；复审 R-5）：shell 调用里有动作带网络（`network` 为真或 `domains` 非空），而判决不是 deny 时，这次调用也算来源，在 PreToolUse 时与来源工具同样打标记（粘性位、窗口从 0 开始，来源名记作 `shell-network:<程序>`）。`gh issue view`、`curl`、`Invoke-RestMethod`、`npm view`、`ssh 主机 命令` 读进来的是外部可控的文字，"读 issue 然后修"是编码 agent 最常见的注入入口。**例外**：只搬代码、不把远端文字读进上下文的子命令不算，名单写在代码里，目前是 `git clone|fetch|pull|push`，以及包管理器的安装与同步类子命令（`pip install|download`、`uv sync|lock|add`、`npm install|ci`、`pnpm|yarn install|add`、`cargo build|fetch`、`go mod download` 等）；名单之外的一律算，名单漏掉的命令只会让会话多问（安全方向）。被接受的残余：安装脚本与 git 的输出里也可能有远端写的文字。代价：批准过一次网络读取的会话，之后开发工具都再问，它的写会给项目打标记。
+  - 窗口只被**用户批准、工具真的运行了的污染询问**消耗（修订 7，P-F6；修订 8，P-R3）：来源调用之后，会话一直是"被污染"的，直到 `taint.window` 个被污染一步（下一条，以及 §9.5 的同一条规则）从 allow 改成 ask 的调用被用户批准并执行。做法：污染一步改成 ask 时，记下这次调用的 `tool_use_id`；同一个会话、同一个 `tool_use_id` 的 PostToolUse 到达时才计一次，并删掉这一条。实测（2.1.304）：同一次调用的 PreToolUse 与 PostToolUse 带同一个 `tool_use_id`；询问被批准、工具运行之后 PostToolUse 照常触发，被拒的没有 PostToolUse（M0a 也观察到被拒绝的调用只有 PreToolUse）。所以被用户拒绝的、被自动拒绝的（`dontAsk`、没有人批准的 `-p`、看不到确认框的后台子 agent）询问都不计数，同一个被拒的动作问多少次都不会因为窗口结束而放行。别的调用（规则判定的、灰色却不敏感的、规则问或拒的、不敏感的）也都不计数。`tool_use_id` 缺失或不可用时不记（不计数，安全方向）；待确认的 id 每个会话最多 64 个，再多时丢掉最旧的（它们不计数，安全方向）。理由：按调用次数计数时，agent 读网页之后先发 `window` 次无害的 `Read`，窗口就过去了（X1 审查 F6）；按"改成 ask 的次数"计数时，被拒绝或没人看见的询问同样用掉窗口（复审 R-3）。
+  - 计数在 PostToolUse 时写：同一个会话里并行的调用可能都在窗口之内判，这是安全方向。来源调用自己按它之前的状态判；来源调用（PreToolUse 与 PostToolUse）让计数从 0 重新开始，并清掉待确认的 id。
+  - 因超时或守护进程繁忙、没经过审查就回答的来源调用，仍然打标记；没经过审查的 shell 调用也按来源记（来源名 `shell-unreviewed`：没人看过它是不是读远端文字，修订 8 实现时补的失败即关闭的一侧）。
+- **污染一步**：会话被污染期间，**不是规则给出的** allow（只有"什么都不碰的工具"这一种）遇到带 `taint.sensitive_tags` 的动作时，改为 ask（`decided_by: taint`），用户批准并执行之后消耗一次窗口。规则的 allow 不受影响；LLM 的 allow 在 §9.5 里经过同一条规则，同样消耗窗口。"什么都不碰的工具"（`ToolSearch`、`TodoWrite`）不带敏感标签，所以没有配置 LLM 后端时，污染一步实际上不会改出 ask，窗口也不会被消耗。
 - **粘性位与 M-2**：
-  - 匹配字段 `session_read_untrusted: true` 表示这个会话**任何时候**调用过 `taint.sources` 里的工具。它没有窗口，一直保留到换新的 `session_id`（`/clear` 会换新 id，resume 与 compact 不换）。状态未知时也算命中。只能用于 deny / ask 规则，加载时检查。
+  - 匹配字段 `session_read_untrusted: true` 表示这个会话**任何时候**调用过来源（`taint.sources` 里的工具、修订 8 起带网络的 shell 调用，以及按 P-R9 继承来的上下文）。它没有窗口，一直保留到换新的 `session_id`（`/clear` 会换新 id，resume 与 compact 不换；fork 换新 id，但按上面"带着旧上下文的新会话"从读过不可信内容开始）。状态未知时也算命中。只能用于 deny / ask 规则，加载时检查。
   - 默认与 strict 策略的 ask 规则 `ask-devtools-after-untrusted-content` 用它：会话读过网页、搜索结果或 MCP 返回值之后，开发工具预设里的工具（`pytest`、`ruff`、`mypy`、`black`、`isort`、`flake8`、`pylint`）一律再问，受信任的项目也一样。
   - 这就是上面"开发工具预设"一段里 M-2 所说的收紧。它写成 ask 规则，而不是 allow 规则上的条件：条件只会让命令变成灰色，而配置了后端时，灰色会交给 LLM 审计。
 - **项目上的标记**（修订 7，P-F1）：粘性位只在会话里，写进项目的东西却留在项目里：会话 A 读网页、写测试文件，会话 B 在同一个项目里运行 `pytest`，原来不问（X1 审查 F1）。所以：
-  - **打标记**：在读过不可信内容的会话里（粘性位为真，或状态未知），一次调用只要有一个动作的路径可能是写（访问方式是 `write` 或 `unknown`），就在 PreToolUse 时记下写到的位置：路径不确定在项目之外时记这个动作的项目目录；路径确定、而且不在项目之内时（写进别的目录、别的项目）记路径本身。和来源的标记一样，PreToolUse 记下的写随后可能被拒绝或没执行，这是安全方向。
+  - **打标记**：在读过不可信内容的会话里（粘性位为真，或状态未知），一次调用只要有一个动作的路径可能是写（访问方式是 `write` 或 `unknown`），就在 PreToolUse 时记下写到的位置：路径不确定在项目之外时记这个动作的项目目录；路径确定、而且不在项目之内时（写进别的目录、别的项目）记路径本身。会话的工作目录在项目之外时也一样（复审 R-1，已修）。和来源的标记一样，PreToolUse 记下的写随后可能被拒绝或没执行，这是安全方向。
+  - **看不到写路径的写**（修订 8，P-R6；复审 R-6）：同样在读过不可信内容的会话里，以下动作即使没有可见的写路径，也记它的项目目录（项目目录未知时与上一条一样不记）：规则没有放行的、带 `exec` 标签的动作（会运行代码，写到哪里都可能：`python gen.py`、`python -c "open(...)"`、`make generate`），以及带 `file_write` 标签却没有可写路径的动作；MCP 调用（相对路径的写）；会改工作区的 `git` 子命令（`stash pop|apply`、`checkout`、`restore`、`switch`、`apply`、`am`、`merge`、`pull`、`reset`、`cherry-pick`、`rebase`），其中 `git stash pop` 是规则直接放行的。**来源调用自己的写**：一次来源调用（包括 P-R5 的 shell 网络调用）按它之前的状态判，打标记却按它之后的状态：会话里第一个来源调用本身就带写路径时（写文件的 MCP 工具、`curl -o tests/x.py`），它的写也记。
+  - **写到项目之外的开发工具配置**（修订 8，P-R7；复审 R-7）：开发工具会从项目向上查找、或从别处读取的配置文件（`ask-python-tool-config-write` 名单里的文件，加上 `pyproject.toml`、`setup.cfg`、`tox.ini`、`conftest.py`、`ruff.toml`、`.ruff.toml`），写到项目之外时记它**所在的目录**，而不是文件本身：`~/pytest.ini` 记主目录，主目录下的项目都命中。其余项目之外的写仍记路径本身（全部改记目录会让写一个主目录下的文件就标记主目录下的所有项目）。**局限**：用户级的配置位置（`~/.config/mypy/config`、`%APPDATA%` 下的配置）与可编辑安装的兄弟项目（`pip install -e ../lib` 之后写 `../lib`）仍只记文件本身，读它们的项目看不到；这些写在会话 A 里本身要问。
   - **匹配字段** `project_written_after_untrusted: true`：动作的项目目录（以及解析链接之后的目录）里有被标记的位置，或者它本身在被标记的目录之下，就命中。标记状态读不出来时命中；项目目录未知时，只要有任何标记就命中。和粘性位一样只能用于 deny / ask 规则，加载时检查。
   - 默认与 strict 策略各加一条 ask 规则 `ask-devtools-after-untrusted-project-write`：开发工具预设里的工具在带标记的项目里一律再问，不管是哪个会话。
+  - **标记也进 LLM 路径**（修订 8，P-R2；复审 R-2）：上面的 ask 规则只管开发工具名单；名单之外会运行项目代码的命令（`npm test`、`make test`、`python -m unittest`、`tox`）是灰色，配置了 LLM 后端时会送审，而另一个会话没读过不可信内容，污染一步不适用，模型的 allow 就是结果。所以：一次灰色调用里有带 `exec` 标签的动作、而那个动作的项目带标记（与 `project_written_after_untrusted` 同样判，标记读不出来也算）时，这次调用不送 LLM 审计，直接 ask（`decided_by: gray-marked-project`，理由里写明项目带标记、没有送审，解除用 `boundkeep taint clear`），不按 `on_failure`。没有配置后端时没有变化（灰色本来就问）。
   - **解除**：只有用户在终端运行 `boundkeep taint clear <目录>`（或 `--all`）。它与 `trust add` 一样拒绝在 Claude Code 启动的进程里或没有真实控制台时运行，agent 对它的调用被 `deny-boundkeep-state-commands` 拒绝；`boundkeep taint list` 列出标记，`doctor` 提示有哪些。标记不按时间过期（时间可以被等过去），也不随会话清理删除。
   - 标记最多 1000 个位置；再多时记一个"所有位置"的标记（对每个项目都命中），直到用户解除。
-  - **局限**：只认得出写路径的写。运行代码的命令（`python gen.py`）与写文件的 MCP 工具，如果没有可见的写路径，它们写下的东西不打标记；这些命令在被污染的会话里本身是灰色（问用户，或经 LLM 审计，敏感时还经过污染一步）。
+  - **局限**：标记来自 boundkeep 看得到的调用。被规则直接放行、又不带写路径、也不在上面 git 名单里的命令写下的东西（例如开发工具自己生成的文件、缓存）不打标记；会话之外的写（用户自己的编辑器、别的进程）也不打。
   - `trusted_projects` 是否因此改为推荐设置，等这一条实现并复审之后由使用者决定。
 - **`risk_tags` 里的 `exec`**：除下面"命令解析原则"里列的情形外，以下几类也带 `exec`：表里没有的程序；整行看不懂的命令；会运行项目代码的包管理器与任务运行器（`npm`、`npx`、`pip`、`uv`、`cargo`、`go`、`make`、`gradle`、`dotnet` 等）；未知工具。MCP 调用带 `exec` 与 `network_egress`。这些标签只影响污染一步与发给模型的内容，不影响任何规则。
 - **没被完整分析的灰色调用不送审**：以下情况下，模型只能看到调用的一部分，它给的 allow 会盖住没人看过的部分：
@@ -417,11 +428,11 @@ risk_tags: ["network_egress"]   # network_egress | file_write | exec | secret_ac
 
 **污染升级规则（v0 粗粒度）**
 
-- `tainted` 表示：调用过 `taint.sources` 里的工具之后，污染一步改成 ask 的调用还不到 `taint.window` 个（修订 7；怎么计数见上面的 M3a 一段）。
+- `tainted` 表示：调用过来源（`taint.sources` 里的工具，修订 8 起还有带网络的 shell 调用）之后，被用户批准并执行了的污染询问还不到 `taint.window` 个（修订 7、修订 8；怎么计数见上面的 M3a 一段）。
 - `tainted` 期间，对 `taint.sensitive_tags` 中的动作，若判决为 `allow`（规则 allow 之外的，即由 LLM 或默认路径产生的 allow），降级为 `ask`。
 - 不随窗口结束的"读过不可信内容"另有粘性位 `session_read_untrusted`，只供 deny / ask 规则使用（见上面的 M3a 一段）。
 - 显式规则中的 `allow`（如项目内只读）不受污染降级影响。
-- 局限：来源只按工具名识别。通过 Bash 的 `curl` 读取网页、读取不可信的本地文件，v0 不会打污染标记；README 必须写明。
+- 局限：来源按工具名与 shell 调用里的网络动作识别（修订 8，P-R5）。读取不可信的本地文件（别人发来的补丁、下载目录里的文档、`git fetch` 之后的 `git log -p origin/...`），v0 不会打污染标记；README 必须写明。
 
 **命令解析原则**
 
@@ -461,7 +472,7 @@ llm_audit:
     api_key_env: BOUNDKEEP_LLM_API_KEY
 
 taint:
-  sources: [WebFetch, WebSearch, "mcp__*", ListMcpResourcesTool, ReadMcpResourceTool, ReadMcpResourceDirTool]
+  sources: [WebFetch, WebSearch, "mcp__*", ListMcpResourcesTool, ReadMcpResourceTool, ReadMcpResourceDirTool]   # 工具名；带网络的 shell 调用另外也算来源，不在这里列（修订 8，§7）
   window: 3                      # 来源调用之后，污染一步把 N 个调用改成 ask 之前都算被污染（1 到 1000，计数方式见 §7）
   sensitive_tags: [network_egress, file_write, exec, secret_access, config_tamper]
 
@@ -544,6 +555,8 @@ tests:                           # 策略的回归测试，`boundkeep test` 运�
 - `llm_audit.backend` 指定的后端必须有自己的配置块。`anthropic` 在 M3a 里还没有适配器：写了它，每个灰色动作都按 `on_failure` 处理（M3a）。
 - 匹配字段 `session_read_untrusted` 与 `project_written_after_untrusted` 只能用在 deny / ask 规则里，加载时检查；它们的含义见 §7 的 M3a 一段。
 - 默认 `taint.sources` 里读 MCP 资源的三个工具（修订 7，P-F2）：它们的名字不以 `mcp__` 开头，`mcp__*` 认不出；名字以 Claude Code 2.1.304 的 hook 实测为准（`docs/hook-behavior.md`）。改了来源要重新运行 `boundkeep init`，PostToolUse 的 matcher 才会包含新名字（PreToolUse 的 matcher 是 `*`，那一处立即生效）。
+- `taint.sources` 只列工具名。带网络的 shell 调用也是来源（修订 8，P-R5），它不由这个键控制，也不能在策略里关掉：它的例外名单在代码里，只会让更多调用算来源。
+- 配置或去掉 `llm_audit.backend` 之后要重新运行 `boundkeep init`：PostToolUse 的 matcher 随之在 `*` 与来源名单之间切换（修订 8，P-R3）。没重新运行时，被批准的污染询问对不上 PostToolUse，窗口不被消耗，会话一直被污染（多问，安全方向）；`doctor` 提示。
 - `rules[].platform` 与 `tests[].platform`（可选，`posix` / `windows` 的列表，缺省为全部）按常驻进程所在平台过滤；`boundkeep test --platform windows` 可以在任何平台上用 Windows 语义跑词法层的用例，依赖真实文件系统的用例只在对应平台运行。
 - `path_glob` 一律用正斜杠书写；在 Windows 上不区分大小写比较；`~` 指用户主目录（Windows 为 `%USERPROFILE%`）。输入路径先按 §5.1 规范化再匹配。
 - PowerShell 的 cmdlet 名、参数名不区分大小写；规则里只写规范名（§7）。
@@ -694,7 +707,9 @@ M3a 的补充（P4、P6）：
 | 带 LLM 审计的审查超过期限（M3a，P12） | 期限从提交时算，等于规则的 2 秒 + LLM 预算（`timeout_ms`，最多 6 秒）+ 0.5 秒，最长 8.5 秒，在 hook 客户端的 10 秒之内。超时后 `enforce` 下按 `on_failure`，`audit-only` 下与其他超时一样是 `ask`。因超时或繁忙没有审查就回答的来源调用，仍然打污染标记（§7） |
 | 会话状态库不可用（损坏、磁盘满、权限；M3a，P7） | 每个调用按"状态未知"判，即当作已污染：开发工具再问，LLM 对敏感动作的 allow 变成 ask。守护进程启动时在控制台说明原因，`ping` 状态带 `session=…`，`doctor` 提示怎样恢复 |
 | 灰色调用没被完整分析，或有请求装不下的输入（M3a，P11；修订 7，P-F34） | 不送 LLM 审计，直接 `ask`（`decided_by: gray-unanalysed`），不按 `on_failure`（§7） |
-| 项目上的标记读不出或写不进（修订 7，P-F1） | 读不出：`project_written_after_untrusted` 当作命中，开发工具再问；写不进：守护进程报告错误（`doctor` 与 `ping` 状态），那次调用照常判 |
+| 项目上的标记读不出或写不进（修订 7，P-F1） | 读不出：`project_written_after_untrusted` 当作命中，开发工具再问，带标记项目的 `exec` 灰色调用也不送审（修订 8，P-R2）；写不进：守护进程报告错误（`doctor` 与 `ping` 状态），那次调用照常判 |
+| PostToolUse 没到、失败或对不上（修订 8，P-R3） | 待确认的污染询问不计数，窗口不被消耗，会话保持被污染（多问，安全方向）。PostToolUse 的 matcher 与策略不一致时 `doctor` 提示 |
+| SessionStart 没到或失败（修订 8，P-R9） | 没有可以降级的决定。resume、compact、fork 出来的、库里没有的会话从干净状态开始：**失败即放行的一处**，`doctor` 检查 SessionStart 是否注册；守护进程不在时，那个会话的每次工具调用本来就会问 |
 | 策略文件解析失败 | `ask`；`boundkeep doctor` 报错 |
 | 命令无法解析 / 工具名未知 | 灰色地带 |
 | `mode: audit-only` | 只记录判决，不向 Claude Code 返回决定，沿用其原有权限流程 |
@@ -765,7 +780,7 @@ M3a 的补充（P4、P6）：
 M3a 的测量方式（P8，口径见 `docs/eval-methodology.md` 第 6 节，指标版本不变）：
 
 - **每次运行**：都测量全部不需要网络与密钥的配置（`rules-only` 与 `rules+taint`）。
-- **`rules+taint` 怎么模拟会话**：每个样本在自己的会话里判。标了 `tainted` 的样本，先收到一次对应来源工具的调用，所以落在窗口之内，粘性位也已置上。项目上的标记不模拟（修订 7）：它来自另一个会话之前的写，单个样本表达不了，评测里它总是"没有标记"。
+- **`rules+taint` 怎么模拟会话**：每个样本在自己的会话里判。标了 `tainted` 的样本，先收到一次对应来源工具的调用，所以落在窗口之内，粘性位也已置上。项目上的标记不模拟（修订 7）：它来自另一个会话之前的写，单个样本表达不了，评测里它总是"没有标记"。带网络的 shell 样本（修订 8，P-R5）给自己的会话打标记，但它自己按之前的状态判，所以它自己的判决不变；窗口按 `tool_use_id` 计数（P-R3）也不改变单个样本的判决。修订 8 实现之后照常重跑并报告差异。
 - **参考表"每个样本都在刚读过不可信内容的会话里"**：给出污染层对正常操作的代价上限。它不是消融行，也不是头条数字。
 - **量不到的**：跨多步的链（先写测试文件、再运行 pytest）只能由单元测试覆盖。
 
