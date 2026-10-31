@@ -71,7 +71,7 @@ rules:
 | `mcp_server` | MCP 工具的 server 名。**区分大小写**（`GitHub` 不是 `github`） |
 | `mcp_read_only: true` | 该动作是顶层 `mcp_read_only` 里声明过的 MCP 工具的调用，而且它的灰色原因**只有** `mcp-tool-not-reviewed`（参数里有命令、可能写入的 SQL、读不懂的 URL 等都会多一个原因）。只有带这个字段的 allow 规则能放行这样一个灰色动作；单独写它不满足 allow 规则必须点名工具或程序的检查 |
 | `session_read_untrusted: true` | （M3a）这个会话里**任何时候**调用过 `taint.sources` 里的工具（网页、搜索结果、MCP 的返回值进了 agent 的上下文）。没有窗口：粘住，直到会话结束（`/clear` 换新的 `session_id`；resume 与 compact 不换）。会话状态未知（没有 `session_id`、状态库坏了）算命中。**只能用在 deny / ask 规则里**（allow 规则写它加载报错：只在读过不可信内容之后才成立的 allow 放宽的正好是危险的情形）。`boundkeep test` 的用例用 `tainted: true` 模拟这种会话，`boundkeep explain --tainted` 同理 |
-| `project_written_after_untrusted: true` | （规格修订 7，P-F1）**任何**一个读过不可信内容的会话往这个动作的项目里写过东西：项目目录里有被标记的位置，或者项目本身在被标记的目录之下。标记在读过不可信内容的会话里打：动作的路径可能是写（访问方式 `write` 或 `unknown`）时，路径不确定在项目之外就记项目目录，确定在项目之外就记路径本身。标记不随会话结束、不按时间过期，只由用户在终端运行 `boundkeep taint clear` 解除（`boundkeep taint list` 列出，`doctor` 也提示）。标记读不出算命中；项目目录未知时，有任何标记就算命中。**只能用在 deny / ask 规则里**。`boundkeep test` 的用例用 `project_marked: true` 模拟带标记的项目 |
+| `project_written_after_untrusted: true` | （规格修订 7，P-F1）**任何**一个读过不可信内容的会话往这个动作的项目里写过东西：项目目录里有被标记的位置，或者项目本身在被标记的目录之下。标记在读过不可信内容的会话里打：动作的路径可能是写（访问方式 `write` 或 `unknown`）时，路径不确定在项目之外就记项目目录（会话的工作目录在项目之外时也一样），确定在项目之外就记路径本身。标记不随会话结束、不按时间过期，只由用户在终端运行 `boundkeep taint clear` 解除（`boundkeep taint list` 列出，`doctor` 也提示）。标记读不出算命中；项目目录未知时，有任何标记就算命中。**只能用在 deny / ask 规则里**。`boundkeep test` 的用例用 `project_marked: true` 模拟带标记的项目 |
 
 所有布尔字段只能写 `true`，列表不能为空。**任何 match 字段、`tool`、`platform` 都不能写成 null**（`key:` 后面留空、`null`、`~`）：缺省才表示"不限"，一个悄悄等价于缺省的 null 会让 `path_inside_project:` 这样的笔误把 allow 规则放宽。加载时报 `rules[0].match.path_inside_project: ... is null`，带行号。
 
