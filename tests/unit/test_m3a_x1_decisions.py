@@ -243,13 +243,29 @@ def manipulated() -> tuple[Any, Auditor, FakeBackend]:
     return pol, Auditor(pol.llm_audit, backend), backend
 
 
+def release(n: int) -> dict[str, Any]:
+    """A gray, sensitive call outside any project (inside one, revision 8 marks the project after
+    the first such call and keeps later ones from the model: test_m3a_rev8_window_fork)."""
+    call = bash("make release") | {"tool_use_id": f"toolu_{n}"}
+    return {k: v for k, v in call.items() if k not in ("cwd", "project_dir")}
+
+
+def ran(store: SessionStore, pol: Any, n: int) -> None:
+    """The PostToolUse of ``release(n)``: the user approved it and it ran (revision 8, P-R3)."""
+    payload = {"hook_event_name": "PostToolUse", "session_id": SID, "tool_name": "Bash"}
+    decide(payload | {"tool_use_id": f"toolu_{n}"}, pol, store=store, kind=protocol.EVENT_POST)
+
+
 def test_only_the_taint_steps_asks_use_up_the_window(store: SessionStore) -> None:
     pol, auditor, _backend = manipulated()
     assert pol.taint.window == 3
     decide(event("WebFetch", {"url": "https://example.invalid", "prompt": "p"}), pol, store=store)
     for i in range(20):  # padding: harmless calls use up nothing
         decide(event("Read", {"file_path": f"{PROJECT}/f{i}.py"}), pol, store=store)
-    outcomes = [decide(bash("make release"), pol, store=store, auditor=auditor) for _ in range(4)]
+    outcomes = []
+    for n in range(4):
+        outcomes.append(decide(release(n), pol, store=store, auditor=auditor))
+        ran(store, pol, n)
     assert [o.decision for o in outcomes[:3]] == ["ask"] * 3
     assert all(o.llm and "tainted-sensitive" in o.llm["steps"] for o in outcomes[:3])
     # the user was asked three times: the window is used up, the model's allow stands
@@ -271,11 +287,12 @@ def test_audit_only_asks_nobody_and_uses_up_nothing(store: SessionStore) -> None
 def test_a_new_source_call_restarts_the_used_up_window(store: SessionStore) -> None:
     pol, auditor, _backend = manipulated()
     post("WebFetch", store, pol)
-    for _ in range(3):
-        decide(bash("make release"), pol, store=store, auditor=auditor)
-    assert decide(bash("make release"), pol, store=store, auditor=auditor).decision == "none"
+    for n in range(3):
+        decide(release(n), pol, store=store, auditor=auditor)
+        ran(store, pol, n)
+    assert decide(release(3), pol, store=store, auditor=auditor).decision == "none"
     post("mcp__docs__search", store, pol)
-    assert decide(bash("make release"), pol, store=store, auditor=auditor).decision == "ask"
+    assert decide(release(4), pol, store=store, auditor=auditor).decision == "ask"
 
 
 def test_a_schema_1_database_is_migrated_and_every_window_starts_again(tmp_path: Path) -> None:

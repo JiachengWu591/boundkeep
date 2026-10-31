@@ -647,3 +647,14 @@ def taint_sources_to_matcher(sources: Sequence[str]) -> str:
         prefix = name.removesuffix("*")
         alternatives.append(prefix.replace(".", r"\.") + (".*" if name.endswith("*") else ""))
     return "^(?:" + "|".join(alternatives) + ")$"
+
+
+def post_matcher_for(policy: Policy) -> str:
+    """The PostToolUse matcher ``init`` writes for ``policy`` (PROJECT_SPEC.md §5, revision 8,
+    P-R3): ``*`` when an LLM backend is configured, because the taint window then counts an ask
+    when the PostToolUse of the same ``tool_use_id`` arrives, whatever the tool; otherwise the
+    taint sources (without a backend the taint step never asks, and every tool call would pay for
+    one more hook process for nothing). Raises ``PolicyError`` like ``taint_sources_to_matcher``."""
+    if policy.llm_audit.backend != "none":
+        return "*"
+    return taint_sources_to_matcher(policy.taint.sources)

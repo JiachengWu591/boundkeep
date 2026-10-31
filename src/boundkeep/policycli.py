@@ -239,10 +239,23 @@ class _FixedSession:
     ) -> SessionFacts:
         return self._facts
 
-    def tool_result(self, session_id: object, tool: object, *, sources: tuple[str, ...]) -> bool:
+    def tool_result(
+        self,
+        session_id: object,
+        tool: object,
+        *,
+        sources: tuple[str, ...],
+        tool_use_id: object = None,
+    ) -> bool:
         return True
 
-    def taint_asked(self, session_id: object) -> bool:
+    def source_seen(self, session_id: object, name: str) -> bool:
+        return False
+
+    def session_start(self, session_id: object, source: object) -> bool:
+        return False
+
+    def taint_asked(self, session_id: object, tool_use_id: object = None) -> bool:
         return False
 
     def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool:

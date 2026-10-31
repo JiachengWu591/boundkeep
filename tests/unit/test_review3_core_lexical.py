@@ -64,7 +64,10 @@ def w(tmp_path_factory: pytest.TempPathFactory) -> World:
 def _no_wall_clock_cut(monkeypatch: pytest.MonkeyPatch) -> None:
     # The pass is limited by wall-clock time (LEXICAL_TIME_BUDGET_S); on a loaded machine that cut
     # would make these checks flaky. The cut itself is tested on its own (test_the_wall_clock_cut).
+    # So is the whole review (TIME_BUDGET_S, 0.25 s): under load it ran out before the action
+    # budget and the 1400-command case saw budget:time (X1 re-review of the M3a fixes, report §6).
     monkeypatch.setattr(ev, "LEXICAL_TIME_BUDGET_S", 60.0)
+    monkeypatch.setattr(ev, "TIME_BUDGET_S", 60.0)
 
 
 def echoes(count: int) -> str:

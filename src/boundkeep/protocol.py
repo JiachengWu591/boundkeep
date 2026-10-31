@@ -40,8 +40,11 @@ EVENT_PRE = "pre"
 EVENT_POST = "post"
 EVENT_PROMPT = "prompt"
 EVENT_CONFIG = "config"
+# SessionStart (PROJECT_SPEC.md revision 8, P-R9). An older daemon refuses it as a bad request,
+# which the client answers by staying quiet, as for every event but PreToolUse and ConfigChange.
+EVENT_SESSION = "session"
 # What the hook client sends (one per Claude Code hook it is registered for) ...
-HOOK_EVENTS = frozenset({EVENT_PRE, EVENT_POST, EVENT_PROMPT, EVENT_CONFIG})
+HOOK_EVENTS = frozenset({EVENT_PRE, EVENT_POST, EVENT_PROMPT, EVENT_CONFIG, EVENT_SESSION})
 # ... plus a read-only probe used by ``boundkeep doctor``: answered, never logged.
 EVENT_PING = "ping"
 EVENTS = HOOK_EVENTS | {EVENT_PING}

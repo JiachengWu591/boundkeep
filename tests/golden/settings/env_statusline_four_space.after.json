@@ -95,6 +95,23 @@
                     }
                 ]
             }
+        ],
+        "SessionStart": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "C:\\Users\\张三\\My Tools\\.venv\\Scripts\\python.exe",
+                        "args": [
+                            "-I",
+                            "-S",
+                            "C:\\Users\\张三\\My Tools\\boundkeep\\src\\boundkeep\\hook_client.py",
+                            "session"
+                        ],
+                        "timeout": 10
+                    }
+                ]
+            }
         ]
     }
 }

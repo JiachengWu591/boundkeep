@@ -211,6 +211,7 @@ def test_init_writes_everything_it_promises_and_is_idempotent(machine: Machine) 
         "ConfigChange",
         "PostToolUse",
         "PreToolUse",
+        "SessionStart",
         "UserPromptSubmit",
     ]
     pre = settings["hooks"]["PreToolUse"][0]

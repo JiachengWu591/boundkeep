@@ -152,7 +152,7 @@ def test_init_pins_the_home_into_every_hook_entry(machine: Machine) -> None:
     for event, groups in settings["hooks"].items():
         args = groups[0]["hooks"][0]["args"]
         assert args[-3:-1] == ["--home", str(machine.home)], (event, args)
-        assert args[-1] in ("prompt", "pre", "post", "config")
+        assert args[-1] in ("prompt", "pre", "post", "config", "session")
 
 
 def test_doctor_warns_for_an_m0_install_without_a_pinned_home_and_fails_on_a_mismatch(

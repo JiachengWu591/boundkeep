@@ -663,7 +663,9 @@ class Daemon:
 
     def _mark_unreviewed(self, request: protocol.Request) -> None:
         """A PreToolUse that is answered without a review still marks a call of a taint source
-        (the user may approve it). In a thread of its own, best effort: the answer does not wait."""
+        (the user may approve it), and a shell call, which may read remote text: nobody looked
+        (revision 8, P-R5, the fail-closed side). In a thread of its own, best effort: the answer
+        does not wait."""
         payload = request.payload
         sources, _window = pipeline.taint_settings(self._state.policy)
         session = self._session
@@ -673,6 +675,8 @@ class Daemon:
                 session.tool_result(
                     payload.get("session_id"), payload.get("tool_name"), sources=sources
                 )
+                if payload.get("tool_name") in pipeline.SHELL_TOOLS:
+                    session.source_seen(payload.get("session_id"), "shell-unreviewed")
 
         with contextlib.suppress(Exception):
             threading.Thread(target=mark, name="boundkeep-taint-mark", daemon=True).start()

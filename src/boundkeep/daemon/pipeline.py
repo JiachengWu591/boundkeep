@@ -13,12 +13,16 @@ default an allow is "no decision" and Claude Code's own permission flow continue
 Session state (M3a): UserPromptSubmit stores the task intent (only while an LLM audit is configured
 and allowed to send it), PostToolUse marks a call of a taint source, and every PreToolUse is counted
 and judged in its session's taint state (``session.store``; a call of a source marks the session
-there too). Rules see that state through ``session_read_untrusted``; the taint step of
-PROJECT_SPEC.md §7 turns an allow that no rule made of a sensitive action into an ask while the
-session is tainted (the LLM's allows get the same step in ``audit.verdict``), and each such ask
-uses up one call of the taint window (revision 7, P-F6). A call of a session that read untrusted
-content marks the places it may write (``session.marks``; P-F1), which every session's rules see
-through ``project_written_after_untrusted``. Without a session layer (``boundkeep test``,
+there too, and so does a shell call that reads remote text, ``session.sources``; revision 8,
+P-R5). Rules see that state through ``session_read_untrusted``; the taint step of PROJECT_SPEC.md
+§7 turns an allow that no rule made of a sensitive action into an ask while the session is tainted
+(the LLM's allows get the same step in ``audit.verdict``), and each such ask uses up one call of
+the taint window once its tool ran: the PostToolUse of the same ``tool_use_id`` (revision 7, P-F6;
+revision 8, P-R3). A call of a session that read untrusted content marks the places it may write
+(``session.marks``; P-F1, P-R6, P-R7), which every session's rules see through
+``project_written_after_untrusted``; a gray call that runs code in such a project is not sent to
+the LLM (P-R2). SessionStart of a resumed, compacted or forked session the store does not know
+starts it as having read untrusted content (P-R9). Without a session layer (``boundkeep test``,
 ``explain``, the rules-only evaluation) every call is judged as in a fresh session.
 
 M0's canary is a built-in rule of ``policy.evaluate``. If the policy file is unusable, PreToolUse
@@ -48,9 +52,10 @@ from boundkeep.policy.schema import (
     Rule,
     escape_glob_literal,
 )
-from boundkeep.session.facts import FRESH, SessionFacts
+from boundkeep.session.facts import FRESH, SessionFacts, is_taint_source
 from boundkeep.session.intent import extract_intent
-from boundkeep.session.marks import written_locations
+from boundkeep.session.marks import marked, written_locations
+from boundkeep.session.sources import NETWORK_SOURCE_PREFIX, network_source
 
 SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
 MODE_ENFORCE = "enforce"
@@ -82,10 +87,19 @@ class SessionAccess(Protocol):
     ) -> SessionFacts: ...
 
     def tool_result(
-        self, session_id: object, tool: object, *, sources: tuple[str, ...]
+        self,
+        session_id: object,
+        tool: object,
+        *,
+        sources: tuple[str, ...],
+        tool_use_id: object = None,
     ) -> bool: ...
 
-    def taint_asked(self, session_id: object) -> bool: ...
+    def source_seen(self, session_id: object, name: str) -> bool: ...
+
+    def session_start(self, session_id: object, source: object) -> bool: ...
+
+    def taint_asked(self, session_id: object, tool_use_id: object = None) -> bool: ...
 
     def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool: ...
 
@@ -632,6 +646,19 @@ def unshown_input(actions: Sequence[Action]) -> str | None:
     return None
 
 
+def runs_in_marked_project(actions: Sequence[Action], facts: SessionFacts) -> bool:
+    """An action that runs code (``exec``) is in a project with a mark, read as the rule field
+    ``project_written_after_untrusted`` reads it (marks that could not be read count). Such a
+    gray call is not sent to the LLM audit (revision 8, P-R2)."""
+    if facts.marks_known and not facts.marks:
+        return False
+    return any(
+        "exec" in action.risk_tags
+        and (not facts.marks_known or marked(action.project, action.project_resolved, facts.marks))
+        for action in actions
+    )
+
+
 def taint_record(facts: SessionFacts) -> dict[str, Any]:
     """The session's taint state as it goes into the audit log (names of source tools only)."""
     record: dict[str, Any] = {"tainted": facts.tainted, "read_untrusted": facts.read_untrusted}
@@ -671,7 +698,21 @@ def _finish(
 ) -> Decision:
     decision, reason, decided_by = _from_verdict(result.verdict, policy)
     llm: Mapping[str, Any] | None = None
-    if result.verdict.decision == "gray" and auditor is not None:
+    if (
+        result.verdict.decision == "gray"
+        and auditor is not None
+        and runs_in_marked_project(result.actions, facts)
+    ):
+        # P-R2: the dev-tool rule only names its tools; other commands that run the project's
+        # code (npm test, make test) would be the model's to allow in a session that read nothing
+        reason = (
+            "boundkeep: no rule decides this action, it runs code in a project that a session "
+            "wrote after reading untrusted content; asking (not sent to the LLM audit; the user "
+            "can clear the mark with 'boundkeep taint clear')"
+        )
+        decided_by = "gray-marked-project"
+        llm = {"backend": policy.llm_audit.backend, "outcome": "not-sent", "detail": "marked"}
+    elif result.verdict.decision == "gray" and auditor is not None:
         unseen = incomplete_analysis(result.actions)
         hidden = unshown_input(result.actions) if unseen is None else None
         if unseen is not None or hidden is not None:
@@ -767,8 +808,15 @@ def decide(
     if event == protocol.EVENT_POST:
         if session is not None:
             session.tool_result(
-                payload.get("session_id"), payload.get("tool_name"), sources=sources
+                payload.get("session_id"),
+                payload.get("tool_name"),
+                sources=sources,
+                tool_use_id=payload.get("tool_use_id"),
             )
+        return Decision(protocol.DECISION_NONE, "", "no-decision-for-event")
+    if event == protocol.EVENT_SESSION:
+        if session is not None:
+            session.session_start(payload.get("session_id"), payload.get("source"))
         return Decision(protocol.DECISION_NONE, "", "no-decision-for-event")
     if event != protocol.EVENT_PRE:
         return Decision(protocol.DECISION_NONE, "", "no-decision-for-event")
@@ -801,24 +849,39 @@ def decide(
         scan_disk=scan_disk,
         session=facts,
     )
-    if session is not None and facts.read_untrusted:
+    tool = payload.get("tool_name")
+    # P-R5: a shell call that reads remote text is a source by what it does (not when it is denied)
+    network = network_source(result.actions) if result.verdict.decision != "deny" else None
+    new_sources = [f"{NETWORK_SOURCE_PREFIX}{network}"] if network is not None else []
+    if isinstance(tool, str) and is_taint_source(tool, sources):
+        new_sources.append(tool)
+    if session is not None and (facts.read_untrusted or new_sources):
         # P-F1: what this session writes stays in the project after the session (marked at
-        # PreToolUse like a source call: a write that is then refused is the safe direction)
-        places = written_locations(result.actions)
+        # PreToolUse like a source call: a write that is then refused is the safe direction).
+        # A source call is judged in the state before it but marks in the state after it, so its
+        # own write counts (revision 8, P-R6).
+        decisions = {v.index: v.decision for v in result.verdict.actions}
+        places = written_locations(
+            result.actions, tuple(decisions.get(i) for i in range(len(result.actions)))
+        )
         if places:
-            session.mark_written(places, sources=facts.sources)
+            session.mark_written(places, sources=(*facts.sources, *new_sources))
     decision = _finish(
         result,
         mode,
         policy,
         facts=facts,
         auditor=auditor if policy.llm_audit.backend != "none" else None,
-        tool=payload.get("tool_name"),
+        tool=tool,
         home=home,
         env=env,
         taint=taint,
     )
     if session is not None and mode == MODE_ENFORCE and used_taint_window(result, decision):
-        # P-F6: only an ask the user actually gets uses up the window (audit-only asks nobody)
-        session.taint_asked(payload.get("session_id"))
+        # P-F6: only an ask the user actually gets uses up the window (audit-only asks nobody);
+        # P-R3: and only once its tool ran, when the PostToolUse of this tool_use_id arrives
+        session.taint_asked(payload.get("session_id"), payload.get("tool_use_id"))
+    if session is not None and network is not None and decision.decision != protocol.DECISION_DENY:
+        # after the verdict: an LLM deny stops the call too (in audit-only mode it runs)
+        session.source_seen(payload.get("session_id"), new_sources[0])
     return decision

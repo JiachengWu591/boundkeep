@@ -97,6 +97,7 @@ class HookTimeouts:
     pre: int = 15
     post: int = 10
     config: int = 10
+    session: int = 10
 
 
 _DEFAULT_TIMEOUTS: Final = HookTimeouts()  # one shared frozen default (ruff B008)
@@ -111,6 +112,7 @@ MIN_TIMEOUTS_S: Final = {
     "PreToolUse": 11,
     "PostToolUse": 6,
     "ConfigChange": 6,
+    "SessionStart": 6,
 }
 
 _BATCH_SUFFIXES: Final = (".cmd", ".bat")
@@ -167,9 +169,11 @@ def build_hook_groups(
 ) -> dict[str, dict[str, Any]]:
     """Event name -> the ONE matcher group boundkeep installs for it.
 
-    UserPromptSubmit and ConfigChange take no matcher (the shapes verified in real Claude Code
-    2.1.291, experiments/lab_setup.py); PreToolUse uses ``*`` so unknown tool names still reach the
-    daemon, which treats them as gray; PostToolUse uses ``post_matcher`` (from the policy's
+    UserPromptSubmit, ConfigChange and SessionStart take no matcher (the shapes verified in real
+    Claude Code 2.1.291 and 2.1.304, experiments/lab_setup.py; a SessionStart matcher would filter
+    the ``source``, and every source counts); PreToolUse uses ``*`` so unknown tool names still
+    reach the daemon, which treats them as gray; PostToolUse uses ``post_matcher``
+    (``policy.loader.post_matcher_for``: ``*`` with an LLM backend, else the policy's
     ``taint.sources``). An empty matcher means "all tools" to Claude Code, so it is refused rather
     than passed through.
 
@@ -187,6 +191,7 @@ def build_hook_groups(
         "PreToolUse": timeouts.pre,
         "PostToolUse": timeouts.post,
         "ConfigChange": timeouts.config,
+        "SessionStart": timeouts.session,
     }
     groups: dict[str, dict[str, Any]] = {}
     for event, sub in SUBCOMMANDS.items():
@@ -516,6 +521,9 @@ class InstallRecord:
     # no baseline of command-running keys and foreign hooks (claude_settings.watched_fingerprints).
     hook_files: tuple[HookFile, ...] = ()
     watched: tuple[tuple[str, str], ...] | None = None
+    # Revision 8: the Claude Code events whose entries init wrote. None for an older record, which
+    # had ``ownhook.BASE_EVENTS`` (no SessionStart); ``ownhook.required_events`` reads it.
+    events: tuple[str, ...] | None = None
 
 
 def _strip_extended_prefix(path: str) -> str:
@@ -583,7 +591,16 @@ def _record_from_json(item: object, path: str) -> InstallRecord:
         installed_at=strings["installed_at"],
         hook_files=_hook_files_from_json(item.get("hook_files"), bad),
         watched=_watched_from_json(item.get("watched"), bad),
+        events=_events_from_json(item.get("events"), bad),
     )
+
+
+def _events_from_json(value: object, bad: Any) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(e, str) for e in value):
+        raise bad("events must be a list of strings")
+    return tuple(value)
 
 
 def _hook_files_from_json(value: object, bad: Any) -> tuple[HookFile, ...]:
@@ -648,6 +665,8 @@ def _record_to_json(r: InstallRecord) -> dict[str, Any]:
         item["hook_files"] = [{"path": f.path, "sha256": f.sha256} for f in r.hook_files]
     if r.watched is not None:
         item["watched"] = dict(r.watched)
+    if r.events is not None:
+        item["events"] = list(r.events)
     return item
 
 
@@ -710,6 +729,7 @@ def upsert_record(records: Sequence[InstallRecord], record: InstallRecord) -> li
                     installed_at=record.installed_at,
                     hook_files=record.hook_files,
                     watched=record.watched,
+                    events=record.events,
                 )
             )
             placed = True
@@ -986,6 +1006,7 @@ _SAMPLE_EVENTS: Final[dict[str, bytes]] = {
             "file_path": "C:\\boundkeep-selfcheck\\.claude\\settings.local.json",
         }
     ),
+    "session": _sample({"hook_event_name": "SessionStart", "source": "startup"}),
 }
 _PRE_DECISIONS: Final = frozenset({"allow", "deny", "ask", "defer"})
 _EXCERPT_CHARS: Final = 300

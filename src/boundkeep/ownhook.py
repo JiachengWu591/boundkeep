@@ -35,7 +35,24 @@ SUBCOMMANDS = {
     "PreToolUse": "pre",
     "PostToolUse": "post",
     "ConfigChange": "config",
+    "SessionStart": "session",  # PROJECT_SPEC.md revision 8, P-R9
 }
+# The events every install has had since M1. An install record from before revision 8 names no
+# events (it had these); SessionStart is required only where the record says init wrote it, so an
+# older install is not called altered (which would block every settings change) before it is
+# initialized again.
+BASE_EVENTS = ("UserPromptSubmit", "PreToolUse", "PostToolUse", "ConfigChange")
+
+
+def required_events(recorded: object) -> tuple[str, ...]:
+    """The events whose entries must be present for an install record's ``events`` value: the
+    base events always, and the recorded ones we know (a missing or malformed value adds none)."""
+    extra: list[str] = []
+    if isinstance(recorded, (list, tuple)):
+        extra = [e for e in recorded if isinstance(e, str) and e in SUBCOMMANDS]
+    return tuple(e for e in SUBCOMMANDS if e in BASE_EVENTS or e in extra)
+
+
 HOOK_SCRIPT_NAME = "hook_client.py"
 INVALID_MATCHER = "<not a string>"  # reported for a "matcher" that is not a string
 LAUNCHER_NAMES = frozenset({"boundkeep-hook", "boundkeep-hook.exe"})

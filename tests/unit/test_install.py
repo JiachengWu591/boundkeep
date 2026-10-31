@@ -95,6 +95,7 @@ def test_build_hook_groups_shapes(cmd: HookCommand) -> None:
     assert list(groups) == EVENTS
     assert "matcher" not in groups["UserPromptSubmit"]
     assert "matcher" not in groups["ConfigChange"]
+    assert "matcher" not in groups["SessionStart"]
     assert groups["PreToolUse"]["matcher"] == "*"
     assert groups["PostToolUse"]["matcher"] == POST
     expected_timeouts = {
@@ -102,6 +103,7 @@ def test_build_hook_groups_shapes(cmd: HookCommand) -> None:
         "PreToolUse": 15,
         "PostToolUse": 10,
         "ConfigChange": 10,
+        "SessionStart": 10,
     }
     for event, group in groups.items():
         assert set(group) <= {"matcher", "hooks"}
@@ -139,9 +141,11 @@ def test_path_with_spaces_and_chinese_is_kept_verbatim_without_quotes() -> None:
 
 def test_custom_timeouts() -> None:
     groups = build_hook_groups(
-        PY_CMD, post_matcher=POST, timeouts=HookTimeouts(prompt=6, pre=12, post=7, config=8)
+        PY_CMD,
+        post_matcher=POST,
+        timeouts=HookTimeouts(prompt=6, pre=12, post=7, config=8, session=9),
     )
-    assert [groups[e]["hooks"][0]["timeout"] for e in EVENTS] == [6, 12, 7, 8]
+    assert [groups[e]["hooks"][0]["timeout"] for e in EVENTS] == [6, 12, 7, 8, 9]
 
 
 @pytest.mark.parametrize("bad", [0, -1])
@@ -246,7 +250,14 @@ def test_merge_appends_after_users_own_hooks_without_touching_them() -> None:
     assert hooks["PostToolUse"][0] == USER_POST
     assert hooks["PostToolUse"][1] == groups_for()["PostToolUse"]
     assert hooks["Stop"] == USER_HOOKS["hooks"]["Stop"]
-    assert list(hooks) == ["PreToolUse", "PostToolUse", "Stop", "UserPromptSubmit", "ConfigChange"]
+    assert list(hooks) == [
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+        "UserPromptSubmit",
+        "ConfigChange",
+        "SessionStart",
+    ]
     assert set(report.added) == set(EVENTS)
     assert report.replaced == ()
 
@@ -267,6 +278,7 @@ def test_old_entries_at_a_different_python_path_are_replaced_in_place() -> None:
             "PostToolUse": [old["PostToolUse"][0], USER_POST],
             "UserPromptSubmit": old["UserPromptSubmit"],
             "ConfigChange": old["ConfigChange"],
+            "SessionStart": old["SessionStart"],
         }
     }
     merged, report = merge_hooks(settings, groups_for(PY_CMD))
@@ -499,7 +511,7 @@ def test_merge_then_remove_restores_the_original(name: str, cmd: HookCommand) ->
 def test_remove_counts_each_entry_and_drops_empty_containers() -> None:
     merged, _ = merge_hooks({"model": "x"}, groups_for())
     restored, removed = remove_hooks(merged)
-    assert removed == 4
+    assert removed == 5
     assert restored == {"model": "x"}
     assert "hooks" not in restored
 
@@ -534,7 +546,7 @@ def test_remove_is_idempotent_and_does_not_mutate() -> None:
     once, n1 = remove_hooks(merged)
     twice, n2 = remove_hooks(once)
     assert same(merged, snapshot)
-    assert (n1, n2) == (4, 0)
+    assert (n1, n2) == (5, 0)
     assert same(once, twice)
 
 
@@ -1080,7 +1092,7 @@ def test_hang_times_out_without_raising_and_in_bounded_time(tmp_path: Path) -> N
 def test_nonexistent_executable_is_not_ok_and_does_not_raise(tmp_path: Path) -> None:
     cmd = HookCommand(str(tmp_path / "no-such-dir" / "boundkeep-hook.exe"))
     results = check(cmd)
-    assert len(results) == 8
+    assert len(results) == 10
     assert not any(r.ok for r in results)
     assert all(r.exit_code is None for r in results)
     assert all("cannot launch" in r.detail for r in results)
@@ -1110,7 +1122,7 @@ def test_python_env_variables_are_removed_in_the_second_variant(tmp_path: Path) 
     results = check(cmd, env=env)
     inherited = [r for r in results if r.env_variant == "inherited"]
     clean = [r for r in results if r.env_variant == "no-python-env"]
-    assert len(inherited) == len(clean) == 4
+    assert len(inherited) == len(clean) == 5
     assert not any(r.ok for r in inherited)  # the hook notices PYTHON* and fails
     assert all(r.ok for r in clean), [r.detail for r in clean if not r.ok]
 
@@ -1123,8 +1135,8 @@ def test_env_none_uses_the_process_environment(
             monkeypatch.delenv(name)
     monkeypatch.setenv("PYTHONBK", "1")
     results = run_self_check(make_hook(tmp_path, "envnone", fail_on_python_env=True))
-    assert [r.ok for r in results if r.env_variant == "inherited"] == [False] * 4
-    assert [r.ok for r in results if r.env_variant == "no-python-env"] == [True] * 4
+    assert [r.ok for r in results if r.env_variant == "inherited"] == [False] * 5
+    assert [r.ok for r in results if r.env_variant == "no-python-env"] == [True] * 5
 
 
 def test_details_never_contain_environment_values(tmp_path: Path) -> None:
@@ -1242,7 +1254,7 @@ def test_golden_merge_and_remove(tmp_path: Path, case: str, variant: str) -> Non
     after = render_settings(doc, merged)
     assert after == expected_bytes(after_lf, variant)  # BYTES, including style and no BOM
     assert not report.unchanged
-    assert count_own(merged) == 4
+    assert count_own(merged) == 5
     assert json.loads(after.decode("utf-8")) == merged
 
     path.write_bytes(after)
@@ -1252,7 +1264,7 @@ def test_golden_merge_and_remove(tmp_path: Path, case: str, variant: str) -> Non
     assert render_settings(doc_after, again) == after
 
     restored, removed = remove_hooks(doc_after.data)
-    assert removed == 4
+    assert removed == 5
     assert render_settings(doc_after, restored) == expected_bytes(removed_lf, variant)
     assert restored == strip_own(doc.data) or same(restored, strip_own(doc.data))
 
@@ -1282,7 +1294,7 @@ def test_golden_before_files_that_are_canonical_round_trip_exactly() -> None:
 def test_golden_stale_case_replaces_in_place_and_drops_duplicates() -> None:
     doc = load_settings(str(GOLDEN / "stale_boundkeep_entries.before.json"))
     merged, report = merge_hooks(doc.data, groups_for(GOLDEN_CMD))
-    assert report.added == ("ConfigChange",)
+    assert report.added == ("ConfigChange", "SessionStart")
     assert set(report.replaced) == {"UserPromptSubmit", "PreToolUse", "PostToolUse"}
     pre = merged["hooks"]["PreToolUse"]
     assert [g["matcher"] for g in pre] == ["Bash", "*", "Read"]  # ours kept the 2nd position
@@ -1357,7 +1369,7 @@ def test_self_check_never_accepts_a_batch_file_command(command: str) -> None:
     results = run_self_check(
         HookCommand(command, ("-I", "-S", "C:\\tools\\boundkeep\\hook_client.py")), env=base_env()
     )
-    assert len(results) == 8
+    assert len(results) == 10
     assert not any(r.ok for r in results)
     assert all(r.exit_code is None for r in results)
     assert all("EINVAL" in r.detail and "cannot launch" in r.detail for r in results)
@@ -1418,9 +1430,11 @@ def test_timeouts_at_the_minimum_are_accepted_and_intact() -> None:
     from boundkeep import hook_main
 
     groups = build_hook_groups(
-        PY_CMD, post_matcher=POST, timeouts=HookTimeouts(prompt=6, pre=11, post=6, config=6)
+        PY_CMD,
+        post_matcher=POST,
+        timeouts=HookTimeouts(prompt=6, pre=11, post=6, config=6, session=6),
     )
-    assert [groups[e]["hooks"][0]["timeout"] for e in EVENTS] == [6, 11, 6, 6]
+    assert [groups[e]["hooks"][0]["timeout"] for e in EVENTS] == [6, 11, 6, 6, 6]
     assert all(hook_main.entry_intact(g["hooks"][0], SUBCOMMANDS[e]) for e, g in groups.items())
 
 
@@ -1622,7 +1636,7 @@ def test_the_deepest_document_load_settings_accepts_can_be_merged_rendered_and_r
     merged, _ = merge_hooks(doc.data, groups_for())
     out = render_settings(doc, merged)
     restored, removed = remove_hooks(load_settings_from(tmp_path, out).data)
-    assert removed == 4
+    assert removed == 5
     assert same(restored, doc.data)
 
 
@@ -1700,5 +1714,5 @@ def test_pre_existing_empty_hook_containers_are_dropped_by_merge_then_remove(
 ) -> None:
     merged, _ = merge_hooks(original, groups_for())
     restored, removed = remove_hooks(merged)
-    assert removed == 4
+    assert removed == 5
     assert restored == {}

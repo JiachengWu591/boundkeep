@@ -1,24 +1,29 @@
 """Session state in SQLite (WAL): taint marks and the task intent, per Claude Code ``session_id``.
 
-What is stored, and nothing else: per session when it was first and last seen, how many calls the
-taint step has turned into an ask since the latest call of a taint source (NULL: no source so far)
-and the names of the source tools (at most ``MAX_SOURCES``); and, only while an LLM audit is
+What is stored, and nothing else: per session when it was first and last seen, how many asks of
+the taint step the user approved and saw run since the latest call of a taint source (NULL: no
+source so far), the names of the sources (at most ``MAX_SOURCES``) and the ``tool_use_id`` of the
+asks still waiting for their PostToolUse (``pending_asks``, at most ``MAX_PENDING_ASKS`` per
+session; revision 8, P-R3); and, only while an LLM audit is
 configured, the user's latest prompts as ``intent.extract_intent`` leaves them (IDE blocks removed,
 pasted text left out, secrets redacted, cut). Apart from the sessions, the places written by
 sessions that read untrusted content (``session.marks``: canonical keys of project directories or
 paths, at most ``MAX_MARKS``), with when they were marked and the names of the source tools. No
 tool input, no tool output, no file content.
 
-Taint (PROJECT_SPEC.md §7, revision 7): a session is *tainted* from a call of a taint source until
-the taint step has turned ``window`` calls into an ask (``taint_asked``; P-F6: harmless calls do not
-use the window up); a session has *read untrusted content* once any source was called (sticky: the
-window does not end it, only a new session does: ``/clear`` gives a new session_id, resume and
-compact keep it, docs/hook-behavior.md E9). A source is marked when its PreToolUse arrives and again
-when its PostToolUse does: the hook client drops a failed PostToolUse silently (it has no decision
-to degrade to), so marking only there would fail open; marking at PreToolUse may count a call that
-is then refused, which is the safe direction. Project marks (``mark_written``; P-F1) outlive the
-sessions: cleanup leaves them, only ``clear_marks`` (the user's ``boundkeep taint clear``) removes
-them.
+Taint (PROJECT_SPEC.md §7, revisions 7 and 8): a session is *tainted* from a call of a taint
+source until ``window`` asks of the taint step were approved and their tools ran (``taint_asked``
+records the ask, the PostToolUse of the same ``tool_use_id`` counts it; P-F6: harmless calls do not
+use the window up; P-R3: refused or unseen asks do not either); a session has *read untrusted
+content* once any source was called (sticky: the window does not end it, only a new session does:
+``/clear`` gives a new session_id, resume and compact keep it, docs/hook-behavior.md E9; a fork or a
+resume the store does not know starts as having read it, ``session_start``, P-R9). A source is also
+a shell call that reads remote text (``source_seen``, P-R5). A source is marked when its PreToolUse
+arrives and again when its PostToolUse does: the hook client drops a failed PostToolUse silently (it
+has no decision to degrade to), so marking only there would fail open; marking at PreToolUse may
+count a call that is then refused, which is the safe direction. Project marks (``mark_written``;
+P-F1) outlive the sessions: cleanup leaves them, only ``clear_marks`` (the user's ``boundkeep taint
+clear``) removes them.
 
 Concurrency: one connection and one lock per store; every read-modify-write runs in a ``BEGIN
 IMMEDIATE`` transaction, so the call counter of parallel tool calls never loses an update, also
@@ -52,7 +57,7 @@ from dataclasses import dataclass, replace
 from boundkeep.session.facts import UNKNOWN, SessionFacts, is_taint_source
 from boundkeep.session.marks import ALL_LOCATIONS, MAX_MARKS, location_key, within
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 RETENTION_S = 30 * 24 * 3600
 MAX_SESSIONS = 5000
 MAX_SOURCES = 16
@@ -66,7 +71,22 @@ TOUCH_EVERY_S = 3600.0  # last_seen of a session that needs no other write is re
 # (policy.schema.MAX_TAINT_WINDOW, 1000; a unit test keeps the two in step) it changes nothing.
 # Not imported: the policy package imports the matcher, which imports session.facts.
 COUNT_CAP = 1001
+MAX_PENDING_ASKS = 64  # asks of one session still waiting for their PostToolUse (P-R3)
+MAX_TOOL_USE_ID_CHARS = 128
+# SessionStart sources of a session with a fresh context; any other (resume, compact, fork, a
+# value we do not know) carries an old one (revision 8, P-R9; docs/hook-behavior.md)
+FRESH_SESSION_SOURCES = frozenset({"startup", "clear"})
+INHERITED_PREFIX = "inherited:"
 
+_PENDING_TABLE = (
+    "CREATE TABLE IF NOT EXISTS pending_asks ("
+    " session_id TEXT NOT NULL,"
+    " tool_use_id TEXT NOT NULL,"
+    " seq INTEGER NOT NULL,"
+    " at REAL NOT NULL,"
+    " PRIMARY KEY (session_id, tool_use_id)"
+    ") WITHOUT ROWID"
+)
 _MARKS_TABLE = (
     "CREATE TABLE IF NOT EXISTS project_marks ("
     " location TEXT PRIMARY KEY,"
@@ -92,6 +112,7 @@ _SCHEMA = (
     " PRIMARY KEY (session_id, seq)"
     ") WITHOUT ROWID",
     _MARKS_TABLE,
+    _PENDING_TABLE,
 )
 # Schema 1 counted every call since the latest source; schema 2 counts the taint step's asks
 # (revision 7, P-F6). An old count says nothing about asks, so every session that read untrusted
@@ -101,6 +122,9 @@ _MIGRATE_1_TO_2 = (
     "UPDATE sessions SET taint_asks = 0 WHERE taint_asks IS NOT NULL",
     _MARKS_TABLE,
 )
+# Schema 3 counts an ask once its tool ran (revision 8, P-R3): the asks waiting for that. The
+# counts of schema 2 are kept: they are at most what schema 3 would have counted.
+_MIGRATE_2_TO_3 = (_PENDING_TABLE,)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +141,17 @@ def usable_session_id(value: object) -> str | None:
     if (
         isinstance(value, str)
         and 0 < len(value) <= MAX_SESSION_ID_CHARS
+        and value.isprintable()
+        and value == value.strip()
+    ):
+        return value
+    return None
+
+
+def _usable_tool_use_id(value: object) -> str | None:
+    if (
+        isinstance(value, str)
+        and 0 < len(value) <= MAX_TOOL_USE_ID_CHARS
         and value.isprintable()
         and value == value.strip()
     ):
@@ -197,7 +232,7 @@ class SessionStore:
         # free pages; the database is small, so the extra writes cost nothing that matters
         conn.execute("PRAGMA secure_delete=ON")
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, SCHEMA_VERSION):
+        if version not in (0, 1, 2, SCHEMA_VERSION):
             raise SessionStoreError(
                 f"the session database has schema version {version}, this boundkeep knows "
                 f"{SCHEMA_VERSION}: stop the daemon and delete {os.path.basename(self._path)}*"
@@ -210,8 +245,11 @@ class SessionStore:
                 if current == 0:
                     for statement in _SCHEMA:
                         conn.execute(statement)
-                elif current == 1:
+                if current == 1:
                     for statement in _MIGRATE_1_TO_2:
+                        conn.execute(statement)
+                if current in (1, 2):
+                    for statement in _MIGRATE_2_TO_3:
                         conn.execute(statement)
                 conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                 conn.execute("COMMIT")
@@ -301,6 +339,7 @@ class SessionStore:
                         "taint_asks = 0, sources = excluded.sources",
                         (sid, now, now, _with_source(current, name)),
                     )
+                    conn.execute("DELETE FROM pending_asks WHERE session_id = ?", (sid,))
                 elif row is not None and now - float(row[2]) >= TOUCH_EVERY_S:
                     conn.execute(
                         "UPDATE sessions SET last_seen = ? WHERE session_id = ?", (now, sid)
@@ -321,18 +360,31 @@ class SessionStore:
             self._failed("read marks", exc)
             return UNKNOWN
 
-    def taint_asked(self, session_id: object) -> bool:
-        """The taint step turned one of this session's calls into an ask: one call of the window
-        is used up (revision 7, P-F6). Nothing to count when no source was called."""
+    def taint_asked(self, session_id: object, tool_use_id: object = None) -> bool:
+        """The taint step turned this call of the session into an ask (revision 7, P-F6). It uses
+        up one call of the window only once its tool ran: the PostToolUse of the same
+        ``tool_use_id`` (``tool_result``; revision 8, P-R3). An unusable id is not recorded, so
+        that ask never counts; beyond ``MAX_PENDING_ASKS`` the oldest are dropped (not counted).
+        False when nothing was recorded."""
         sid = usable_session_id(session_id)
-        if sid is None:
+        tuid = _usable_tool_use_id(tool_use_id)
+        if sid is None or tuid is None:
             return False
         try:
+            now = self._clock()
             with self._transaction() as conn:
+                last = conn.execute(
+                    "SELECT COALESCE(MAX(seq), 0) FROM pending_asks WHERE session_id = ?", (sid,)
+                ).fetchone()[0]
                 conn.execute(
-                    "UPDATE sessions SET taint_asks = taint_asks + 1 WHERE session_id = ? "
-                    "AND taint_asks IS NOT NULL AND taint_asks < ?",
-                    (sid, COUNT_CAP),
+                    "INSERT INTO pending_asks (session_id, tool_use_id, seq, at) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT (session_id, tool_use_id) DO UPDATE SET "
+                    "seq = excluded.seq, at = excluded.at",
+                    (sid, tuid, last + 1, now),
+                )
+                conn.execute(
+                    "DELETE FROM pending_asks WHERE session_id = ? AND seq <= ?",
+                    (sid, last + 1 - MAX_PENDING_ASKS),
                 )
             return True
         except Exception as exc:  # noqa: BLE001 - reported through last_error
@@ -416,12 +468,81 @@ class SessionStore:
             self._failed("clear marks", exc)
             return None
 
-    def tool_result(self, session_id: object, tool: object, *, sources: tuple[str, ...]) -> bool:
-        """A PostToolUse: a source's result marks the session again (the window restarts now)."""
+    def tool_result(
+        self,
+        session_id: object,
+        tool: object,
+        *,
+        sources: tuple[str, ...],
+        tool_use_id: object = None,
+    ) -> bool:
+        """A PostToolUse: a source's result marks the session again (the window restarts now);
+        the result of an ask of the taint step (``taint_asked`` with this ``tool_use_id``) uses up
+        one call of the window: the user approved it and the tool ran (revision 8, P-R3)."""
         sid = usable_session_id(session_id)
         name = tool if isinstance(tool, str) else ""
-        if sid is None or not is_taint_source(name, sources):
-            return sid is not None
+        if sid is None:
+            return False
+        if is_taint_source(name, sources):
+            return self._mark_source(sid, name, "tool result")
+        tuid = _usable_tool_use_id(tool_use_id)
+        if tuid is None:
+            return True
+        try:
+            with self._transaction() as conn:
+                gone = conn.execute(
+                    "DELETE FROM pending_asks WHERE session_id = ? AND tool_use_id = ?",
+                    (sid, tuid),
+                ).rowcount
+                if gone:
+                    conn.execute(
+                        "UPDATE sessions SET taint_asks = taint_asks + 1 WHERE session_id = ? "
+                        "AND taint_asks IS NOT NULL AND taint_asks < ?",
+                        (sid, COUNT_CAP),
+                    )
+            return True
+        except Exception as exc:  # noqa: BLE001 - reported through last_error
+            self._failed("tool result", exc)
+            return False
+
+    def session_start(self, session_id: object, source: object) -> bool:
+        """A SessionStart (revision 8, P-R9). A session whose context is not fresh (any
+        ``source`` but ``startup`` and ``clear``: resume, compact, fork, a value we do not know)
+        and that the store has never seen starts as having read untrusted content: a fork has a
+        new id and names no parent (docs/hook-behavior.md), and a resume after cleanup has lost
+        its row. A session the store knows keeps its state, so a fresh one (``startup``,
+        ``clear``) is recorded as clean: its later resumes and compactions are then known."""
+        sid = usable_session_id(session_id)
+        if sid is None:
+            return False
+        if isinstance(source, str) and source in FRESH_SESSION_SOURCES:
+            asks, sources = None, "[]"
+        else:
+            name = INHERITED_PREFIX + (source if isinstance(source, str) and source else "unknown")
+            asks, sources = 0, _with_source([], name)
+        try:
+            now = self._clock()
+            with self._transaction() as conn:
+                conn.execute(
+                    "INSERT INTO sessions (session_id, first_seen, last_seen, taint_asks, "
+                    "sources) VALUES (?, ?, ?, ?, ?) ON CONFLICT (session_id) DO NOTHING",
+                    (sid, now, now, asks, sources),
+                )
+            return True
+        except Exception as exc:  # noqa: BLE001 - reported through last_error
+            self._failed("session start", exc)
+            return False
+
+    def source_seen(self, session_id: object, name: str) -> bool:
+        """A call that is a source by what it does rather than by its tool name (a shell call that
+        reads remote text, ``shell-network:<program>``; revision 8, P-R5) marks the session as a
+        source call does: read untrusted content, the window starts again."""
+        sid = usable_session_id(session_id)
+        if sid is None:
+            return False
+        return self._mark_source(sid, name, "source")
+
+    def _mark_source(self, sid: str, name: str, what: str) -> bool:
         try:
             now = self._clock()
             with self._transaction() as conn:
@@ -436,9 +557,11 @@ class SessionStore:
                     "sources = excluded.sources",
                     (sid, now, now, _with_source(current, name)),
                 )
+                # the window starts again: asks from before the new source no longer count
+                conn.execute("DELETE FROM pending_asks WHERE session_id = ?", (sid,))
             return True
         except Exception as exc:  # noqa: BLE001 - reported through last_error
-            self._failed("tool result", exc)
+            self._failed(what, exc)
             return False
 
     def add_prompt(self, session_id: object, text: str, *, keep: int) -> bool:
@@ -520,6 +643,11 @@ class SessionStore:
                 conn.execute(
                     "DELETE FROM prompts WHERE session_id NOT IN (SELECT session_id FROM sessions)"
                 )
+                conn.execute(
+                    "DELETE FROM pending_asks WHERE at < ? OR session_id NOT IN "
+                    "(SELECT session_id FROM sessions)",
+                    (cutoff,),
+                )
             return gone
         except Exception as exc:  # noqa: BLE001 - reported through last_error
             self._failed("cleanup", exc)
@@ -572,10 +700,23 @@ class UnavailableStore:
     ) -> SessionFacts:
         return UNKNOWN
 
-    def tool_result(self, session_id: object, tool: object, *, sources: tuple[str, ...]) -> bool:
+    def tool_result(
+        self,
+        session_id: object,
+        tool: object,
+        *,
+        sources: tuple[str, ...],
+        tool_use_id: object = None,
+    ) -> bool:
         return False
 
-    def taint_asked(self, session_id: object) -> bool:
+    def source_seen(self, session_id: object, name: str) -> bool:
+        return False
+
+    def session_start(self, session_id: object, source: object) -> bool:
+        return False
+
+    def taint_asked(self, session_id: object, tool_use_id: object = None) -> bool:
         return False
 
     def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool:

@@ -408,10 +408,10 @@ def test_emit_allow_on_in_the_policy_is_pinned_into_every_hook(machine: Machine)
     assert result.returncode == 0, result.stderr
     assert "emit_allow" in result.stdout
     args_lists = _hook_args(machine)
-    assert len(args_lists) == 4
+    assert len(args_lists) == 5
     for args in args_lists:
         assert args.count("--emit-allow") == 1
-        assert args[-1] in ("pre", "post", "prompt", "config")  # the subcommand stays last
+        assert args[-1] in ("pre", "post", "prompt", "config", "session")  # the subcommand last
         assert args[args.index("--home") + 1] == str(machine.home)
     recorded = json.loads((machine.home / "installs.json").read_text(encoding="utf-8"))
     assert "--emit-allow" in recorded["installs"][0]["hook_args"]

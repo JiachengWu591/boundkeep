@@ -3,6 +3,7 @@ cleanup, and every failure path ending in "unknown" (judged as tainted)."""
 
 from __future__ import annotations
 
+import itertools
 import multiprocessing
 import os
 import sqlite3
@@ -42,6 +43,18 @@ def call(
     return s.tool_call(sid, tool, sources=SOURCES, window=window)
 
 
+_IDS = itertools.count()
+
+
+def approved(s: SessionStore, sid: str = SID) -> bool:
+    """One ask of the taint step that the user approved and whose tool ran: recorded with its
+    tool_use_id, counted when the PostToolUse of that id arrives (revision 8, P-R3)."""
+    tool_use_id = f"toolu_{os.getpid()}_{next(_IDS)}"
+    return s.taint_asked(sid, tool_use_id) and s.tool_result(
+        sid, "Bash", sources=SOURCES, tool_use_id=tool_use_id
+    )
+
+
 # ------------------------------------------------------------------------------ taint window
 
 
@@ -64,7 +77,7 @@ def test_only_the_taint_steps_asks_use_up_the_window_and_the_bit_stays(store: Se
     states = []
     for _ in range(5):
         states.append(call(store, window=3).tainted)
-        assert store.taint_asked(SID)
+        assert approved(store)
     assert states == [True, True, True, False, False]
     assert call(store, window=3).read_untrusted  # sticky: the window does not end it
 
@@ -72,7 +85,7 @@ def test_only_the_taint_steps_asks_use_up_the_window_and_the_bit_stays(store: Se
 def test_a_post_tool_use_of_a_source_restarts_the_window(store: SessionStore) -> None:
     call(store, "WebFetch")
     for _ in range(3):
-        store.taint_asked(SID)
+        approved(store)
     assert not call(store, window=3).tainted
     assert store.tool_result(SID, "WebFetch", sources=SOURCES)
     assert call(store, window=3).taint_asks == 0
@@ -81,9 +94,17 @@ def test_a_post_tool_use_of_a_source_restarts_the_window(store: SessionStore) ->
 
 def test_a_taint_ask_without_a_source_counts_nothing(store: SessionStore) -> None:
     call(store)
-    assert store.taint_asked(SID)
-    assert store.taint_asked("never-seen")
+    assert approved(store)
+    assert approved(store, "never-seen")
     assert call(store) == FRESH
+
+
+def test_an_ask_without_a_usable_tool_use_id_is_not_recorded(store: SessionStore) -> None:
+    call(store, "WebFetch")
+    for bad in (None, "", " padded ", "x" * 129, "bad\x00id", 42):
+        assert store.taint_asked(SID, bad) is False
+        store.tool_result(SID, "Bash", sources=SOURCES, tool_use_id=bad)
+    assert call(store).taint_asks == 0
 
 
 def test_a_post_alone_marks_the_session(store: SessionStore) -> None:
@@ -115,7 +136,7 @@ def test_a_source_called_again_inside_the_window_extends_it(store: SessionStore)
 def test_the_window_comes_from_the_caller_every_time(store: SessionStore) -> None:
     call(store, "WebFetch")
     for _ in range(3):
-        store.taint_asked(SID)
+        approved(store)
     assert not store.tool_call(SID, "Read", sources=SOURCES, window=2).tainted
     assert store.tool_call(SID, "Read", sources=SOURCES, window=50).tainted
 
@@ -125,10 +146,10 @@ def test_the_count_stops_at_the_cap(store: SessionStore) -> None:
     call(store, "WebFetch")
     with store._transaction() as conn:  # jump ahead instead of 1000 asks
         conn.execute("UPDATE sessions SET taint_asks = ?", (COUNT_CAP - 1,))
-    assert store.taint_asked(SID)
+    assert approved(store)
     assert call(store, window=MAX_TAINT_WINDOW).taint_asks == COUNT_CAP
     for _ in range(3):
-        store.taint_asked(SID)
+        approved(store)
     facts = call(store, window=MAX_TAINT_WINDOW)
     assert facts.taint_asks == COUNT_CAP
     assert not facts.tainted
@@ -170,7 +191,7 @@ def test_reading_the_facts_and_plain_calls_count_nothing(store: SessionStore) ->
     for _ in range(3):
         assert store.facts(SID, window=8).taint_asks == 0
         assert call(store).taint_asks == 0
-    store.taint_asked(SID)
+    approved(store)
     assert store.facts(SID, window=8).taint_asks == 1
 
 
@@ -287,7 +308,7 @@ def test_cleanup_drops_the_least_recently_active_above_the_cap(tmp_path: Path) -
 
 def _call_and_ask(s: SessionStore) -> None:
     s.tool_call(SID, "Read", sources=SOURCES, window=1000)
-    s.taint_asked(SID)
+    approved(s)
 
 
 def test_parallel_tool_calls_lose_no_update(store: SessionStore) -> None:

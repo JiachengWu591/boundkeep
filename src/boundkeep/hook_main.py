@@ -60,11 +60,11 @@ if TYPE_CHECKING:
 
 # Per-event total budget in seconds, counted from process start. Must stay below the ``timeout``
 # values boundkeep init writes (install.HookTimeouts: pre 15, prompt 10, post 10, config 10).
-BUDGET_S = {"pre": 10.0, "prompt": 5.0, "post": 5.0, "config": 5.0}
+BUDGET_S = {"pre": 10.0, "prompt": 5.0, "post": 5.0, "config": 5.0, "session": 5.0}
 DEFAULT_BUDGET_S = 10.0
 EXIT_RESERVE_S = 0.3  # kept free for rendering and exiting after the IPC deadline
 # ``timeout`` of our own settings entries must leave room for the budget above (config check).
-MIN_ENTRY_TIMEOUT_S = {"pre": 11.0, "prompt": 6.0, "post": 6.0, "config": 6.0}
+MIN_ENTRY_TIMEOUT_S = {"pre": 11.0, "prompt": 6.0, "post": 6.0, "config": 6.0, "session": 6.0}
 
 MAX_STDIN_BYTES = 64 * 1024 * 1024
 SMALL_EVENT_BYTES = 256 * 1024  # below this nothing is elided and no size is computed
@@ -291,7 +291,8 @@ def record_problem(settings: Any, record: dict[str, Any]) -> str | None:
     if not isinstance(command, str) or not isinstance(base_args, list):
         return "boundkeep install manifest is malformed (run 'boundkeep doctor')"
     present = list(ownhook.own_hooks_in(settings))
-    for event, sub in ownhook.SUBCOMMANDS.items():
+    for event in ownhook.required_events(record.get("events")):
+        sub = ownhook.SUBCOMMANDS[event]
         wanted_args = [*base_args, sub]
         for found_event, matcher, hook in present:
             if found_event != event or hook.get("command") != command:

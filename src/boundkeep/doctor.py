@@ -41,7 +41,7 @@ from boundkeep.ipc import client as ipc_client
 from boundkeep.ipc.endpoint import TRANSPORT_NAMED_PIPE, Endpoint, EndpointError, read_endpoint
 from boundkeep.logstore import AuditLog
 from boundkeep.policy import PolicyError, load_policy
-from boundkeep.policy.loader import taint_sources_to_matcher
+from boundkeep.policy.loader import post_matcher_for
 from boundkeep.policy.schema import DEFAULT_TAINT_SOURCES, DEFAULT_TAINT_WINDOW
 from boundkeep.session.marks import ALL_LOCATIONS
 from boundkeep.session.store import SessionStore, SessionStoreError
@@ -552,13 +552,25 @@ def _check_own_hooks(
 ) -> list[Check]:
     checks: list[Check] = []
     present = {event for event, _matcher, _hook in own}
-    missing = sorted(set(ownhook.SUBCOMMANDS) - present)
+    missing = sorted(set(ownhook.BASE_EVENTS) - present)
     if missing:
         checks.append(
             Check(
                 name,
                 FAIL,
                 f"{path}: no boundkeep hook for {', '.join(missing)}",
+                "run 'boundkeep init' again",
+            )
+        )
+    if "SessionStart" not in present:
+        # an install from before revision 8: the gate works, but a fork or a resume that the
+        # session store does not know starts as a clean session (P-R9)
+        checks.append(
+            Check(
+                name,
+                WARN,
+                f"{path}: no boundkeep hook for SessionStart: a forked or resumed session that "
+                "the session store does not know starts as clean",
                 "run 'boundkeep init' again",
             )
         )
@@ -606,6 +618,7 @@ def _check_own_hooks(
                 "hook_command": record.hook_command,
                 "hook_args": list(record.hook_args),
                 "post_matcher": record.post_matcher,
+                "events": list(record.events) if record.events is not None else None,
             },
         )
         if problem:
@@ -717,7 +730,8 @@ def check_taint_sources(home: str, layers: list[Layer]) -> list[Check]:
 
     A policy written by an older ``init`` keeps its old sources: revision 7 added the MCP resource
     tools, which such a policy does not watch. And ``init`` writes the PostToolUse matcher from
-    the policy's sources at install time, so a later edit of the sources needs ``init`` again.
+    the policy at install time (``post_matcher_for``: the sources, or ``*`` with an LLM backend,
+    revision 8), so a later edit of the sources or of ``llm_audit.backend`` needs ``init`` again.
     """
     try:
         policy = load_policy(paths.policy_file(home), home=os.path.expanduser("~"))
@@ -745,7 +759,7 @@ def check_taint_sources(home: str, layers: list[Layer]) -> list[Check]:
             )
         )
     try:
-        wanted = taint_sources_to_matcher(sources)
+        wanted = post_matcher_for(policy)
     except ValueError:
         return checks
     wrong = [
@@ -758,13 +772,18 @@ def check_taint_sources(home: str, layers: list[Layer]) -> list[Check]:
         )
     ]
     if wrong:
+        why = (
+            "with an LLM backend it must be '*': an approved ask of another tool does not use up "
+            "the taint window, so the session stays tainted (asks more)"
+            if wanted == "*"
+            else "it is not the one taint.sources gives: a source call it leaves out does not "
+            "mark the session after it ran"
+        )
         checks.append(
             Check(
                 "taint-sources",
                 WARN,
-                f"the PostToolUse matcher in the {', '.join(wrong)} settings is not the one "
-                "taint.sources gives: a source call it leaves out does not mark the session "
-                "after it ran",
+                f"the PostToolUse matcher in the {', '.join(wrong)} settings: {why}",
                 "run 'boundkeep init' again",
             )
         )

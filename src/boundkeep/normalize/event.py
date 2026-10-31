@@ -44,6 +44,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Final
 
 from boundkeep.normalize import bash, domains, paths, programs, psparse, subtree
+from boundkeep.normalize.mcpnames import mcp_access
 from boundkeep.normalize.model import (
     Access,
     Action,
@@ -2006,38 +2007,12 @@ _MCP_HOST_KEYS: Final = frozenset(
         "address", "baseurl", "webhook", "webhookurl", "callbackurl", "targeturl", "website",
     }
 )  # fmt: skip
-# a tool whose name STARTS with one of these words and holds none of the write words only reads
-# its paths; any other tool may read or write them (access "unknown" meets the read and the
-# write rules): `get_and_store` may write (X1 review R10-1)
-_MCP_READ_WORDS: Final = frozenset(
-    {
-        "read", "get", "list", "search", "find", "view", "show", "stat", "describe", "info",
-        "cat", "head", "tail", "ls", "tree", "glob", "grep", "count", "lookup", "inspect",
-        "query", "snapshot",
-    }
-)  # fmt: skip
-_MCP_WRITE_WORDS: Final = frozenset(
-    {
-        "write", "create", "edit", "update", "delete", "remove", "move", "rename", "put", "post",
-        "push", "send", "set", "add", "merge", "upload", "copy", "apply", "run", "exec",
-        "execute", "insert", "drop", "share", "publish", "terminate", "kill", "install",
-        "deploy", "commit", "close", "approve", "save", "patch", "replace", "append",
-        "truncate", "download", "store", "persist", "sync", "import", "export", "transfer",
-        "fork", "clone", "checkout", "mkdir", "touch", "chmod", "link", "archive", "restore",
-        "reset", "revert", "rollback", "cancel", "stop", "start", "restart", "trigger", "invoke",
-        "call", "submit", "assign", "comment", "reply", "review", "label", "tag", "release",
-        "enable", "disable", "configure", "register", "login", "logout", "schedule", "generate",
-        "build", "compile", "convert", "extract", "unzip", "zip", "encrypt", "decrypt", "sign",
-        "render", "print", "cache", "clear", "clean", "purge", "prune", "destroy", "revoke",
-        "grant", "mark", "lock", "unlock", "resolve", "dismiss",
-    }
-)  # fmt: skip
+# which MCP tools only read their paths: normalize.mcpnames.mcp_access (by the tool's verb)
 _MCP_WALK_NODES: Final = 500
 _MCP_WALK_DEPTH: Final = 6
 _MCP_WALK_WIDTH: Final = 100
 _URL_IN_TEXT = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s'\"<>]+")
 _INVISIBLE: Final = "﻿​‌‍⁠᠎"
-_CAMEL_WORDS = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+")
 _FILE_URI = re.compile(r"(?i)^file:(?://)?")
 _DRIVE_RELATIVE = re.compile(r"^[A-Za-z]:(?![/\\])")
 # SQL: the first word says whether it looks like a statement; a read statement is one statement
@@ -2099,13 +2074,6 @@ def _mcp_walk(value: object) -> tuple[list[tuple[str, object]], bool]:
                 cut = True  # too long to look at
             out.append((key, item))
     return out, cut
-
-
-def _mcp_access(name: str | None) -> Access:
-    words = [w.casefold() for w in _CAMEL_WORDS.findall(name or "")]
-    if words and words[0] in _MCP_READ_WORDS and not set(words) & _MCP_WRITE_WORDS:
-        return "read"
-    return "unknown"
 
 
 def _mcp_sql_kind(key: str) -> str | None:
@@ -2174,7 +2142,7 @@ def _mcp_actions(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> list[Ac
     pairs, cut = _mcp_walk(tool_input)
     notes: list[str] = ["mcp-arguments-not-all-seen"] if cut else []
     refs: list[PathRef] = []
-    access = _mcp_access(name)
+    access = mcp_access(name)
     urls: list[str] = []
     commands: list[str] = []
     for key, value in pairs:
@@ -2252,13 +2220,14 @@ def normalize_event(
     platform: Platform,
     env: Mapping[str, str] | None = None,
     home: str | None = None,
-    budget_s: float = TIME_BUDGET_S,
+    budget_s: float | None = None,
     protected_globs: Sequence[str] | None = None,
     rule_globs: Sequence[subtree.RuleGlob] | None = None,
 ) -> list[Action]:
     """The Actions for one PreToolUse payload (never raises; never empty).
 
-    Runs on the daemon's event loop, so the work is bounded: after ``budget_s`` seconds, more than
+    Runs on the daemon's event loop, so the work is bounded: after ``budget_s`` seconds (None:
+    ``TIME_BUDGET_S``, read at call time so that tests can widen it), more than
     ``MAX_ACTIONS`` commands, more than ``MAX_DISK_KEYS`` distinct disk lookups or ``MAX_REFS``
     paths, the rest of a shell line is classified lexically only (no glob expansion, no disk) and
     one gray Action whose reasons start with ``normalize-budget-exceeded`` is added last: the
@@ -2277,7 +2246,7 @@ def normalize_event(
     """
     env = env if env is not None else os.environ
     base: dict[str, Any] = {"platform": platform}
-    budget = _Budget(deadline=time.monotonic() + budget_s)
+    budget = _Budget(deadline=time.monotonic() + (TIME_BUDGET_S if budget_s is None else budget_s))
     ctx: _Ctx | None = None
     try:
         for key in ("session_id", "cwd", "permission_mode", "agent_id"):

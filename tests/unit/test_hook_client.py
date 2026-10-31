@@ -248,12 +248,19 @@ def test_event_without_a_name_degrades() -> None:
 
 
 def test_an_unknown_event_is_ignored_when_we_were_not_registered_for_it() -> None:
-    out = hc.process(None, _bytes({"hook_event_name": "SessionStart"}), _deadline())
+    out = hc.process(None, _bytes({"hook_event_name": "SessionEnd"}), _deadline())
+    assert (out.stdout, out.stderr, out.exit_code) == (b"", b"", 0)
+
+
+@pytest.mark.parametrize("sub", ["pre", "config", "post"])
+def test_a_session_start_under_another_registration_has_nothing_to_decide(sub: str) -> None:
+    # a registration mismatch degrades by the event's own kind: no tool call, nothing to block
+    out = hc.process(sub, _bytes({"hook_event_name": "SessionStart"}), _deadline())
     assert (out.stdout, out.stderr, out.exit_code) == (b"", b"", 0)
 
 
 @pytest.mark.parametrize(
-    "name", ["preToolUse", "PreToolUse ", "PreToolUseX", "PermissionRequest", "SessionStart"]
+    "name", ["preToolUse", "PreToolUse ", "PreToolUseX", "PermissionRequest", "SessionEnd"]
 )
 def test_an_unknown_event_name_under_our_registration_does_not_silently_allow(name: str) -> None:
     out = hc.process("pre", _bytes({"hook_event_name": name}), _deadline())

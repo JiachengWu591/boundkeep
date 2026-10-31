@@ -66,7 +66,7 @@ def _fail_safe() -> None:
         if sub == "config":
             os.write(2, b"boundkeep: settings change blocked: the hook client could not start\n")
             os._exit(2)
-        if sub not in ("post", "prompt"):
+        if sub not in ("post", "prompt", "session"):
             os.write(1, _ASK)
     except BaseException:  # noqa: BLE001
         os._exit(2)  # the answer could not be delivered: blocking is the only safe outcome

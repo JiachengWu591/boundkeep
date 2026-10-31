@@ -41,8 +41,8 @@ from boundkeep.policy import (
     default_policy_text,
     load_policy,
     parse_policy_text,
+    post_matcher_for,
     set_mode,
-    taint_sources_to_matcher,
     write_default_policy,
 )
 from boundkeep.settings_io import SettingsError
@@ -112,7 +112,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             policy = load_policy(policy_path)
         else:
             policy = parse_policy_text(default_policy_text())
-        post_matcher = taint_sources_to_matcher(policy.taint.sources)
+        post_matcher = post_matcher_for(policy)  # '*' with an LLM backend (revision 8, P-R3)
     except PolicyError as exc:
         return _fail(
             f"policy: {exc}\n  fix {policy_path} by hand, or run 'boundkeep init --reset-policy' "
@@ -208,6 +208,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         installed_at=_utc_now(),
         hook_files=hook_files,
         watched=tuple(sorted(claude_settings.make_baseline(merged, own).items())),
+        events=tuple(groups),
     )
     try:
         return _apply_init(args, home, settings_path, doc, merged, unchanged, record)
