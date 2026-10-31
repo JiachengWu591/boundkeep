@@ -5,7 +5,8 @@ A PreToolUse payload becomes a list of ``Action`` (one per simple command of a s
 other tools); the policy rules are evaluated per action and merged strictest-first (deny > ask >
 gray > allow). With no LLM backend a gray outcome is an ``ask``; with one, ``audit.auditor`` asks
 the model and ``audit.verdict`` rules on its answer (any failure: ``llm_audit.on_failure``). A gray
-call the normalizer did not see whole (``incomplete_analysis``) is not sent and asks.
+call the normalizer did not see whole (``incomplete_analysis``), or with code or arguments the
+request cannot show (``unshown_input``), is not sent and asks.
 ``allow`` is only ever emitted to Claude Code when the policy sets ``defaults.emit_allow``; by
 default an allow is "no decision" and Claude Code's own permission flow continues.
 
@@ -601,6 +602,29 @@ def incomplete_analysis(actions: Sequence[Action]) -> str | None:
     return None
 
 
+# PowerShell gray reasons for text the request cannot show: a string piped into an interpreter is
+# its code, and an assignment (``$env:NODE_OPTIONS = ...``) is not an action with words of its own.
+_UNSHOWN_REASONS: Final = ("ps-pipe-to-interpreter", "ps-compound:AssignmentStatementAst")
+
+
+def unshown_input(actions: Sequence[Action]) -> str | None:
+    """What of the call the request to the LLM audit cannot carry, or None (X1 review of M3a, F3
+    and F4). The send gate shows each command's words, paths and hosts, never a here-document or
+    here-string (the code of ``python3 <<EOF``, the SQL of ``psql``), the value of a ``NAME=value``
+    assignment (``NODE_OPTIONS``, ``DATABASE_URL``), a string piped into an interpreter or assigned
+    in PowerShell, or the arguments of an MCP call. The model would allow what it was not shown,
+    so such a call is not sent either, like one the normalizer did not see whole."""
+    for action in actions:
+        if action.unshown:
+            return _clean(", ".join(action.unshown[:3]), GRAY_PART_CHARS)
+        for reason in action.gray_reasons:
+            if reason.startswith(_UNSHOWN_REASONS):
+                return _clean(reason, GRAY_PART_CHARS)
+        if action.tool.startswith("mcp__"):
+            return "the arguments of an MCP call"
+    return None
+
+
 def taint_record(facts: SessionFacts) -> dict[str, Any]:
     """The session's taint state as it goes into the audit log (names of source tools only)."""
     record: dict[str, Any] = {"tainted": facts.tainted, "read_untrusted": facts.read_untrusted}
@@ -629,14 +653,24 @@ def _finish(
     llm: Mapping[str, Any] | None = None
     if result.verdict.decision == "gray" and auditor is not None:
         unseen = incomplete_analysis(result.actions)
-        if unseen is not None:
+        hidden = unshown_input(result.actions) if unseen is None else None
+        if unseen is not None or hidden is not None:
             # the model would judge a part of the call: it stays the user's question
+            why = (
+                f"it was not fully analysed ({unseen})"
+                if unseen is not None
+                else f"the LLM audit could not be shown all of it ({hidden})"
+            )
             reason = (
-                f"boundkeep: no rule decides this action and it was not fully analysed ({unseen}); "
+                f"boundkeep: no rule decides this action and {why}; "
                 "asking (not sent to the LLM audit)"
             )
             decided_by = "gray-unanalysed"
-            llm = {"backend": policy.llm_audit.backend, "outcome": "not-sent", "detail": unseen}
+            llm = {
+                "backend": policy.llm_audit.backend,
+                "outcome": "not-sent",
+                "detail": unseen if unseen is not None else hidden,
+            }
         else:
             outcome = auditor.review(
                 result.actions,

@@ -363,6 +363,10 @@ def test_when_every_pipe_instance_is_busy_the_client_gives_up_inside_its_budget(
     env = dict(hook_env, BOUNDKEEP_HOOK_BUDGET_S="1.5")
     with threaded_pipe_server(endpoint, echo, instances=1, read_timeout_s=30):
         holder = open(endpoint.address, "r+b", buffering=0)  # noqa: SIM115 - takes the only instance
+        # One byte and no newline: the server now waits for the rest of the line (read_timeout_s)
+        # instead of giving the instance back after its first-byte deadline (1 s), which a client
+        # that started late could then take (a timing race; docs/reports/M3a.md section 5.1).
+        holder.write(b"{")
         try:
             started = time.monotonic()
             proc = run_hook("pre", fixture_bytes("PreToolUse__PowerShell"), env)

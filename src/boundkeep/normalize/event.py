@@ -55,6 +55,7 @@ from boundkeep.normalize.model import (
     Word,
 )
 from boundkeep.normalize.programs import DEVTOOLS
+from boundkeep.normalize.psprograms import DEV_EXE_ENV
 from boundkeep.policy.glob import GlobError, compile_glob
 from boundkeep.policy.schema import too_broad
 
@@ -1568,6 +1569,13 @@ def _command_action(
         _after_cd(ctx, st, cmd, cd_program)
     gray_reasons.extend(notes)
     reasons = tuple(dict.fromkeys(gray_reasons))
+    # what the action does not carry (the values of assignments, here-documents): the LLM audit
+    # could not be shown it (X1 review of M3a, F3 and F4)
+    unshown = tuple(
+        dict.fromkeys(
+            [*(f"env:{name}" for name, _value in cmd.env if name != DEV_EXE_ENV), *cmd.stdin_text]
+        )
+    )
     return Action(
         tool=tool,
         program=program,
@@ -1583,6 +1591,7 @@ def _command_action(
         gray=bool(reasons),
         gray_reasons=reasons,
         dynamic_args=_has_dynamic_args(program, classify_args, [w for w, _a in info.paths]),
+        unshown=unshown,
         **ctx.base,
         **common,
     )

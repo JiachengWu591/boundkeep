@@ -19,7 +19,9 @@ The endpoint is an outbound target the user configured, so (CLAUDE.md, §11):
   per read: httpx's timeouts restart on every byte, so a server that drips its headers could hold
   a request for minutes (self-review of M3a). Each attempt runs on an event loop of its own under
   ``asyncio.timeout``, with a client of its own: no connection is kept between audits (one TLS
-  handshake per audit, a cost not measured against a real service);
+  handshake per audit, a cost not measured against a real service). The name lookup runs in a
+  thread that closing the loop never waits for (``_DetachedExecutor``): a resolver that hangs
+  held the attempt, and the daemon's decision worker with it, past the budget (X1 review, F5);
 * one retry at most, only for a timeout, a rate limit, a 5xx or a network error, only when enough
   of the budget is left, and only when a rate limit's ``Retry-After`` is a plain number of seconds
   no longer than ``MAX_RETRY_WAIT_S`` (a date, a negative or odd value: no retry);
@@ -37,6 +39,7 @@ Proxies from the environment apply to remote hosts (``trust_env``), never to a l
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import math
 import os
@@ -45,7 +48,7 @@ import ssl
 import threading
 import time
 from collections.abc import Callable, Coroutine, Mapping
-from typing import Any, Final, TypeVar
+from typing import Any, Final, ParamSpec, TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -73,16 +76,97 @@ MAX_ERROR_BODY_BYTES: Final = 16 * 1024
 MAX_TOKENS: Final = 400
 MIN_RETRY_BUDGET_S: Final = 0.5  # a retry needs at least this much of the budget left
 MAX_RETRY_WAIT_S: Final = 2.0
+MAX_HANGING_LOOKUPS: Final = 8  # name lookups still running after their attempt ended, at most
 LOOPBACK_HOSTS: Final = frozenset({"localhost", "127.0.0.1", "::1"})
 _TOKEN_RE: Final = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 _SECONDS_RE: Final = re.compile(r"[0-9]{1,6}(?:\.[0-9]{1,3})?")
 _T = TypeVar("_T")
+_P = ParamSpec("_P")
+
+
+class _LookupSlots:
+    """How many detached lookup threads are running, across all attempts (bounded)."""
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._lock = threading.Lock()
+        self._running = 0
+
+    @property
+    def running(self) -> int:
+        return self._running
+
+    def take(self) -> bool:
+        with self._lock:
+            if self._running >= self._limit:
+                return False
+            self._running += 1
+            return True
+
+    def give(self) -> None:
+        with self._lock:
+            self._running -= 1
+
+
+_LOOKUPS = _LookupSlots(MAX_HANGING_LOOKUPS)
+
+
+class _DetachedExecutor(concurrent.futures.ThreadPoolExecutor):
+    """The default executor of an attempt's event loop, where asyncio runs ``getaddrinfo``.
+
+    ``asyncio.run`` waits for its executor's threads when it closes the loop (up to 300 s), so a
+    resolver that hung kept the attempt, and the daemon's decision worker behind it, long past the
+    budget; enough of those and the daemon answered every call "busy", a rule's deny included (X1
+    review of M3a, F5). Here every job gets a daemon thread of its own and shutting down never
+    waits: the attempt ends at its deadline, the lookup whenever the resolver gives up. At most
+    ``MAX_HANGING_LOOKUPS`` such threads run at once (all attempts together); beyond that a lookup
+    fails at once with ``OSError``, which the attempt reports as a ``network`` failure.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(max_workers=1, thread_name_prefix="boundkeep-llm-lookup")
+
+    def submit(
+        self, fn: Callable[_P, _T], /, *args: _P.args, **kwargs: _P.kwargs
+    ) -> concurrent.futures.Future[_T]:
+        if not _LOOKUPS.take():
+            raise OSError("too many name lookups of earlier audits are still running")
+        future: concurrent.futures.Future[_T] = concurrent.futures.Future()
+
+        def run() -> None:
+            try:
+                if future.set_running_or_notify_cancel():
+                    try:
+                        result = fn(*args, **kwargs)
+                    except BaseException as exc:  # noqa: BLE001 - handed over through the future
+                        future.set_exception(exc)
+                    else:
+                        future.set_result(result)
+            finally:
+                _LOOKUPS.give()
+
+        try:
+            threading.Thread(target=run, name="boundkeep-llm-lookup", daemon=True).start()
+        except BaseException:
+            _LOOKUPS.give()
+            raise
+        return future
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        """Never waits for a lookup (see the class)."""
+
+
+async def _detached(coro: Coroutine[Any, Any, _T]) -> _T:
+    asyncio.get_running_loop().set_default_executor(_DetachedExecutor())
+    return await coro
 
 
 def _run(coro: Coroutine[Any, Any, _T]) -> _T:
-    """Run ``coro`` to the end on an event loop of its own. The callers are worker threads and the
+    """Run ``coro`` to the end on an event loop of its own, whose default executor (the name
+    lookups) is never waited for (``_DetachedExecutor``). The callers are worker threads and the
     CLI; a caller inside a running loop gets a thread for it, so its own loop is never blocked
     by a nested ``asyncio.run`` (which would raise)."""
+    coro = _detached(coro)
     try:
         asyncio.get_running_loop()
     except RuntimeError:

@@ -482,6 +482,17 @@ _NO_WRITE_PROGRAMS = frozenset(
     }
 )  # fmt: skip
 _READ_REDIRECTS = frozenset({"<", "<<", "<<-", "<<<", "<&"})
+_TEXT_REDIRECTS = {"<<": "heredoc", "<<-": "heredoc", "<<<": "herestring"}
+
+
+def _stdin_text(redirs: list[Redirect]) -> tuple[str, ...]:
+    """``SimpleCmd.stdin_text``: the here-documents and here-strings of a command."""
+    out: dict[str, None] = {}
+    for r in redirs:
+        kind = _TEXT_REDIRECTS.get(r.op)
+        if kind is not None:
+            out[kind if r.fd in (None, "0") else f"{kind}:{r.fd}"] = None
+    return tuple(out)
 
 
 def _may_write(cmd: SimpleCmd) -> bool:
@@ -1832,7 +1843,18 @@ class _Parser:
         for name, _ in envl:
             self._check_env_name(name)
         if not words:
-            self._add(SimpleCmd((), tuple(envl), tuple(redirs), tuple(wrappers), org, False, raw))
+            self._add(
+                SimpleCmd(
+                    (),
+                    tuple(envl),
+                    tuple(redirs),
+                    tuple(wrappers),
+                    org,
+                    False,
+                    raw,
+                    stdin_text=_stdin_text(redirs),
+                )
+            )
             return
         cur = words
         afs = args_from_stdin
@@ -1915,6 +1937,7 @@ class _Parser:
                 org,
                 afs,
                 raw,
+                stdin_text=_stdin_text(redirs),
             )
         )
         if pname is not None:
@@ -2037,6 +2060,16 @@ class _Parser:
                 )  # fmt: skip
             i = j + 1
 
+    def _stdin_parsed(self) -> None:
+        """The command just emitted is a shell that reads its here-document or here-string on
+        standard input as commands: they are parsed into commands of their own, so that text is
+        no longer hidden (``stdin_text`` keeps the other descriptors only)."""
+        index = self.emitted[-1]
+        cmd = self.sh.commands[index]
+        kept = tuple(kind for kind in cmd.stdin_text if ":" in kind)
+        if kept != cmd.stdin_text:
+            self.sh.commands[index] = replace(cmd, stdin_text=kept)
+
     def _interpreter(
         self,
         name: str,
@@ -2091,6 +2124,8 @@ class _Parser:
             self._exec(f"decode-pipe-to-interpreter:{name}")
         if not shell:
             return
+        if "heredoc" in fed or "herestring" in fed:
+            self._stdin_parsed()
         if "heredoc" in fed:
             for hd in hds:
                 hd.shell = True

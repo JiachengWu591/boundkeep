@@ -52,6 +52,10 @@ class SimpleCmd:
     raw: str = ""
     in_pipeline: bool = False  # one stage of a `|` / `|&` pipeline (stages run in subshells)
     background: bool = False  # followed by `&`: runs in the background, in a subshell
+    # Text the command gets from a here-document or here-string: "heredoc" / "herestring" (with
+    # ":N" for a descriptor other than standard input). Empty for a shell that reads it as
+    # commands: those are parsed into commands of their own.
+    stdin_text: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,3 +129,8 @@ class Action(BaseModel):
     mcp_server: str | None = None
     mcp_tool: str | None = None
     command_text: str | None = None  # the original command line (shell tools only), for audit
+    # Inputs of the command that the fields above do not carry: "env:NAME" for a NAME=value
+    # assignment (a prefix, `env NAME=v`, a bare assignment) and SimpleCmd.stdin_text. No rule
+    # looks at it; a gray call with any is not sent to the LLM audit, which could not show them
+    # (X1 review of M3a, F3 and F4).
+    unshown: tuple[str, ...] = ()

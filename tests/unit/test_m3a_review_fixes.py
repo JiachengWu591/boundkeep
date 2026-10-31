@@ -315,11 +315,15 @@ def test_a_call_that_was_not_analysed_whole_is_not_sent_and_asks(
     assert decision.llm["outcome"] == "not-sent"
 
 
-def test_an_ordinary_mcp_call_is_still_sent() -> None:
+def test_an_ordinary_mcp_call_is_not_sent_either() -> None:
+    # Until the X1 review of M3a (F4) a plain MCP call was sent with its server and tool names
+    # only: the model allowed arguments it never saw. Now no MCP call is sent
+    # (tests/unit/test_m3a_x1_fixes.py).
     pol = llm_policy()
     backend = FakeBackend(lambda _r: verdict_json(verdict="ask"))
-    decide(event("mcp__docs__search", {"query": "release notes"}), pol, backend)
-    assert len(backend.requests) == 1
+    decision = decide(event("mcp__docs__search", {"query": "release notes"}), pol, backend)
+    assert backend.requests == []
+    assert decision.decided_by == "gray-unanalysed"
 
 
 # ------------------------------------------------------------------ #11, #14: exec tags
