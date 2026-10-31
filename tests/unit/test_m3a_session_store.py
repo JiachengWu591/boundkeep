@@ -51,25 +51,39 @@ def test_a_new_session_is_fresh(store: SessionStore) -> None:
     assert facts.sources == ()
 
 
-def test_the_window_counts_the_calls_after_a_source_and_the_bit_stays(store: SessionStore) -> None:
+def test_only_the_taint_steps_asks_use_up_the_window_and_the_bit_stays(store: SessionStore) -> None:
     fetch = call(store, "WebFetch")
     # the source call is judged in the state before it
     assert not fetch.tainted
     assert not fetch.read_untrusted
-    seen = [call(store) for _ in range(10)]
-    assert [f.tainted for f in seen] == [True] * 8 + [False] * 2
-    assert all(f.read_untrusted for f in seen)  # sticky: the window does not end it
-    assert [f.calls_since_taint for f in seen[:3]] == [1, 2, 3]
+    # revision 7, P-F6: calls the taint step did not change use up nothing
+    seen = [call(store, window=3) for _ in range(10)]
+    assert all(f.tainted for f in seen)
+    assert {f.taint_asks for f in seen} == {0}
     assert seen[0].sources == ("WebFetch",)
+    states = []
+    for _ in range(5):
+        states.append(call(store, window=3).tainted)
+        assert store.taint_asked(SID)
+    assert states == [True, True, True, False, False]
+    assert call(store, window=3).read_untrusted  # sticky: the window does not end it
 
 
 def test_a_post_tool_use_of_a_source_restarts_the_window(store: SessionStore) -> None:
     call(store, "WebFetch")
-    for _ in range(7):
-        call(store)
+    for _ in range(3):
+        store.taint_asked(SID)
+    assert not call(store, window=3).tainted
     assert store.tool_result(SID, "WebFetch", sources=SOURCES)
-    assert call(store).calls_since_taint == 1
-    assert all(call(store).tainted for _ in range(7))
+    assert call(store, window=3).taint_asks == 0
+    assert all(call(store, window=3).tainted for _ in range(7))
+
+
+def test_a_taint_ask_without_a_source_counts_nothing(store: SessionStore) -> None:
+    call(store)
+    assert store.taint_asked(SID)
+    assert store.taint_asked("never-seen")
+    assert call(store) == FRESH
 
 
 def test_a_post_alone_marks_the_session(store: SessionStore) -> None:
@@ -101,7 +115,7 @@ def test_a_source_called_again_inside_the_window_extends_it(store: SessionStore)
 def test_the_window_comes_from_the_caller_every_time(store: SessionStore) -> None:
     call(store, "WebFetch")
     for _ in range(3):
-        call(store)
+        store.taint_asked(SID)
     assert not store.tool_call(SID, "Read", sources=SOURCES, window=2).tainted
     assert store.tool_call(SID, "Read", sources=SOURCES, window=50).tainted
 
@@ -109,12 +123,14 @@ def test_the_window_comes_from_the_caller_every_time(store: SessionStore) -> Non
 def test_the_count_stops_at_the_cap(store: SessionStore) -> None:
     assert COUNT_CAP == MAX_TAINT_WINDOW + 1
     call(store, "WebFetch")
-    with store._transaction() as conn:  # jump ahead instead of 1000 calls
-        conn.execute("UPDATE sessions SET calls_since_taint = ?", (COUNT_CAP - 1,))
-    assert call(store, window=MAX_TAINT_WINDOW).calls_since_taint == COUNT_CAP
+    with store._transaction() as conn:  # jump ahead instead of 1000 asks
+        conn.execute("UPDATE sessions SET taint_asks = ?", (COUNT_CAP - 1,))
+    assert store.taint_asked(SID)
+    assert call(store, window=MAX_TAINT_WINDOW).taint_asks == COUNT_CAP
     for _ in range(3):
-        facts = call(store, window=MAX_TAINT_WINDOW)
-    assert facts.calls_since_taint == COUNT_CAP
+        store.taint_asked(SID)
+    facts = call(store, window=MAX_TAINT_WINDOW)
+    assert facts.taint_asks == COUNT_CAP
     assert not facts.tainted
     assert facts.read_untrusted
 
@@ -131,12 +147,16 @@ def test_source_names_are_kept_short_and_bounded(store: SessionStore) -> None:
     "sid", [None, "", "  padded ", "x" * 201, "bad\x00id", "line\nbreak", 42, ["list"]]
 )
 def test_an_unusable_session_id_is_unknown(store: SessionStore, sid: object) -> None:
-    assert call(store, sid=sid) == UNKNOWN
+    facts = call(store, sid=sid)
+    assert (facts.known, facts.tainted, facts.read_untrusted) == (False, True, True)
+    assert facts.marks_known  # the project marks need no session id
     assert UNKNOWN.tainted
     assert UNKNOWN.read_untrusted
     assert not UNKNOWN.known
+    assert not UNKNOWN.marks_known
     assert store.tool_result(sid, "WebFetch", sources=SOURCES) is False
     assert store.add_prompt(sid, "text", keep=3) is False
+    assert store.taint_asked(sid) is False
 
 
 def test_sessions_are_apart(store: SessionStore) -> None:
@@ -145,11 +165,13 @@ def test_sessions_are_apart(store: SessionStore) -> None:
     assert call(store, sid="b") == FRESH
 
 
-def test_reading_the_facts_does_not_count(store: SessionStore) -> None:
+def test_reading_the_facts_and_plain_calls_count_nothing(store: SessionStore) -> None:
     call(store, "WebFetch")
     for _ in range(3):
-        assert store.facts(SID, window=8).calls_since_taint == 1
-    assert call(store).calls_since_taint == 1
+        assert store.facts(SID, window=8).taint_asks == 0
+        assert call(store).taint_asks == 0
+    store.taint_asked(SID)
+    assert store.facts(SID, window=8).taint_asks == 1
 
 
 def test_is_taint_source_reads_patterns_like_the_matcher() -> None:
@@ -237,8 +259,8 @@ def test_an_active_tainted_session_is_kept_alive(tmp_path: Path) -> None:
     now = [5_000.0]
     s = SessionStore(str(tmp_path / "s.sqlite"), clock=lambda: now[0])
     s.tool_call(SID, "WebFetch", sources=SOURCES, window=8)
-    with s._transaction() as conn:  # beyond the cap: no write per call any more
-        conn.execute("UPDATE sessions SET calls_since_taint = ?", (COUNT_CAP,))
+    with s._transaction() as conn:  # the window used up: only the hourly touch writes
+        conn.execute("UPDATE sessions SET taint_asks = ?", (COUNT_CAP,))
     for _ in range(40):  # 40 days of activity, one call a day
         now[0] += 24 * 3600
         s.tool_call(SID, "Read", sources=SOURCES, window=8)
@@ -263,14 +285,22 @@ def test_cleanup_drops_the_least_recently_active_above_the_cap(tmp_path: Path) -
 # ------------------------------------------------------------------------------ concurrency
 
 
+def _call_and_ask(s: SessionStore) -> None:
+    s.tool_call(SID, "Read", sources=SOURCES, window=1000)
+    s.taint_asked(SID)
+
+
 def test_parallel_tool_calls_lose_no_update(store: SessionStore) -> None:
     call(store, "WebFetch")
-    threads = [threading.Thread(target=lambda: [call(store) for _ in range(100)]) for _ in range(8)]
+    threads = [
+        threading.Thread(target=lambda: [_call_and_ask(store) for _ in range(100)])
+        for _ in range(8)
+    ]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    assert store.facts(SID, window=1000).calls_since_taint == 801
+    assert store.facts(SID, window=1000).taint_asks == 800
 
 
 def test_two_stores_on_one_file_lose_no_update(tmp_path: Path) -> None:
@@ -278,11 +308,7 @@ def test_two_stores_on_one_file_lose_no_update(tmp_path: Path) -> None:
     a, b = SessionStore(path), SessionStore(path)
     a.tool_call(SID, "WebFetch", sources=SOURCES, window=8)
     threads = [
-        threading.Thread(
-            target=lambda s=s: [
-                s.tool_call(SID, "Read", sources=SOURCES, window=8) for _ in range(60)
-            ]
-        )
+        threading.Thread(target=lambda s=s: [_call_and_ask(s) for _ in range(60)])
         for s in (a, b, a, b)
     ]
     for t in threads:
@@ -291,7 +317,7 @@ def test_two_stores_on_one_file_lose_no_update(tmp_path: Path) -> None:
         t.join()
     assert a.error_count == 0
     assert b.error_count == 0
-    assert a.facts(SID, window=1000).calls_since_taint == 241
+    assert a.facts(SID, window=1000).taint_asks == 240
     a.close()
     b.close()
 
@@ -299,7 +325,7 @@ def test_two_stores_on_one_file_lose_no_update(tmp_path: Path) -> None:
 def _count_in_process(path: str, n: int) -> None:
     s = SessionStore(path)
     for _ in range(n):
-        s.tool_call(SID, "Read", sources=SOURCES, window=8)
+        _call_and_ask(s)
     s.close()
 
 
@@ -312,11 +338,11 @@ def test_two_processes_lose_no_update(tmp_path: Path) -> None:
     for p in procs:
         p.start()
     for _ in range(100):
-        first.tool_call(SID, "Read", sources=SOURCES, window=8)
+        _call_and_ask(first)
     for p in procs:
         p.join(60)
         assert p.exitcode == 0
-    assert first.facts(SID, window=1000).calls_since_taint == 301
+    assert first.facts(SID, window=1000).taint_asks == 300
     first.close()
 
 
@@ -387,4 +413,6 @@ def test_nothing_but_names_and_counters_is_stored(store: SessionStore) -> None:
     store.tool_result(SID, "WebFetch", sources=SOURCES)
     with store._transaction() as conn:
         columns = [row[1] for row in conn.execute("PRAGMA table_info(sessions)")]
-    assert columns == ["session_id", "first_seen", "last_seen", "calls_since_taint", "sources"]
+        marks = [row[1] for row in conn.execute("PRAGMA table_info(project_marks)")]
+    assert columns == ["session_id", "first_seen", "last_seen", "taint_asks", "sources"]
+    assert marks == ["location", "first_marked", "last_marked", "sources"]

@@ -43,6 +43,10 @@ The contract is docs/m1-design.md ("模块 D"); the short version:
   (``SessionFacts.read_untrusted``, sticky), and when the session state is not known (the usual
   direction: only deny and ask rules may use the field). The facts come from the caller
   (``evaluate(..., session=...)``); none given means a fresh session (``boundkeep test``).
+* ``project_written_after_untrusted`` matches when the action's project directory holds, or lies
+  below, a place that a session which had read untrusted content wrote to (``SessionFacts.marks``
+  from every session, ``session.marks.marked``), and when the marks are not known; an unknown
+  project matches once any mark exists. Only deny and ask rules may use it.
 * A gray ``Action`` never matches an allow rule, and neither does an ``Action`` with ``wrappers``
   (``sudo ls``, ``env X=1 ls``: a different action than ``ls``); deny and ask rules still match
   the known parts of both.
@@ -68,6 +72,7 @@ from boundkeep.normalize.psprograms import is_cmdlet_name
 from boundkeep.policy.glob import MAX_KEY_LENGTH, first_match
 from boundkeep.policy.schema import Match, Policy, Rule, mcp_declared_read_only
 from boundkeep.session.facts import FRESH, SessionFacts
+from boundkeep.session.marks import marked
 
 # the gray reason the normalizer gives every MCP call (normalize/event.py MCP_GRAY; not imported
 # from there: the matcher stays free of the normalizer's internals)
@@ -406,6 +411,21 @@ def _match_detail(
                 f"the session read untrusted content ({', '.join(session.sources[:3]) or '?'})"
                 if session.known
                 else "the session state is not known (a match)"
+            )
+        )
+    if match.project_written_after_untrusted is not None:
+        if session.marks_known and not marked(
+            action.project, action.project_resolved, session.marks
+        ):
+            return None
+        if rule.action == "allow":
+            return None  # the schema refuses this combination; never loosen if one slips through
+        details.append(
+            "project_written_after_untrusted: "
+            + (
+                "a session that had read untrusted content wrote into this project"
+                if session.marks_known
+                else "the project marks are not known (a match)"
             )
         )
     return tuple(details)

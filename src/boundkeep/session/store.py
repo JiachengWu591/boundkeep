@@ -1,18 +1,24 @@
 """Session state in SQLite (WAL): taint marks and the task intent, per Claude Code ``session_id``.
 
-What is stored, and nothing else: per session when it was first and last seen, how many tool calls
-have passed since the latest call of a taint source (NULL: none so far) and the names of the source
-tools (at most ``MAX_SOURCES``); and, only while an LLM audit is configured, the user's latest
-prompts as ``intent.extract_intent`` leaves them (IDE blocks removed, pasted text left out, secrets
-redacted, cut). No tool input, no tool output, no file content.
+What is stored, and nothing else: per session when it was first and last seen, how many calls the
+taint step has turned into an ask since the latest call of a taint source (NULL: no source so far)
+and the names of the source tools (at most ``MAX_SOURCES``); and, only while an LLM audit is
+configured, the user's latest prompts as ``intent.extract_intent`` leaves them (IDE blocks removed,
+pasted text left out, secrets redacted, cut). Apart from the sessions, the places written by
+sessions that read untrusted content (``session.marks``: canonical keys of project directories or
+paths, at most ``MAX_MARKS``), with when they were marked and the names of the source tools. No
+tool input, no tool output, no file content.
 
-Taint (PROJECT_SPEC.md §7): a tool call is *tainted* when it is one of the ``window`` calls after a
-call of a taint source; a session has *read untrusted content* once any source was called (sticky:
-the window does not end it, only a new session does: ``/clear`` gives a new session_id, resume and
+Taint (PROJECT_SPEC.md §7, revision 7): a session is *tainted* from a call of a taint source until
+the taint step has turned ``window`` calls into an ask (``taint_asked``; P-F6: harmless calls do not
+use the window up); a session has *read untrusted content* once any source was called (sticky: the
+window does not end it, only a new session does: ``/clear`` gives a new session_id, resume and
 compact keep it, docs/hook-behavior.md E9). A source is marked when its PreToolUse arrives and again
 when its PostToolUse does: the hook client drops a failed PostToolUse silently (it has no decision
 to degrade to), so marking only there would fail open; marking at PreToolUse may count a call that
-is then refused, which is the safe direction.
+is then refused, which is the safe direction. Project marks (``mark_written``; P-F1) outlive the
+sessions: cleanup leaves them, only ``clear_marks`` (the user's ``boundkeep taint clear``) removes
+them.
 
 Concurrency: one connection and one lock per store; every read-modify-write runs in a ``BEGIN
 IMMEDIATE`` transaction, so the call counter of parallel tool calls never loses an update, also
@@ -39,12 +45,14 @@ import sqlite3
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, replace
 
 from boundkeep.session.facts import UNKNOWN, SessionFacts, is_taint_source
+from boundkeep.session.marks import ALL_LOCATIONS, MAX_MARKS, location_key, within
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 RETENTION_S = 30 * 24 * 3600
 MAX_SESSIONS = 5000
 MAX_SOURCES = 16
@@ -54,17 +62,25 @@ MAX_PROMPTS_KEPT = 10
 MAX_PROMPT_CHARS = 4000
 BUSY_TIMEOUT_S = 2.0
 TOUCH_EVERY_S = 3600.0  # last_seen of a session that needs no other write is refreshed this often
-# calls_since_taint stops counting here: beyond the largest window the policy allows
+# taint_asks stops counting here: beyond the largest window the policy allows
 # (policy.schema.MAX_TAINT_WINDOW, 1000; a unit test keeps the two in step) it changes nothing.
 # Not imported: the policy package imports the matcher, which imports session.facts.
 COUNT_CAP = 1001
 
+_MARKS_TABLE = (
+    "CREATE TABLE IF NOT EXISTS project_marks ("
+    " location TEXT PRIMARY KEY,"
+    " first_marked REAL NOT NULL,"
+    " last_marked REAL NOT NULL,"
+    " sources TEXT NOT NULL DEFAULT '[]'"
+    ") WITHOUT ROWID"
+)
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS sessions ("
     " session_id TEXT PRIMARY KEY,"
     " first_seen REAL NOT NULL,"
     " last_seen REAL NOT NULL,"
-    " calls_since_taint INTEGER,"
+    " taint_asks INTEGER,"
     " sources TEXT NOT NULL DEFAULT '[]'"
     ") WITHOUT ROWID",
     "CREATE INDEX IF NOT EXISTS sessions_last_seen ON sessions (last_seen)",
@@ -75,7 +91,26 @@ _SCHEMA = (
     " text TEXT NOT NULL,"
     " PRIMARY KEY (session_id, seq)"
     ") WITHOUT ROWID",
+    _MARKS_TABLE,
 )
+# Schema 1 counted every call since the latest source; schema 2 counts the taint step's asks
+# (revision 7, P-F6). An old count says nothing about asks, so every session that read untrusted
+# content starts its window again (the safe direction).
+_MIGRATE_1_TO_2 = (
+    "ALTER TABLE sessions RENAME COLUMN calls_since_taint TO taint_asks",
+    "UPDATE sessions SET taint_asks = 0 WHERE taint_asks IS NOT NULL",
+    _MARKS_TABLE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Mark:
+    """One project mark as ``boundkeep taint list`` and ``doctor`` show it."""
+
+    location: str
+    first_marked: float
+    last_marked: float
+    sources: tuple[str, ...]
 
 
 def usable_session_id(value: object) -> str | None:
@@ -162,16 +197,22 @@ class SessionStore:
         # free pages; the database is small, so the extra writes cost nothing that matters
         conn.execute("PRAGMA secure_delete=ON")
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, SCHEMA_VERSION):
+        if version not in (0, 1, SCHEMA_VERSION):
             raise SessionStoreError(
                 f"the session database has schema version {version}, this boundkeep knows "
                 f"{SCHEMA_VERSION}: stop the daemon and delete {os.path.basename(self._path)}*"
             )
-        if version == 0:
+        if version != SCHEMA_VERSION:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                for statement in _SCHEMA:
-                    conn.execute(statement)
+                # read again inside the lock: another process may have created or migrated it
+                current = conn.execute("PRAGMA user_version").fetchone()[0]
+                if current == 0:
+                    for statement in _SCHEMA:
+                        conn.execute(statement)
+                elif current == 1:
+                    for statement in _MIGRATE_1_TO_2:
+                        conn.execute(statement)
                 conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                 conn.execute("COMMIT")
             except BaseException:
@@ -231,53 +272,149 @@ class SessionStore:
         window: int,
         intents: int = 0,
     ) -> SessionFacts:
-        """Count one PreToolUse and return the state THIS call is judged in.
+        """Note one PreToolUse and return the state THIS call is judged in.
 
         The call's own taint is the state before it: a source call is not tainted by itself. A
-        call of a source then marks the session (the next ``window`` calls are tainted).
+        call of a source then marks the session (tainted until the taint step has asked ``window``
+        times, ``taint_asked``). The project marks of every session come along (``marks``).
         ``intents`` > 0 also returns that many of the latest task intents.
         """
         sid = usable_session_id(session_id)
         if sid is None:
-            return UNKNOWN
+            return self._unknown_with_marks()
         name = tool if isinstance(tool, str) else ""
         try:
             now = self._clock()
             source = is_taint_source(name, sources)
             with self._transaction() as conn:
                 row = conn.execute(
-                    "SELECT calls_since_taint, sources, last_seen FROM sessions "
-                    "WHERE session_id = ?",
+                    "SELECT taint_asks, sources, last_seen FROM sessions WHERE session_id = ?",
                     (sid,),
                 ).fetchone()
-                facts = _facts(row, window)
+                facts = _with_marks(_facts(row, window), conn)
                 if source:
                     current = _sources_of(row[1]) if row is not None else []
                     conn.execute(
                         "INSERT INTO sessions (session_id, first_seen, last_seen, "
-                        "calls_since_taint, sources) VALUES (?, ?, ?, 0, ?) "
+                        "taint_asks, sources) VALUES (?, ?, ?, 0, ?) "
                         "ON CONFLICT (session_id) DO UPDATE SET last_seen = excluded.last_seen, "
-                        "calls_since_taint = 0, sources = excluded.sources",
+                        "taint_asks = 0, sources = excluded.sources",
                         (sid, now, now, _with_source(current, name)),
                     )
-                elif row is not None:
-                    count = row[0]
-                    if count is not None and count < COUNT_CAP:
-                        conn.execute(
-                            "UPDATE sessions SET calls_since_taint = ?, last_seen = ? "
-                            "WHERE session_id = ?",
-                            (count + 1, now, sid),
-                        )
-                    elif now - float(row[2]) >= TOUCH_EVERY_S:
-                        conn.execute(
-                            "UPDATE sessions SET last_seen = ? WHERE session_id = ?", (now, sid)
-                        )
+                elif row is not None and now - float(row[2]) >= TOUCH_EVERY_S:
+                    conn.execute(
+                        "UPDATE sessions SET last_seen = ? WHERE session_id = ?", (now, sid)
+                    )
                 if intents > 0:
                     facts = _with_intents(facts, conn, sid, intents)
             return facts
         except Exception as exc:  # noqa: BLE001 - unknown state is answered as tainted, never raised
             self._failed("tool call", exc)
             return UNKNOWN
+
+    def _unknown_with_marks(self) -> SessionFacts:
+        """No usable session id: the session is unknown (tainted), the marks are still read."""
+        try:
+            with self._transaction() as conn:
+                return _with_marks(UNKNOWN, conn)
+        except Exception as exc:  # noqa: BLE001 - the marks stay unknown
+            self._failed("read marks", exc)
+            return UNKNOWN
+
+    def taint_asked(self, session_id: object) -> bool:
+        """The taint step turned one of this session's calls into an ask: one call of the window
+        is used up (revision 7, P-F6). Nothing to count when no source was called."""
+        sid = usable_session_id(session_id)
+        if sid is None:
+            return False
+        try:
+            with self._transaction() as conn:
+                conn.execute(
+                    "UPDATE sessions SET taint_asks = taint_asks + 1 WHERE session_id = ? "
+                    "AND taint_asks IS NOT NULL AND taint_asks < ?",
+                    (sid, COUNT_CAP),
+                )
+            return True
+        except Exception as exc:  # noqa: BLE001 - reported through last_error
+            self._failed("taint ask", exc)
+            return False
+
+    def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool:
+        """Mark the places a call of a session that read untrusted content may write to
+        (``marks.written_locations``; revision 7, P-F1). Beyond ``MAX_MARKS`` places one mark
+        for every place is stored instead of new ones (never dropping a mark)."""
+        wanted = [loc for loc in dict.fromkeys(locations) if location_key(loc) is not None]
+        if not wanted:
+            return True
+        names = [_source_name(s) for s in sources if isinstance(s, str)][:MAX_SOURCES]
+        try:
+            now = self._clock()
+            with self._transaction() as conn:
+                count = int(conn.execute("SELECT COUNT(*) FROM project_marks").fetchone()[0])
+                known = {
+                    loc
+                    for loc in wanted
+                    if conn.execute(
+                        "SELECT 1 FROM project_marks WHERE location = ?", (loc,)
+                    ).fetchone()
+                }
+                new = [loc for loc in wanted if loc not in known]
+                if new and count + len(new) > MAX_MARKS:
+                    new = [ALL_LOCATIONS]
+                for loc in [*known, *new]:
+                    row = conn.execute(
+                        "SELECT sources FROM project_marks WHERE location = ?", (loc,)
+                    ).fetchone()
+                    merged = _sources_of(row[0]) if row is not None else []
+                    for name in names:
+                        if name not in merged and len(merged) < MAX_SOURCES:
+                            merged.append(name)
+                    conn.execute(
+                        "INSERT INTO project_marks (location, first_marked, last_marked, sources) "
+                        "VALUES (?, ?, ?, ?) ON CONFLICT (location) DO UPDATE SET "
+                        "last_marked = excluded.last_marked, sources = excluded.sources",
+                        (loc, now, now, json.dumps(merged, ensure_ascii=True)),
+                    )
+            return True
+        except Exception as exc:  # noqa: BLE001 - reported through last_error
+            self._failed("mark", exc)
+            return False
+
+    def marks(self) -> list[Mark] | None:
+        """Every project mark (``boundkeep taint list``, ``doctor``); None when unreadable."""
+        try:
+            with self._transaction() as conn:
+                rows = conn.execute(
+                    "SELECT location, first_marked, last_marked, sources FROM project_marks "
+                    "ORDER BY location"
+                ).fetchall()
+            return [
+                Mark(str(r[0]), float(r[1]), float(r[2]), tuple(_sources_of(r[3]))) for r in rows
+            ]
+        except Exception as exc:  # noqa: BLE001 - reported through last_error
+            self._failed("read marks", exc)
+            return None
+
+    def clear_marks(self, directory: str | None) -> list[str] | None:
+        """Remove the marks at or below ``directory`` (a canonical key), or every mark (None);
+        the locations removed, None on failure. The user's ``boundkeep taint clear``."""
+        root = location_key(directory) if directory is not None else None
+        if directory is not None and root is None:
+            return []
+        try:
+            with self._transaction() as conn:
+                rows = conn.execute("SELECT location FROM project_marks").fetchall()
+                gone = []
+                for (loc,) in rows:
+                    key = location_key(str(loc))
+                    if root is None or (key is not None and within(key, root)):
+                        gone.append(str(loc))
+                for loc in gone:
+                    conn.execute("DELETE FROM project_marks WHERE location = ?", (loc,))
+            return gone
+        except Exception as exc:  # noqa: BLE001 - reported through last_error
+            self._failed("clear marks", exc)
+            return None
 
     def tool_result(self, session_id: object, tool: object, *, sources: tuple[str, ...]) -> bool:
         """A PostToolUse: a source's result marks the session again (the window restarts now)."""
@@ -293,9 +430,9 @@ class SessionStore:
                 ).fetchone()
                 current = _sources_of(row[0]) if row is not None else []
                 conn.execute(
-                    "INSERT INTO sessions (session_id, first_seen, last_seen, calls_since_taint, "
+                    "INSERT INTO sessions (session_id, first_seen, last_seen, taint_asks, "
                     "sources) VALUES (?, ?, ?, 0, ?) ON CONFLICT (session_id) DO UPDATE SET "
-                    "last_seen = excluded.last_seen, calls_since_taint = 0, "
+                    "last_seen = excluded.last_seen, taint_asks = 0, "
                     "sources = excluded.sources",
                     (sid, now, now, _with_source(current, name)),
                 )
@@ -340,15 +477,14 @@ class SessionStore:
         """The state a new call of a non-source tool would be judged in, without counting it."""
         sid = usable_session_id(session_id)
         if sid is None:
-            return UNKNOWN
+            return self._unknown_with_marks()
         try:
             with self._transaction() as conn:
                 row = conn.execute(
-                    "SELECT calls_since_taint, sources, last_seen FROM sessions "
-                    "WHERE session_id = ?",
+                    "SELECT taint_asks, sources, last_seen FROM sessions WHERE session_id = ?",
                     (sid,),
                 ).fetchone()
-                facts = _facts(row, window)
+                facts = _with_marks(_facts(row, window), conn)
                 if intents > 0:
                     facts = _with_intents(facts, conn, sid, intents)
             return facts
@@ -439,6 +575,18 @@ class UnavailableStore:
     def tool_result(self, session_id: object, tool: object, *, sources: tuple[str, ...]) -> bool:
         return False
 
+    def taint_asked(self, session_id: object) -> bool:
+        return False
+
+    def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool:
+        return False
+
+    def marks(self) -> list[Mark] | None:
+        return None
+
+    def clear_marks(self, directory: str | None) -> list[str] | None:
+        return None
+
     def add_prompt(self, session_id: object, text: str, *, keep: int) -> bool:
         return False
 
@@ -474,14 +622,23 @@ def _facts(row: tuple[object, ...] | None, window: int) -> SessionFacts:
     count = row[0]
     if isinstance(count, bool) or not isinstance(count, int):
         return UNKNOWN
-    since = min(count + 1, COUNT_CAP)
+    asks = max(0, min(count, COUNT_CAP))
     return SessionFacts(
         known=True,
-        tainted=since <= window,
+        tainted=asks < window,
         read_untrusted=True,
         sources=tuple(_sources_of(row[1])),
-        calls_since_taint=since,
+        taint_asks=asks,
     )
+
+
+def _with_marks(facts: SessionFacts, conn: sqlite3.Connection) -> SessionFacts:
+    """``facts`` with the project marks of every session (at most ``MAX_MARKS`` + 1 rows)."""
+    rows = conn.execute(
+        "SELECT location FROM project_marks ORDER BY location LIMIT ?", (MAX_MARKS + 1,)
+    ).fetchall()
+    marks = tuple(str(r[0]) for r in rows if isinstance(r[0], str))
+    return replace(facts, marks=marks, marks_known=True)
 
 
 def _with_intents(
@@ -492,14 +649,7 @@ def _with_intents(
         (sid, max(1, min(keep, MAX_PROMPTS_KEPT))),
     ).fetchall()
     texts = tuple(str(r[0]) for r in reversed(rows) if isinstance(r[0], str))
-    return SessionFacts(
-        known=facts.known,
-        tainted=facts.tainted,
-        read_untrusted=facts.read_untrusted,
-        sources=facts.sources,
-        calls_since_taint=facts.calls_since_taint,
-        intents=texts,
-    )
+    return replace(facts, intents=texts)
 
 
 def _create_private(path: str) -> None:

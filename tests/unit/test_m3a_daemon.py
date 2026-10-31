@@ -121,7 +121,7 @@ def test_a_web_read_makes_the_next_trusted_dev_tool_run_ask(tmp_path: Path, proj
         "tainted": True,
         "read_untrusted": True,
         "sources": ["WebFetch"],
-        "calls_since_taint": 1,
+        "taint_asks": 0,
     }
 
 

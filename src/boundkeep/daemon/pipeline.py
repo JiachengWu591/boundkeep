@@ -15,9 +15,11 @@ and allowed to send it), PostToolUse marks a call of a taint source, and every P
 and judged in its session's taint state (``session.store``; a call of a source marks the session
 there too). Rules see that state through ``session_read_untrusted``; the taint step of
 PROJECT_SPEC.md §7 turns an allow that no rule made of a sensitive action into an ask while the
-session is tainted (the LLM's allows get the same step in ``audit.verdict``). Without a session
-layer (``boundkeep test``, ``explain``, the rules-only evaluation) every call is judged as in a
-fresh session.
+session is tainted (the LLM's allows get the same step in ``audit.verdict``), and each such ask
+uses up one call of the taint window (revision 7, P-F6). A call of a session that read untrusted
+content marks the places it may write (``session.marks``; P-F1), which every session's rules see
+through ``project_written_after_untrusted``. Without a session layer (``boundkeep test``,
+``explain``, the rules-only evaluation) every call is judged as in a fresh session.
 
 M0's canary is a built-in rule of ``policy.evaluate``. If the policy file is unusable, PreToolUse
 events are answered with ``ask`` (fail closed). A deny reason reads ``boundkeep (<rule-id>): ...``;
@@ -28,7 +30,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
@@ -48,6 +50,7 @@ from boundkeep.policy.schema import (
 )
 from boundkeep.session.facts import FRESH, SessionFacts
 from boundkeep.session.intent import extract_intent
+from boundkeep.session.marks import written_locations
 
 SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
 MODE_ENFORCE = "enforce"
@@ -81,6 +84,10 @@ class SessionAccess(Protocol):
     def tool_result(
         self, session_id: object, tool: object, *, sources: tuple[str, ...]
     ) -> bool: ...
+
+    def taint_asked(self, session_id: object) -> bool: ...
+
+    def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool: ...
 
     def add_prompt(self, session_id: object, text: str, *, keep: int) -> bool: ...
 
@@ -632,9 +639,22 @@ def taint_record(facts: SessionFacts) -> dict[str, Any]:
         record["state"] = "unknown"
     if facts.sources:
         record["sources"] = [_clean(s, GRAY_PART_CHARS) for s in facts.sources[:4]]
-    if facts.calls_since_taint is not None:
-        record["calls_since_taint"] = facts.calls_since_taint
+    if facts.taint_asks is not None:
+        record["taint_asks"] = facts.taint_asks
+    if facts.marks:
+        record["marked_places"] = len(facts.marks)
+    elif not facts.marks_known:
+        record["marks"] = "unknown"
     return record
+
+
+def used_taint_window(result: Review, decision: Decision) -> bool:
+    """The taint step turned this call's allow into an ask: the pipeline's own step (a tool that
+    touches nothing) or §9.5's line on the LLM's allow (revision 7, P-F6)."""
+    if result.verdict.rule_ids == (TAINT_STEP_ID,):
+        return True
+    steps = decision.llm.get("steps") if decision.llm is not None else None
+    return isinstance(steps, (list, tuple)) and "tainted-sensitive" in steps
 
 
 def _finish(
@@ -781,7 +801,13 @@ def decide(
         scan_disk=scan_disk,
         session=facts,
     )
-    return _finish(
+    if session is not None and facts.read_untrusted:
+        # P-F1: what this session writes stays in the project after the session (marked at
+        # PreToolUse like a source call: a write that is then refused is the safe direction)
+        places = written_locations(result.actions)
+        if places:
+            session.mark_written(places, sources=facts.sources)
+    decision = _finish(
         result,
         mode,
         policy,
@@ -792,3 +818,7 @@ def decide(
         env=env,
         taint=taint,
     )
+    if session is not None and mode == MODE_ENFORCE and used_taint_window(result, decision):
+        # P-F6: only an ask the user actually gets uses up the window (audit-only asks nobody)
+        session.taint_asked(payload.get("session_id"))
+    return decision

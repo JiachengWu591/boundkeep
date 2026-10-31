@@ -1,4 +1,5 @@
-"""The ``boundkeep`` command line: init, uninstall, serve, mode, trust, log, doctor, llm check.
+"""The ``boundkeep`` command line: init, uninstall, serve, mode, trust, taint, log, doctor, llm
+check.
 
 ``init`` validates everything first (hook command, settings file, policy, a self check that
 launches the hook the way Claude Code does) and only then writes anything, so a failure leaves the
@@ -26,6 +27,7 @@ from boundkeep import (
     install,
     paths,
     settings_io,
+    taintcmd,
     trust,
 )
 from boundkeep.daemon.lifecycle import AlreadyRunning, SingleInstance, install_stop_handlers
@@ -708,6 +710,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_mode)
 
     trust.add_parser(sub)
+    taintcmd.add_parser(sub)
     evalcli.add_parser(sub)
 
     p = sub.add_parser("log", help="show the recent audit log")

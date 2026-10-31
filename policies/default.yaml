@@ -45,13 +45,16 @@ llm_audit:
   #   transport: tool_call                    # tool_call | json_object
   # `boundkeep llm check` sends one harmless request and checks the answer.
 
-# Tools whose results mark the session as tainted. A name ending in "*" is a prefix. For `window`
-# tool calls after a call of one of them the session is tainted (an allow no rule made, such as the
-# LLM audit's, of an action with a sensitive tag then asks); rules with session_read_untrusted see
-# any such call in the session, however long ago.
+# Tools whose results mark the session as tainted. A name ending in "*" is a prefix; the MCP
+# resource tools are not named mcp__*. After a call of one of them the session is tainted: an allow
+# no rule made, such as the LLM audit's, of an action with a sensitive tag asks, until `window` such
+# asks have been made (calls that were not changed do not count). Rules with session_read_untrusted
+# see any such call in the session, however long ago; rules with project_written_after_untrusted
+# see what such a session wrote, from every session, until `boundkeep taint clear`. After changing
+# the sources, run `boundkeep init` again so the PostToolUse hook matches the new names.
 taint:
-  sources: [WebFetch, WebSearch, "mcp__*"]
-  window: 8
+  sources: [WebFetch, WebSearch, "mcp__*", ListMcpResourcesTool, ReadMcpResourceTool, ReadMcpResourceDirTool]
+  window: 3
   sensitive_tags: [network_egress, file_write, exec, secret_access, config_tamper]
 
 # MCP tools you declare read-only: "mcp__server__tool" or "mcp__server__prefix*" (the server in
@@ -92,7 +95,9 @@ rules:
     # them (and, with --python or --hook-style, names the interpreter they run), `serve` starts a
     # second daemon, `trust` edits trusted_projects (every `trust` form is refused, `trust list`
     # too: the rule language sees the subcommand only; the user runs it in a terminal, and
-    # `boundkeep doctor` shows the list), and `--reset-policy`, `--purge`, `--rotate-endpoint` and `--home` replace the
+    # `boundkeep doctor` shows the list), `taint clear` removes the project marks that make dev
+    # tools ask after untrusted content (`taint list` is refused with it, for the same reason),
+    # and `--reset-policy`, `--purge`, `--rotate-endpoint` and `--home` replace the
     # policy, delete the audit log, change the endpoint or point it all somewhere else. The
     # path rules above cannot see any of that because boundkeep itself writes the files. These
     # are for the user's own terminal, never for the agent. The subcommand rule needs the
@@ -100,9 +105,9 @@ rules:
     tool: [Bash, PowerShell]
     match:
       program: [boundkeep, boundkeep-hook]
-      subcommand: [mode, uninstall, init, serve, trust]
+      subcommand: [mode, uninstall, init, serve, trust, taint]
     action: deny
-    reason: "boundkeep's own mode, uninstall, init, serve and trust commands change the gate and are not allowed for the agent"
+    reason: "boundkeep's own mode, uninstall, init, serve, trust and taint commands change the gate and are not allowed for the agent"
   - id: deny-boundkeep-state-flags
     # The flag half of deny-boundkeep-state-commands: these options only exist on commands that
     # replace the policy, delete the audit log, rewrite the hook registration or relocate the
@@ -1417,6 +1422,17 @@ rules:
       session_read_untrusted: true
     action: ask
     reason: "this session has read web or MCP content: running the project's own code needs confirmation"
+  - id: ask-devtools-after-untrusted-project-write
+    # The other half of write-then-run (X1 review of M3a, F1): the sticky bit stays with its
+    # session, but a file written there stays in the project. Once a session that had read web or
+    # MCP content wrote into a project, these tools ask in EVERY session there, until the user
+    # runs `boundkeep taint clear` in a terminal. Marks that cannot be read count as written.
+    tool: [Bash, PowerShell]
+    match:
+      program: [pytest, ruff, mypy, black, isort, flake8, pylint]
+      project_written_after_untrusted: true
+    action: ask
+    reason: "a session that read web/MCP content wrote into this project (boundkeep taint clear lifts this)"
   # ---- allow rules for everyday use ----------------------------------------------------------
   # With defaults.emit_allow false an `allow` verdict is "no decision": Claude Code's own permission
   # flow still decides, so these rules only stop boundkeep from asking about actions that are well
@@ -2674,6 +2690,18 @@ tests:
   - { tool: Bash, tainted: true, input: { command: "git status" }, expect: allow }
   - { tool: Read, tainted: true, input: { file_path: "./src/app.py" }, expect: allow }
   - { tool: PowerShell, platform: [windows], tainted: true, input: { command: "ruff check ." }, expect: ask }
+  # A session that had read web or MCP content wrote into the project (X1 review of M3a, F1): the
+  # dev tools ask in a fresh session too; other commands are not affected.
+  - { tool: Bash, project_marked: true, input: { command: "pytest -q tests" }, expect: ask }
+  - { tool: Bash, project_marked: true, input: { command: "python -m mypy src" }, expect: ask }
+  - { tool: Bash, project_marked: true, input: { command: "pytest .env" }, expect: deny }
+  - { tool: Bash, project_marked: true, input: { command: "git status" }, expect: allow }
+  - { tool: Write, project_marked: true, input: { file_path: "./src/app.py", content: "x" }, expect: allow }
+  - { tool: PowerShell, platform: [windows], project_marked: true, input: { command: "ruff check ." }, expect: ask }
+  - { tool: Bash, input: { command: "boundkeep taint clear --all" }, expect: deny }
+  - { tool: Bash, input: { command: "boundkeep taint list" }, expect: deny }
+  - { tool: Bash, input: { command: "uv run boundkeep taint clear --project-dir ." }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "boundkeep.exe taint clear --all" }, expect: deny }
   # Configuration files of the dev tools that load code named in them.
   - { tool: Write, input: { file_path: "mypy.ini", content: "x" }, expect: ask }
   - { tool: Write, input: { file_path: ".mypy.ini", content: "x" }, expect: ask }

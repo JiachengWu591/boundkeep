@@ -496,6 +496,7 @@ MATCH_FIELD_SAMPLES: dict[str, Any] = {
     "mcp_server": ["github"],
     "mcp_read_only": True,
     "session_read_untrusted": True,
+    "project_written_after_untrusted": True,
 }
 
 

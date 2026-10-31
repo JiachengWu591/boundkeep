@@ -60,8 +60,17 @@ Mode = Literal["enforce", "audit-only"]
 
 MAX_TAINT_SOURCES = 64
 MAX_TAINT_SOURCE_LENGTH = 128
-DEFAULT_TAINT_SOURCES: tuple[str, ...] = ("WebFetch", "WebSearch", "mcp__*")
-DEFAULT_TAINT_WINDOW = 8
+# The MCP resource tools are not named mcp__* (Claude Code 2.1.304, docs/hook-behavior.md;
+# PROJECT_SPEC.md revision 7, P-F2).
+DEFAULT_TAINT_SOURCES: tuple[str, ...] = (
+    "WebFetch",
+    "WebSearch",
+    "mcp__*",
+    "ListMcpResourcesTool",
+    "ReadMcpResourceTool",
+    "ReadMcpResourceDirTool",
+)
+DEFAULT_TAINT_WINDOW = 3
 MAX_TAINT_WINDOW = 1000
 # The risk tags of normalize.model.RiskTag (kept equal by a unit test; the schema does not import
 # the normalizer's model for a Literal)
@@ -132,10 +141,12 @@ class Taint(BaseModel):
     it has no PostToolUse matcher: ``taint_sources_to_matcher`` refuses it and callers must
     handle that case themselves (for example by not registering the PostToolUse hook).
 
-    ``window``: the session is "tainted" for the next ``window`` tool calls after a call of a
-    source. ``sensitive_tags``: while tainted, an allow that no rule made (the LLM audit's) of an
-    action with one of these risk tags becomes an ask. Neither touches an allow that a rule made;
-    rules that care about untrusted content say so with ``session_read_untrusted``.
+    ``window``: after a call of a source the session is "tainted" until that step has turned
+    ``window`` calls into an ask (revision 7, P-F6: calls it did not change do not count).
+    ``sensitive_tags``: while tainted, an allow that no rule made (the LLM audit's) of an action
+    with one of these risk tags becomes an ask. Neither touches an allow that a rule made; rules
+    that care about untrusted content say so with ``session_read_untrusted`` and
+    ``project_written_after_untrusted``.
     """
 
     model_config = _STRICT
@@ -1046,6 +1057,10 @@ class Match(BaseModel):
     # the agent's context. Sticky (the taint window does not apply); a session whose state is not
     # known counts as such. Only for deny and ask rules (see Rule._session_fields_only_tighten).
     session_read_untrusted: _TrueOnly | None = None
+    # the action's project holds a place written by a session (ANY session) that had read
+    # untrusted content, until the user runs `boundkeep taint clear` (session.marks; revision 7,
+    # P-F1); marks that cannot be read count as such. Only for deny and ask rules.
+    project_written_after_untrusted: _TrueOnly | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1152,12 +1167,15 @@ class Rule(BaseModel):
 
     @model_validator(mode="after")
     def _session_fields_only_tighten(self) -> Rule:
-        if self.action == "allow" and self.match.session_read_untrusted is not None:
-            raise _at_error(
-                "session_read_untrusted is for deny and ask rules: an allow that only holds after "
-                "the session read untrusted content would loosen exactly the risky case",
-                "match",
-            )
+        if self.action != "allow":
+            return self
+        for name in ("session_read_untrusted", "project_written_after_untrusted"):
+            if getattr(self.match, name) is not None:
+                raise _at_error(
+                    f"{name} is for deny and ask rules: an allow that only holds after untrusted "
+                    "content was read would loosen exactly the risky case",
+                    "match",
+                )
         return self
 
     @model_validator(mode="after")
@@ -1195,6 +1213,9 @@ class PolicyTest(BaseModel):
     # the test's session has just called a taint source (inside the taint window, and
     # ``session_read_untrusted`` holds); default: a fresh session that read nothing untrusted
     tainted: bool = False
+    # some session that had read untrusted content wrote into the test's project
+    # (``project_written_after_untrusted`` holds; the session itself may be fresh)
+    project_marked: bool = False
     expect: Expect
 
 

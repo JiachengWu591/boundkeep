@@ -10,8 +10,8 @@ left of it), so every case here was reproduced independently from the one-line d
 * F5: a resolver that hangs no longer holds an attempt of the OpenAI-compatible adapter past its
   budget, so it no longer leaves stuck decision workers behind that turn a rule's deny into the
   daemon's "busy" ask.
-* F1, F6 and the MCP resource tools (looked at for F2) need a decision on the spec (X5): they are
-  kept as strict ``xfail`` reproductions until then.
+* F1, F6 and the MCP resource tools (looked at for F2) needed a decision on the spec (X5); the
+  user accepted the proposals (PROJECT_SPEC.md revision 7) and their reproductions pass now.
 
 Inert payloads only: ``.invalid`` hosts, the ``BKCANARY`` marker, made-up machine paths; the LLM is
 ``FakeBackend`` (a model that always allows) or the loopback fake server with a blocked resolver.
@@ -303,10 +303,10 @@ def test_a_hanging_resolver_does_not_turn_a_rule_deny_into_an_ask(
     h.daemon._close_session_and_auditors()
 
 
-# ---------------------------------------- waiting for a decision on the spec (X5, see the report)
+# ------------------------------------- decided on the spec (revision 7: P-F1, P-F6, P-F2); see
+# tests/unit/test_m3a_x1_decisions.py for the rest of their tests
 
 
-@pytest.mark.xfail(strict=True, reason="F1: X5 proposal P-F1 waits for the user's decision")
 def test_f1_a_new_session_does_not_run_a_dev_tool_unasked_after_another_read_the_web(
     tmp_path: Path,
 ) -> None:
@@ -322,7 +322,6 @@ def test_f1_a_new_session_does_not_run_a_dev_tool_unasked_after_another_read_the
         store.close()
 
 
-@pytest.mark.xfail(strict=True, reason="F6: X5 proposal P-F6 waits for the user's decision")
 def test_f6_padding_calls_do_not_use_up_the_taint_window(tmp_path: Path) -> None:
     store = SessionStore(str(tmp_path / "s.sqlite"))
     pol = policy(llm=True)
@@ -338,7 +337,6 @@ def test_f6_padding_calls_do_not_use_up_the_taint_window(tmp_path: Path) -> None
         store.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MCP resource tools: X5 proposal P-F2 waits for a decision")
 def test_f2_reading_an_mcp_resource_marks_the_session(tmp_path: Path) -> None:
     store = SessionStore(str(tmp_path / "s.sqlite"))
     pol = policy(trusted=True)

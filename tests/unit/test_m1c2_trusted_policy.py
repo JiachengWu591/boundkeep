@@ -184,7 +184,14 @@ def test_trust_is_a_denied_boundkeep_subcommand(name: str) -> None:
     rules = _rules(name)
     rule = rules["deny-boundkeep-state-commands"]
     assert rule["action"] == "deny"
-    assert set(rule["match"]["subcommand"]) == {"mode", "uninstall", "init", "serve", "trust"}
+    assert set(rule["match"]["subcommand"]) == {
+        "mode",
+        "uninstall",
+        "init",
+        "serve",
+        "trust",
+        "taint",
+    }
     assert rule["match"]["program"] == ["boundkeep", "boundkeep-hook"]
 
 

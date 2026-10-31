@@ -14,26 +14,32 @@ class SessionFacts:
     """The taint state a tool call is judged in, and the task intents when they were asked for.
 
     ``known`` False means there is no usable state (no session id, the store failed); ``tainted``
-    and ``read_untrusted`` are then True (fail closed).
+    and ``read_untrusted`` are then True and the project marks unknown (fail closed).
     """
 
     known: bool
-    tainted: bool  # one of the taint.window calls after a call of a taint source
+    # a taint source was called and the taint step has turned fewer than taint.window calls into
+    # an ask since (PROJECT_SPEC.md §7, revision 7, P-F6)
+    tainted: bool
     read_untrusted: bool  # a taint source was called at some point in this session (sticky)
     sources: tuple[str, ...] = ()
-    calls_since_taint: int | None = None
+    taint_asks: int | None = None  # the asks of the taint step since the latest source call
     intents: tuple[str, ...] = ()
+    # places written by sessions that read untrusted content, from ANY session (``session.marks``;
+    # revision 7, P-F1); ``marks_known`` False: they could not be read (every project counts)
+    marks: tuple[str, ...] = ()
+    marks_known: bool = True
 
 
 # A session that read nothing untrusted: what ``boundkeep test`` and the rules-only evaluation use.
 FRESH = SessionFacts(known=True, tainted=False, read_untrusted=False)
-UNKNOWN = SessionFacts(known=False, tainted=True, read_untrusted=True)
+UNKNOWN = SessionFacts(known=False, tainted=True, read_untrusted=True, marks_known=False)
 
 
 def tainted_facts(sources: tuple[str, ...] = ("WebFetch",)) -> SessionFacts:
     """A session whose previous tool call was a taint source (policy tests with ``tainted``)."""
     return SessionFacts(
-        known=True, tainted=True, read_untrusted=True, sources=sources, calls_since_taint=1
+        known=True, tainted=True, read_untrusted=True, sources=sources, taint_asks=0
     )
 
 

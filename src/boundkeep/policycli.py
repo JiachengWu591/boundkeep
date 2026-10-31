@@ -13,7 +13,8 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from typing import Any
 
 from boundkeep import console, hook_main, paths, protocol
@@ -28,6 +29,7 @@ from boundkeep.policy import (
     parse_policy_text,
 )
 from boundkeep.session.facts import FRESH, SessionFacts, tainted_facts
+from boundkeep.session.marks import ALL_LOCATIONS
 
 EXIT_OK = 0
 EXIT_PROBLEM = 1
@@ -146,12 +148,14 @@ def cmd_test(args: argparse.Namespace) -> int:
                 case.cwd,
                 case.project_dir,
                 case.session_id,
-                tainted_facts() if case.tainted else FRESH,
+                _test_session(case.tainted, case.project_marked),
             )
             got = result.verdict.decision
             label = f"#{index} {case.tool} {json.dumps(case.input.thaw(), ensure_ascii=False)[:90]}"
             if case.tainted:
                 label += " (tainted session)"
+            if case.project_marked:
+                label += " (marked project)"
             if got == case.expect:
                 console.out(f"  [PASS] {label} -> {got}")
             else:
@@ -238,8 +242,21 @@ class _FixedSession:
     def tool_result(self, session_id: object, tool: object, *, sources: tuple[str, ...]) -> bool:
         return True
 
+    def taint_asked(self, session_id: object) -> bool:
+        return False
+
+    def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool:
+        return False
+
     def add_prompt(self, session_id: object, text: str, *, keep: int) -> bool:
         return False
+
+
+def _test_session(tainted: bool, project_marked: bool) -> SessionFacts:
+    """The session a policy test is judged in: fresh, tainted, and/or with its project marked
+    (one mark for every place: ``session.marks.ALL_LOCATIONS``)."""
+    facts = tainted_facts() if tainted else FRESH
+    return replace(facts, marks=(ALL_LOCATIONS,)) if project_marked else facts
 
 
 def _runtime(policy: Policy, env: Mapping[str, str], home: str | None) -> tuple[Policy, str | None]:

@@ -16,6 +16,7 @@ from boundkeep.normalize.model import RiskTag
 from boundkeep.policy import PolicyError, default_policy_text, parse_policy_text
 from boundkeep.policy.schema import (
     DEFAULT_SENSITIVE_TAGS,
+    DEFAULT_TAINT_SOURCES,
     EXTRA_BODY_RESERVED,
     MAX_TAINT_WINDOW,
     RiskTagName,
@@ -43,7 +44,7 @@ def test_the_risk_tag_names_match_the_normalizer() -> None:
 
 def test_taint_window_and_sensitive_tags_have_defaults_and_bounds() -> None:
     policy = parse("")
-    assert policy.taint.window == 8
+    assert policy.taint.window == 3  # revision 7, P-F6: the window counts asks, not calls
     assert policy.taint.sensitive_tags == DEFAULT_SENSITIVE_TAGS
     assert parse("taint:\n  window: 1\n").taint.window == 1
     assert parse(f"taint:\n  window: {MAX_TAINT_WINDOW}\n").taint.window == MAX_TAINT_WINDOW
@@ -132,8 +133,9 @@ def test_the_new_rule_lists_the_dev_tools_and_is_the_same_in_both_policies() -> 
 @pytest.mark.parametrize("name", ["default", "strict"])
 def test_the_shipped_policies_state_the_taint_settings(name: str) -> None:
     data = yaml.safe_load((ROOT / "policies" / f"{name}.yaml").read_text(encoding="utf-8"))
-    assert data["taint"]["window"] == 8
+    assert data["taint"]["window"] == 3
     assert set(data["taint"]["sensitive_tags"]) == set(typing.get_args(RiskTag))
+    assert tuple(data["taint"]["sources"]) == DEFAULT_TAINT_SOURCES
 
 
 # ------------------------------------------------------------------------------ llm check

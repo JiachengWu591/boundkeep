@@ -41,6 +41,8 @@ from boundkeep.ipc import client as ipc_client
 from boundkeep.ipc.endpoint import TRANSPORT_NAMED_PIPE, Endpoint, EndpointError, read_endpoint
 from boundkeep.logstore import AuditLog
 from boundkeep.policy import PolicyError, load_policy
+from boundkeep.session.marks import ALL_LOCATIONS
+from boundkeep.session.store import SessionStore, SessionStoreError
 
 OK, WARN, FAIL, INFO = "ok", "warn", "fail", "info"
 _PING_TIMEOUT_S = 3.0
@@ -721,6 +723,43 @@ def _redirects(entry: str) -> str | None:
     return None
 
 
+def check_project_marks(home: str) -> list[Check]:
+    """The project marks (PROJECT_SPEC.md §7, revision 7, P-F1): places written by sessions that
+    had read untrusted content; the dev tools ask in projects that hold one. Read-only: the
+    database is not created when it does not exist."""
+    name = "project-marks"
+    path = paths.session_db_file(home)
+    if not os.path.exists(path):
+        return [Check(name, INFO, "no project marks")]
+    try:
+        store = SessionStore(path)
+    except SessionStoreError as exc:
+        return [Check(name, WARN, f"the project marks cannot be read ({exc})")]
+    try:
+        marks = store.marks()
+    finally:
+        store.close()
+    if marks is None:
+        return [Check(name, WARN, f"the project marks cannot be read ({store.last_error})")]
+    if not marks:
+        return [Check(name, INFO, "no project marks")]
+    shown = ", ".join(
+        "every project" if m.location == ALL_LOCATIONS else trust.printable_entry(m.location, 120)
+        for m in marks[:5]
+    )
+    more = f" and {len(marks) - 5} more" if len(marks) > 5 else ""
+    return [
+        Check(
+            name,
+            INFO,
+            f"{len(marks)} place(s) written by sessions that had read untrusted content, so the "
+            f"dev tools ask in projects that hold one: {shown}{more}",
+            "after checking what was written, run 'boundkeep taint clear --project-dir <dir>' "
+            "in a terminal ('boundkeep taint list' shows them all)",
+        )
+    ]
+
+
 def check_trusted_projects(home: str) -> list[Check]:
     """The ``trusted_projects`` list: what it holds, stale or redirected entries, redundant ones.
 
@@ -1122,6 +1161,7 @@ def run_checks(project_dir: str, home: str | None = None, *, dir_given: bool = T
     checks += _guard("scope", lambda: check_scope(project_dir, dir_given, layers))
     checks += _guard("emit-allow", lambda: check_emit_allow(home, layers))
     checks += _guard("trusted-projects", lambda: check_trusted_projects(home))
+    checks += _guard("project-marks", lambda: check_project_marks(home))
     checks += _guard("hook-command", lambda: check_hook_command_self_test(layers))
     checks += _guard("managed-settings", check_managed_settings)
     checks += _guard("workspace-trust", lambda: check_workspace_trust(project_dir))

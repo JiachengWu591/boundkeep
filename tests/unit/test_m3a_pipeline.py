@@ -150,7 +150,9 @@ def test_padding_calls_do_not_wait_out_the_sticky_bit(store: SessionStore) -> No
     run = decide(bash("python -m pytest -q"), pol, store=store)
     assert run.decision == protocol.DECISION_ASK
     assert run.taint is not None
-    assert run.taint["tainted"] is False
+    # revision 7 (P-F6): padding no longer ends the window either; the sticky bit never ended
+    assert run.taint["tainted"] is True
+    assert run.taint["taint_asks"] == 0
     assert run.taint["read_untrusted"] is True
 
 
@@ -165,7 +167,12 @@ def test_an_unknown_session_state_asks_for_the_dev_tools(tmp_path: Path) -> None
     pol = policy(trusted=True)
     run = decide(bash("pytest -q"), pol, store=UnavailableStore("broken"))
     assert run.decision == protocol.DECISION_ASK
-    assert run.taint == {"tainted": True, "read_untrusted": True, "state": "unknown"}
+    assert run.taint == {
+        "tainted": True,
+        "read_untrusted": True,
+        "state": "unknown",
+        "marks": "unknown",
+    }
 
 
 def test_a_broken_policy_still_counts_and_marks_the_call(store: SessionStore) -> None:

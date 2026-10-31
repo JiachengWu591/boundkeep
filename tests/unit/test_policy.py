@@ -33,6 +33,15 @@ from boundkeep.policy.glob import compile_glob
 from boundkeep.policy.schema import Defaults, Taint, escape_glob_literal
 
 REPO_DEFAULT = Path(__file__).resolve().parents[2] / "policies" / "default.yaml"
+# PROJECT_SPEC.md §8 (revision 7, P-F2: the MCP resource tools are not named mcp__*)
+DEFAULT_SOURCES = (
+    "WebFetch",
+    "WebSearch",
+    "mcp__*",
+    "ListMcpResourcesTool",
+    "ReadMcpResourceTool",
+    "ReadMcpResourceDirTool",
+)
 
 FULL = """\
 version: 1
@@ -66,7 +75,7 @@ def test_minimal_file_gets_defaults() -> None:
     assert policy.version == 1
     assert policy.mode == "enforce"
     assert policy.defaults.emit_allow is False
-    assert policy.taint.sources == ("WebFetch", "WebSearch", "mcp__*")
+    assert policy.taint.sources == DEFAULT_SOURCES
 
 
 def test_full_file() -> None:
@@ -97,7 +106,7 @@ def test_policy_is_deeply_immutable_and_hashable() -> None:
 
 def test_default_taint_sources_are_a_tuple_and_cannot_be_mutated_through_an_instance() -> None:
     a, b = Taint(), Taint()
-    assert a.sources == b.sources == ("WebFetch", "WebSearch", "mcp__*")
+    assert a.sources == b.sources == DEFAULT_SOURCES
     assert isinstance(a.sources, tuple)
     assert Defaults().emit_allow is False
 
@@ -1096,7 +1105,7 @@ def test_default_policy_text_equals_the_repo_file_and_parses() -> None:
     policy = parse_policy_text(text)
     assert policy.mode == "enforce"
     assert policy.defaults.emit_allow is False
-    assert policy.taint.sources == ("WebFetch", "WebSearch", "mcp__*")
+    assert policy.taint.sources == DEFAULT_SOURCES
 
 
 def test_default_file_has_the_four_m0_keys_plus_the_m1_ones() -> None:
