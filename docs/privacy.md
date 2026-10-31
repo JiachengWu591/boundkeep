@@ -15,7 +15,7 @@
 
 **不发**：文件内容（`Write` 的 `content`、`Edit` 的新旧文本）、工具输出（`tool_response`）、原始命令行、工作目录、`session_id`、`transcript_path`、环境变量、hook 事件里白名单之外的任何字段。
 
-**不发的情形**：动作太多、词太多或太长、请求超过 16000 字符、词或路径里有控制字符或格式字符、秘密要几个词连起来才看得出（`--password X`、`curl -u user:pw`）、序列化后再脱敏一遍会变、请求里出现守护进程环境里名字像秘密（KEY、TOKEN、SECRET、PASSW、CREDENTIAL、AUTH、COOKIE）的变量的值（至少 8 个字符，不分大小写，含 API 密钥本身）时，什么都不发，直接按 `on_failure` 处理；调用没有被完整分析时（解析器的预算用完、内部错误等）也不发，直接 ask（`docs/threat-model.md`）。
+**不发的情形**：动作太多、词太多或太长、请求超过 16000 字符、词或路径里有控制字符或格式字符、秘密要几个词连起来才看得出（`--password X`、`curl -u user:pw`）、序列化后再脱敏一遍会变、请求里出现守护进程环境里名字像秘密（KEY、TOKEN、SECRET、PASSW、CREDENTIAL、AUTH、COOKIE）的变量的值（至少 8 个字符，不分大小写，含 API 密钥本身）时，什么都不发，直接按 `on_failure` 处理；调用没有被完整分析时（解析器的预算用完、内部错误等）也不发，直接 ask（`docs/threat-model.md`）。调用里有请求装不下的代码或参数时同样不发、直接 ask：here-document 与 here-string 的正文、`NAME=value` 赋值的值、PowerShell 管道进解释器的字符串与赋值、MCP 调用（它的参数从来不发，所以 MCP 调用整个不送审；M3a 的 X1 审查 F3、F4）。
 
 **系统提示词**固定在 `src/boundkeep/audit/prompts/audit_system.md`，不含任何用户数据；它的版本与哈希写进每条审计记录。
 

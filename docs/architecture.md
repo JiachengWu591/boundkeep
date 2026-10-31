@@ -123,7 +123,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 ## 6b. LLM 审计（M3a，`audit/`，可选）
 
 - **只审灰色**：规则的 deny / ask / allow 从不发给模型。
-- **流程**：没有被完整分析的灰色调用（`pipeline.incomplete_analysis`）不送审，直接 ask → `send_gate` 取白名单字段、脱敏，看不全、有控制字符、秘密跨词出现、再脱敏会变、含环境里秘密变量的值就不发 → 缓存（键 = 后端、模型、传输方式、提示词哈希、发送内容；只存合法的模型结论，内存，TTL）→ 后端（`openai_compatible`：httpx 直接 POST `<base_url>/chat/completions`，每次尝试一个事件循环、一个客户端、一个 `asyncio.timeout` 硬期限，不跟随重定向，只收未压缩、≤ 256 KiB 的回答，至多重试一次）→ `parse_verdict`（恰好五个字段、类型与长度都对、无重复键，否则 `invalid_output`）→ `verdict.rule_on`（§9.5）。任何失败都是 `on_failure`。
+- **流程**：没有被完整分析的灰色调用（`pipeline.incomplete_analysis`），以及代码或参数不在请求里的灰色调用（`pipeline.unshown_input`：`Action.unshown` 记下的赋值与 here-document / here-string、PowerShell 管道进解释器的字符串与赋值、MCP 调用）不送审，直接 ask → `send_gate` 取白名单字段、脱敏，看不全、有控制字符、秘密跨词出现、再脱敏会变、含环境里秘密变量的值就不发 → 缓存（键 = 后端、模型、传输方式、提示词哈希、发送内容；只存合法的模型结论，内存，TTL）→ 后端（`openai_compatible`：httpx 直接 POST `<base_url>/chat/completions`，每次尝试一个事件循环、一个客户端、一个 `asyncio.timeout` 硬期限，名字解析在不被等待的后台线程里（`_DetachedExecutor`），不跟随重定向，只收未压缩、≤ 256 KiB 的回答，至多重试一次）→ `parse_verdict`（恰好五个字段、类型与长度都对、无重复键，否则 `invalid_output`）→ `verdict.rule_on`（§9.5）。任何失败都是 `on_failure`。
 - **给 Claude Code 的理由**只由结构化字段组成；模型写的文字只进审计日志。
 - **`boundkeep llm check`**：用同一套发送出口发一次固定的无害请求，只打印结论、检查了什么与 token 用量。
 
