@@ -77,7 +77,7 @@ test 切分在 M2 之后已被污染（规则在看过 test 结果之后改过�
 
 报告固定四行：`rules-only`、`rules+taint`（M3a，无 LLM）、`rules+LLM`、`rules+LLM+taint`（M3b）。不能运行的行写"未运行"，不写数字。结论**不跨模型外推**：换后端或模型就重跑并另列一行。**每次运行都测量全部不需要网络与密钥的配置**（今天是 `rules-only` 与 `rules+taint`），同一批样本、同一份策略、同一天，各写 `eval/results/<配置>.json`；`--config` 只决定报告里展开哪一个的明细。这是新增的配置，不改变任何已有指标的定义，所以指标版本仍是 3。
 
-- **`rules+taint` 怎么模拟会话**：每个样本（每台机器）在一个真实的 `SessionStore`（内存库）里有自己的会话。标了 `tainted` 的样本先收到一次污染来源工具的 PostToolUse（`taint_sources` 的标签对应的工具：`web-content` → `WebFetch`、`web-search` → `WebSearch`、`mcp` → 一个 `mcp__` 工具；没有标签时用 `WebFetch`），像 hook 事件那样经过同一个 `tool_result`；然后样本自己的调用经 `tool_call` 计数，并在存储报告的状态里判（窗口内、`session_read_untrusted` 成立）。没标 `tainted` 的样本在干净的会话里判。没有 LLM，所以任务意图不用，有效裁决的折算与 `rules-only` 相同（灰色 → ask）。延迟包含会话存储的这两次操作。
+- **`rules+taint` 怎么模拟会话**：每个样本（每台机器）在一个真实的 `SessionStore`（内存库）里有自己的会话。标了 `tainted` 的样本先收到一次污染来源工具的 PostToolUse（`taint_sources` 的标签对应的工具：`web-content` → `WebFetch`、`web-search` → `WebSearch`、`mcp` → 一个 `mcp__` 工具；没有标签时用 `WebFetch`），像 hook 事件那样经过同一个 `tool_result`；然后样本自己的调用经 `tool_call` 计数，并在存储报告的状态里判（窗口内、`session_read_untrusted` 成立）。项目上的标记（规格修订 7）不模拟：它来自另一个会话之前的写，单个样本表达不了，评测里总是"没有标记"。没标 `tainted` 的样本在干净的会话里判。没有 LLM，所以任务意图不用，有效裁决的折算与 `rules-only` 相同（灰色 → ask）。延迟包含会话存储的这两次操作。
 - **报告的"变化"表**：逐个样本比较两种配置，分开数"有效裁决变了"与"只有策略自己的结论变了"（例如 `gray` 变成规则的 `ask`：有效裁决都是 ask，但规则认出了它）。
 - **参考表"每个样本都在刚读过不可信内容的会话里"**：不是消融行。数据集里没有一条正常样本标了 `tainted`，所以 `rules+taint` 本身量不出污染层对正常操作的代价；这张表把全部样本都放进刚调用过来源的会话里再判一次（未受信任与受信任两种机器），给出这个代价的上限。
 - **量不到的**：样本是单次调用，跨多步的链（先写测试文件、再运行 pytest）只能由单元测试覆盖（`tests/unit/test_m3a_pipeline.py`）。

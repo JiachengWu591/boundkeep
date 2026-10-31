@@ -4,9 +4,10 @@
 
 ## 1. 污染标记能做什么
 
-- **来源**：策略的 `taint.sources`（默认 `WebFetch`、`WebSearch`、`mcp__*`）。来源工具的调用在 **PreToolUse 与 PostToolUse 两处**都打标记：hook 客户端在 PostToolUse 失败时什么也不做（没有决定可以降级），只靠它打标记就会失败即放行；PreToolUse 一定经过守护进程（守护进程不在时每个调用都会问）。在 PreToolUse 打标记可能把一次随后被拒绝的调用也算进去，这是安全的方向。
-- **窗口**：来源调用之后的 `taint.window`（默认 8）次工具调用是"被污染"的。只影响**不是规则给出的 allow**：LLM 审计的 allow（§9.5 的最后一步）与"什么都不碰的工具"的 allow，动作带 `taint.sensitive_tags` 里的标签时改为 ask。规则给出的 allow（项目内只读等）不受影响（§7）。
-- **粘性位**：会话里只要调用过任一来源，`session_read_untrusted` 就一直成立，直到这个会话结束（`/clear` 换新的 `session_id`；resume、continue、compact 不换，`docs/hook-behavior.md` E9）。默认策略与 strict 策略用它加了一条 ask 规则 `ask-devtools-after-untrusted-content`：会话读过网页、搜索结果或 MCP 返回值之后，`pytest`、`ruff`、`mypy` 等会运行项目代码的开发工具一律再问，受信任项目也一样。这就是 X1 审查 M-2 的"先写后运行"链：被注入的 agent 先写一个测试文件（项目内写入，放行），再运行 pytest（受信任项目里放行）。用粘性位而不是窗口，是因为窗口可以被几次无害的调用等过去。
+- **来源**：策略的 `taint.sources`（默认 `WebFetch`、`WebSearch`、`mcp__*`，以及读 MCP 资源的 `ListMcpResourcesTool`、`ReadMcpResourceTool`、`ReadMcpResourceDirTool`：它们的名字不以 `mcp__` 开头，2.1.304 的 hook 实测见 `docs/hook-behavior.md`；规格修订 7，P-F2）。来源工具的调用在 **PreToolUse 与 PostToolUse 两处**都打标记：hook 客户端在 PostToolUse 失败时什么也不做（没有决定可以降级），只靠它打标记就会失败即放行；PreToolUse 一定经过守护进程（守护进程不在时每个调用都会问）。在 PreToolUse 打标记可能把一次随后被拒绝的调用也算进去，这是安全的方向。
+- **窗口**：来源调用之后，会话一直是"被污染"的，直到污染一步已经把 `taint.window`（默认 3）个调用改成了 ask（规格修订 7，P-F6）。污染一步只管**不是规则给出的 allow**：LLM 审计的 allow（§9.5 的最后一步）与"什么都不碰的工具"的 allow，动作带 `taint.sensitive_tags` 里的标签时改为 ask，并用掉一次窗口。规则给出的 allow（项目内只读等）不受影响，也不计数（§7）。所以要让窗口过去，用户得被问 `window` 次；无害的调用（读文件、`ls`）用不掉它（X1 审查 F6）。`audit-only` 下不问任何人，也不计数。
+- **粘性位**：会话里只要调用过任一来源，`session_read_untrusted` 就一直成立，直到这个会话结束（`/clear` 换新的 `session_id`；resume、continue、compact 不换，`docs/hook-behavior.md` E9）。默认策略与 strict 策略用它加了一条 ask 规则 `ask-devtools-after-untrusted-content`：会话读过网页、搜索结果或 MCP 返回值之后，`pytest`、`ruff`、`mypy` 等会运行项目代码的开发工具一律再问，受信任项目也一样。这就是 X1 审查 M-2 的"先写后运行"链：被注入的 agent 先写一个测试文件（项目内写入，放行），再运行 pytest（受信任项目里放行）。用粘性位而不是窗口，是因为窗口会过去（被问过 `window` 次之后）。
+- **项目上的标记**（规格修订 7，P-F1；X1 审查 F1）：粘性位只在会话里，写进项目的文件却留在项目里。读过不可信内容的会话（粘性位为真或状态未知）里，一次调用只要有一个动作可能写（访问方式 `write` 或 `unknown`）：路径不确定在项目之外时，记下这个动作的项目目录；路径确定在项目之外时（写进别的项目），记下路径本身。标记存在会话状态库里，不随会话清理删除，也不按时间过期。默认与 strict 策略的 ask 规则 `ask-devtools-after-untrusted-project-write`（匹配字段 `project_written_after_untrusted`）让开发工具在带标记的项目里一律再问，**不管是哪个会话**。只有用户在终端运行 `boundkeep taint clear` 才解除：它与 `trust add` 一样拒绝在 Claude Code 启动的进程里或没有真实控制台时运行，agent 的 `boundkeep taint ...` 被 `deny-boundkeep-state-commands` 拒绝。标记读不出时算命中；超过 1000 个位置时记一个"所有位置"的标记。
 - **子 agent**：子 agent 的事件带父会话的 `session_id`（夹具 `PreToolUse__PowerShell_in_subagent`），子 agent 读的网页同样污染主会话。
 - **持久**：状态在 `~/.boundkeep/session.sqlite`，守护进程重启不丢；30 天没有活动的会话被清理，会话数超过 5000 时最久没活动的先被清掉。30 天对齐 Claude Code 自己的默认：它把会话记录在本机保留 30 天以便 resume（`cleanupPeriodDays`，官方文档 data-usage 页，2026-10-30 读取）。**例外**：在 Claude Desktop 或 Cowork 里开始或最近继续的会话默认不受那个期限限制，在那里 resume 一个 30 天以前的会话时，boundkeep 已经没有它的污染标记；改大了 `cleanupPeriodDays` 的用户同理。
 
@@ -19,9 +20,8 @@
 - **会话状态库不可用**（损坏、磁盘满、权限）时，每个调用都按"状态未知"判，即当作已污染（失败即关闭）：开发工具都会问，LLM 的 allow 对敏感动作都变成 ask。守护进程启动时与 `ping` 的状态里会说明。
 - **粘性位只覆盖开发工具名单**。别的会运行项目代码的命令（`make`、`npm test`、`./build.sh`、`python 脚本`）在默认策略里本来就没有 allow 规则（灰色，没有 LLM 时就是 ask）；**配置了 LLM 后端时，它们交给 LLM**，被污染的窗口内带敏感标签的会转成 ask，窗口过了之后就是模型说了算。M3a 把"表里没有的程序"、包管理器与任务运行器（`npm`、`uv`、`make`、`cargo` 等）、未知工具与 MCP 调用统一标成 `exec`，所以它们在窗口内一定算敏感动作。经包管理器启动的开发工具（`pipenv run pytest`、`conda run pytest`、`poetry run pytest`）在规则层看到的程序是包管理器，**不受粘性规则约束**，窗口过了之后同样交给模型。
 - **没有审查就回答的调用**（守护进程繁忙，或请求在排队时就超时）仍给来源工具打标记，在单独的线程里做，尽力而为。
-- **窗口按工具调用计数，不按时间**：长时间不动的会话，窗口不会自己过期；反过来，模型一口气发出的多个并行调用里，排在来源调用之后的那些也算在窗口里（保守）。**窗口可以被 agent 自己用完**（X1 审查 F6）：读网页之后先发 `window` 次无害的调用（读文件、`ls`），之后 LLM 对敏感动作的 allow 就不再变成 ask。只在配置了 LLM 后端时有影响；修法要改 §7 的计数方式，等使用者决定（`docs/reports/M3a-review-fixes.md` 第 7 节 P-F6）。
-- **粘性位只在读过不可信内容的那个会话里有效**（X1 审查 F1）：被注入的会话写进项目的测试文件，换一个会话（新开、`/clear`）去运行 `pytest`，受信任项目里不再问。修法要改 §7 的作用范围，等使用者决定（同上，P-F1）。在那之前 `trusted_projects` 仍不推荐。
-- **MCP 资源工具不是来源**：Claude Code 读 MCP 资源的工具名不以 `mcp__` 开头（`ReadMcpResourceTool`、`ListMcpResourcesTool`，hook 里的名字未实测），默认的 `taint.sources` 认不出它们。用户同意了这样的读取之后，会话不会被标记。是否加进默认来源，等使用者决定（同上，P-F2）。
+- **窗口按污染一步的询问计数，不按时间**：长时间不动的会话，窗口不会自己过期；同一个会话里并行的调用可能都在窗口之内判（计数在判决之后写，保守）。窗口过去之后（用户被问过 `window` 次），LLM 对敏感动作的 allow 照常放行，直到下一次来源调用。用户每次都点"同意"也会让窗口过去：窗口只保证用户被问到，不替用户判断。
+- **项目标记只认得出写路径的写**：运行代码的命令（`python gen.py`、`make`）与写文件的 MCP 工具，如果没有可见的写路径，它们写下的东西不打标记。这些命令在被污染的会话里本身是灰色（没有 LLM 时问用户；有 LLM 时在窗口内经过污染一步，窗口过去之后由模型判断）。守护进程繁忙或超时、没有审查就回答的调用不打项目标记（来源调用照样打污染标记）；策略文件坏掉时也不打（那时每个调用都问）。标记只看项目目录：同一个项目里，写测试文件的会话与运行 `pytest` 的会话不必是父子关系。`trusted_projects` 是否因 F1 的修复改为推荐设置，等定向复审之后由使用者决定。
 - **任务意图只在配置了 LLM 后端时才存**：没有后端时没有谁读它，提示词摘录就不落盘。
 
 ## 3. LLM 审计层的保证（代码层面，不是模型效果）

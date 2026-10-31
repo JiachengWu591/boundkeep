@@ -275,6 +275,15 @@ M0 做完后用真实的 boundkeep（真常驻进程、`init` 写的 settings、
 - **hook 配置在会话启动时固定**：把 settings 里 PreToolUse 的命令改坏后，同一会话里原来的 hook 仍然生效（canary 仍被拦），新会话才用新配置。与 E12 的 `disableAllHooks` 不同（那个在会话中改动立即生效）。所以"改坏 hook 路径"这类静默失效要到**下一个会话**才发作，`doctor` 要在那之前发现它。
 - **没有控制台窗口闪现**：VS Code 扩展里 `python.exe -I -S` 的写法执行命令时没有看到黑色窗口（一次目视观察，M0a 的同一结论）。`.exe` 启动器在 VS Code 里仍未测。
 
+## MCP 资源工具（2026-10-30，Claude Code 2.1.304，Windows 11，CLI 引擎 `claude -p`，haiku；P-F2）
+
+M3a 的 X1 审查处理（`docs/reports/M3a-review-fixes.md`，提案 P-F2）要确认读 MCP 资源的工具在 hook 事件里叫什么。做法：M0a 式的一次性实验目录（在会话的临时目录里，不在仓库里），项目级 settings 在 PreToolUse 与 PostToolUse 上用 `*` 各挂一个 `experiments/probe_hook.py` 记录器；`--mcp-config` 接 `experiments/mcp_resource_server.py`（仅标准库，带一个资源 `bkres://note`，内容是无害的标记文字）；`experiments/run_cli_probe.py` 跑两次 `claude -p`，只预先允许被测的工具。两次共约 0.08 美元，各一次观察。
+
+- 本版本的工具清单（init 事件）里有三个资源工具：`ListMcpResourcesTool`、`ReadMcpResourceTool`、`ReadMcpResourceDirTool`。它们是延迟加载的，模型先调用 `ToolSearch`（同样经过 hook）。
+- 三个都触发 PreToolUse 与 PostToolUse，hook 事件的 `tool_name` 就是这三个名字，**不以 `mcp__` 开头**，所以默认来源 `mcp__*` 认不出它们。`tool_input`：`ListMcpResourcesTool` 是 `{}`；`ReadMcpResourceTool` 与 `ReadMcpResourceDirTool` 是 `{server, uri}`。顶层没有 `mcp_server` 字段（MCP 工具调用才有）。
+- PostToolUse 的 `tool_response`：`ListMcpResourcesTool` 是列表；`ReadMcpResourceTool` 是 `{contents}`（资源的文字就在里面）；`ReadMcpResourceDirTool` 是 `{error, resources}`，这个版本回答"Directory listing is not enabled in this build"，但 PostToolUse 照样触发。
+- 对设计：三个名字进默认与 strict 的 `taint.sources`（规格修订 7，§8）。VS Code 扩展里没有测，那里的名字预计相同（同一个内置二进制），没有实测记录。
+
 ## 与官方文档的差异
 
 没有矛盾。文档没写或措辞不同的：deny JSON 配退出码 1 仍被执行；旧式 `decision: block` 仍被接受；`-p` 下项目 `permissions.allow` 被忽略；Git 装在非标准路径时 Claude Code 不自动发现 Git Bash；盘符大小写在同一会话里不稳定；VS Code 扩展的 payload 多 `scratchpad_dir` 与 `effort`。

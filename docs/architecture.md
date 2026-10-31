@@ -35,8 +35,9 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 | `ipc/unix.py` | POSIX 服务端（只在 Linux 容器里测过，没有宿主验证，见 §9） |
 | `ipc/base.py` | 服务端抽象与工厂 |
 | `daemon/server.py`、`daemon/pipeline.py`、`daemon/lifecycle.py` | 常驻进程（请求处理、判定线程池与期限、策略热加载、审计记录、会话状态的清理）、判定管线、单实例锁与停止信号 |
-| `policy/` | 策略 schema、加载器、规则匹配（M1 起；M3a 加 `taint.window` / `sensitive_tags`、`llm_audit` 的意图设置、匹配字段 `session_read_untrusted`） |
-| `session/` | （M3a）`facts.py` 一次调用所处的污染状态；`intent.py` 从提示词取任务意图；`store.py` SQLite（WAL）里的会话状态 |
+| `policy/` | 策略 schema、加载器、规则匹配（M1 起；M3a 加 `taint.window` / `sensitive_tags`、`llm_audit` 的意图设置、匹配字段 `session_read_untrusted`；规格修订 7 加 `project_written_after_untrusted`） |
+| `session/` | （M3a）`facts.py` 一次调用所处的污染状态；`intent.py` 从提示词取任务意图；`store.py` SQLite（WAL）里的会话状态与项目上的标记；`marks.py`（规格修订 7）从动作算出写到的位置、判断项目是否带标记 |
+| `taintcmd.py` | （规格修订 7）`boundkeep taint list|clear`：用户在终端查看、解除项目上的标记 |
 | `audit/` | （M3a）`send_gate.py` 唯一的发送出口；`backends/`（`base.py` 协议、错误分类、输出校验；`fake.py`；`openai_compatible.py`）；`verdict.py` 二次裁决；`cache.py`；`auditor.py` 把它们串起来；`prompt.py` 与 `prompts/audit_system.md` |
 | `llmcheck.py` | （M3a）`boundkeep llm check` |
 | `redact.py`、`logstore.py`、`fsperm.py` | 脱敏、JSONL 审计日志、目录与文件的私有性检查 |
@@ -103,7 +104,7 @@ Claude Code ──(每个 hook 事件起一个新进程，事件 JSON 走 stdin)
 - **判定在事件循环之外、带期限地运行**：PreToolUse 的整个判定（策略重读、normalize、规则）交给一个有界的守护线程池（默认 4 个线程，`Daemon(pool_size=…)`），用 `asyncio.wait` 等结果，期限默认 2.0 秒（`Daemon(decision_timeout_s=…)`；hook 客户端自己的 PreToolUse 预算是 10 秒）。原因：一条恶意构造的几 KB 命令（例如 `cd src && cd src && …` 的长链）可以让解析器算上十几秒，同步运行会卡死事件循环，连 ping 和其他请求都得不到应答（审查实测）。超过期限时：应答 `ask`，理由 `boundkeep: review took too long`，审计记录 `decision: ask`、`decided_by: timeout`，只记命令的长度（`command_chars`），不记命令正文，常驻进程继续服务。
 - **被放弃的线程**：线程无法被杀死，超时后工作线程继续跑到自己结束。它被记为"卡住"，同时补一个新线程顶替它的位置（容量不减半）。卡住的线程数达到池大小时，新的 PreToolUse 请求不再起任何工作，立即应答 `ask`（`boundkeep: daemon busy`，`decided_by: busy`，同样只记长度），直到有线程返回为止；线程总数因此不超过池大小的两倍。排在队列里、还没开始的判定在超时时被取消，不会白跑。`ping` 与非 PreToolUse 事件不经过线程池，不会排在卡住的判定后面。线程池的线程是守护线程：停止（`serve` 的 stop）与进程退出都不等它们，不会被一个卡住的判定拖住（`ThreadPoolExecutor` 会在退出时 join 线程，所以没有用它）。
 - **策略热加载**：每个请求检查策略文件的修改时间与大小，变了就重读（PreToolUse 在持锁的工作线程里重读；ping 与其他事件在事件循环上重读，只有文件真的变了时才有这点开销），所以 `boundkeep mode` 立即生效。策略不可用时 PreToolUse 一律 `ask`，直到修好；文件没变但上次读失败（编辑器或杀毒软件暂时占用）时，每秒最多重读一次，所以占用解除后自己恢复。重读的任何失败（包括 `PolicyError` 之外的异常，以及 `runtime_policy_checked` 报告的运行期规则问题）都记成策略错误，**绝不**让旧策略在"没有错误"的状态下继续生效；文件的 (mtime, size) 键只在新结果（策略或错误）存好之后才前移。
-- **M3a 之后的判定管线**：normalize → 规则（带这次调用所处的会话污染状态，规则用 `session_read_untrusted` 看它）→ 污染一步（不是规则给出的 allow、动作带敏感标签、会话在污染窗口内 → ask）→ 灰色且配置了后端时交给 LLM 审计 → 代码的二次裁决（§6b）。没有后端时灰色仍是 `ask`。
+- **M3a 之后的判定管线**：normalize → 规则（带这次调用所处的会话污染状态与所有会话留下的项目标记，规则用 `session_read_untrusted`、`project_written_after_untrusted` 看它们）→ 污染一步（不是规则给出的 allow、动作带敏感标签、会话在污染窗口内 → ask）→ 灰色且配置了后端时交给 LLM 审计 → 代码的二次裁决（§6b）。没有后端时灰色仍是 `ask`。规格修订 7：读过不可信内容的会话里，可能写的动作在 normalize 之后、判决之前把写到的位置记成项目标记（`session.marks.written_locations` → `store.mark_written`）；判决之后，如果污染一步（管线自己的，或二次裁决里的 `tainted-sensitive`）把这次调用改成了 ask，而且是 enforce 模式，就用掉一次窗口（`store.taint_asked`）。
 - **期限（M3a）**：规则仍是 2.0 秒；策略配置了 LLM 后端时再加 LLM 的预算（`timeout_ms`，最多 6 秒）与 0.5 秒余量，从提交时算。预算有两个来源，取较大者：提交时上一次加载的策略（排队等工作线程的请求也有这段时间），以及工作线程重读策略之后告诉等待的事件循环的那个（第一次请求时策略还没加载）。策略只在工作线程里重读，不上事件循环。超时时，带 LLM 审计的审查在 enforce 下按 `on_failure` 回答（`decided_by: timeout-llm`），`audit-only` 下与其他超时一样是 ask。hook 客户端自己的 PreToolUse 预算是 10 秒，所以 2 + 6 + 0.5 秒之内一定有回答。没有审查就回答的调用（繁忙，或排队时就超时、根本没开始）仍在单独的线程里给来源工具打污染标记。
 - **`CLAUDE_CONFIG_DIR`**：常驻进程从**自己的**环境读它，用来给那个目录里的 settings 与凭据加保护规则；Claude Code 的环境可能不同，而 hook 客户端只转发 `CLAUDE_PROJECT_DIR`。`doctor` 在自己的环境设了它时给 INFO（常驻进程必须以同样的值启动），并在 ping 状态里的 `config_dir` 与自己的环境不同时给 WARN。
 - **失败也留痕**：处理请求时出现内部错误，除了返回错误应答，还会往审计日志写一条 `decision: error`、`decided_by: internal-error` 的记录。
