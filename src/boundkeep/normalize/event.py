@@ -2285,6 +2285,10 @@ def normalize_event(
             if value is not None:
                 base[key] = value
         root, root_resolved = _project_root(payload, env, home)
+        if root is not None:  # whatever the working directory: where a write is marked
+            base["project_root"] = root.key
+            if root_resolved is not None and root_resolved.key != root.key:
+                base["project_root_resolved"] = root_resolved.key
         project, project_resolved = _project_keys(base.get("cwd"), root, root_resolved, home, env)
         if project is not None:  # on every Action of the event (``base`` is shared)
             base["project"] = project

@@ -1881,7 +1881,7 @@ def peel_runner(argv: Sequence[Word]) -> tuple[int, str, Word | None] | str | No
     """Recognize a runner that starts another program at the head of ``argv``.
 
     ``uv run [options] CMD ...``, ``uv tool run``, ``uvx [options] CMD``,
-    ``pipx run [options] CMD``, ``poetry run CMD`` and ``python -m boundkeep ...`` (the
+    ``pipx run [options] CMD``, ``poetry run CMD`` and ``python -m boundkeep[.MODULE] ...`` (the
     interpreter is only a launcher there).
     Returns ``(n_drop, marker, synthetic)``: drop the first ``n_drop`` words, prepend ``synthetic``
     (a word, or None) and record ``marker`` as a wrapper, so the inner command is judged and no
@@ -1933,8 +1933,21 @@ def peel_runner(argv: Sequence[Word]) -> tuple[int, str, Word | None] | str | No
     return i, marker, None
 
 
+def _boundkeep_module(name: str) -> str | None:
+    """The program a ``python -m NAME`` runs when NAME is boundkeep or one of its modules
+    (``boundkeep.cli`` and ``boundkeep.__main__`` are the whole CLI, ``boundkeep.hook_client``
+    the hook client; X1 re-review of the M3a fixes, R-4); None for any other module. Compared
+    without case: refusing more is safe."""
+    folded = name.lower()
+    if folded == "boundkeep.hook_client":
+        return "boundkeep-hook"
+    if folded == "boundkeep" or folded.startswith("boundkeep."):
+        return "boundkeep"
+    return None
+
+
 def _peel_python_m(argv: Sequence[Word]) -> tuple[int, str, Word | None] | None:
-    """``python [flags] -m boundkeep ARGS``: the interpreter only launches boundkeep."""
+    """``python [flags] -m boundkeep[.MODULE] ARGS``: the interpreter only launches boundkeep."""
     n = len(argv)
     i = 1
     while i < n:
@@ -1943,11 +1956,16 @@ def _peel_python_m(argv: Sequence[Word]) -> tuple[int, str, Word | None] | None:
         if not _literal(w):
             return None
         if t == "-m":
-            if i + 1 < n and _literal(argv[i + 1]) and argv[i + 1].text == "boundkeep":
-                return i + 1, "python-m", None
+            if i + 1 < n and _literal(argv[i + 1]):
+                if argv[i + 1].text == "boundkeep":
+                    return i + 1, "python-m", None
+                program = _boundkeep_module(argv[i + 1].text)
+                if program is not None:
+                    return i + 2, "python-m", Word(program)
             return None
         if t.startswith("-m") and len(t) > 2:
-            return (i + 1, "python-m", Word("boundkeep")) if t[2:] == "boundkeep" else None
+            program = _boundkeep_module(t[2:])
+            return (i + 1, "python-m", Word(program)) if program is not None else None
         if t in _PY_VALUE_FLAGS:
             i += 2
         elif t.startswith("-") and not t.startswith("--") and len(t) > 1 and "c" not in t[1:]:

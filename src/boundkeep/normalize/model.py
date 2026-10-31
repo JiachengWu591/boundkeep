@@ -107,6 +107,11 @@ class Action(BaseModel):
     # junction resolution, set only when that differs: ``project_trusted`` needs both trusted.
     project: str | None = None
     project_resolved: str | None = None
+    # The same project directory (and its resolved form, when that differs) whatever the session's
+    # working directory: the one ``inside_project`` is judged against. No rule looks at it; a write
+    # after untrusted content marks it (PROJECT_SPEC.md §7; X1 re-review of the M3a fixes, R-1).
+    project_root: str | None = None
+    project_root_resolved: str | None = None
     permission_mode: str | None = None
     agent_id: str | None = None
     program: str | None = None

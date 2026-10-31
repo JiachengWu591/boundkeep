@@ -41,6 +41,8 @@ from boundkeep.ipc import client as ipc_client
 from boundkeep.ipc.endpoint import TRANSPORT_NAMED_PIPE, Endpoint, EndpointError, read_endpoint
 from boundkeep.logstore import AuditLog
 from boundkeep.policy import PolicyError, load_policy
+from boundkeep.policy.loader import taint_sources_to_matcher
+from boundkeep.policy.schema import DEFAULT_TAINT_SOURCES, DEFAULT_TAINT_WINDOW
 from boundkeep.session.marks import ALL_LOCATIONS
 from boundkeep.session.store import SessionStore, SessionStoreError
 
@@ -709,6 +711,66 @@ def check_emit_allow(home: str, layers: list[Layer]) -> list[Check]:
     return [Check("emit-allow", WARN, detail, "run 'boundkeep init' again")]
 
 
+def check_taint_sources(home: str, layers: list[Layer]) -> list[Check]:
+    """The policy's ``taint.sources`` hold the default sources, and the PostToolUse matcher in the
+    settings follows them (X1 re-review of the M3a fixes, R-10).
+
+    A policy written by an older ``init`` keeps its old sources: revision 7 added the MCP resource
+    tools, which such a policy does not watch. And ``init`` writes the PostToolUse matcher from
+    the policy's sources at install time, so a later edit of the sources needs ``init`` again.
+    """
+    try:
+        policy = load_policy(paths.policy_file(home), home=os.path.expanduser("~"))
+    except PolicyError:
+        return []  # check_policy reports an unusable policy
+    sources = policy.taint.sources
+    checks: list[Check] = []
+    missing = [s for s in DEFAULT_TAINT_SOURCES if s not in sources]
+    if missing:
+        window = policy.taint.window
+        old_window = (
+            f"; taint.window is {window} (now counted in asks, not calls; the default is "
+            f"{DEFAULT_TAINT_WINDOW})"
+            if window != DEFAULT_TAINT_WINDOW
+            else ""
+        )
+        checks.append(
+            Check(
+                "taint-sources",
+                WARN,
+                f"taint.sources lacks {', '.join(missing)} (default sources since PROJECT_SPEC "
+                f"revision 7): content they bring in does not mark the session{old_window}",
+                f"add them to taint.sources in {paths.policy_file(home)} (or run 'boundkeep init "
+                "--reset-policy', which keeps a backup), then run 'boundkeep init' again",
+            )
+        )
+    try:
+        wanted = taint_sources_to_matcher(sources)
+    except ValueError:
+        return checks
+    wrong = [
+        layer.name
+        for layer in layers
+        if layer.doc is not None
+        and any(
+            event == "PostToolUse" and matcher != wanted
+            for event, matcher, _hook in ownhook.own_hooks_in(layer.doc.data)
+        )
+    ]
+    if wrong:
+        checks.append(
+            Check(
+                "taint-sources",
+                WARN,
+                f"the PostToolUse matcher in the {', '.join(wrong)} settings is not the one "
+                "taint.sources gives: a source call it leaves out does not mark the session "
+                "after it ran",
+                "run 'boundkeep init' again",
+            )
+        )
+    return checks
+
+
 def _redirects(entry: str) -> str | None:
     """Where an existing trusted directory really is, when that is not where its entry says
     (a symlink or junction, in the leaf or in a parent); None when it is where it says."""
@@ -1160,6 +1222,7 @@ def run_checks(project_dir: str, home: str | None = None, *, dir_given: bool = T
         )
     checks += _guard("scope", lambda: check_scope(project_dir, dir_given, layers))
     checks += _guard("emit-allow", lambda: check_emit_allow(home, layers))
+    checks += _guard("taint-sources", lambda: check_taint_sources(home, layers))
     checks += _guard("trusted-projects", lambda: check_trusted_projects(home))
     checks += _guard("project-marks", lambda: check_project_marks(home))
     checks += _guard("hook-command", lambda: check_hook_command_self_test(layers))

@@ -57,11 +57,19 @@ def written_locations(actions: Sequence[Action]) -> tuple[str, ...]:
 
     A path whose access is ``write`` or ``unknown``: the action's project directory (and its
     resolved form) when the path is not certainly outside the project; the path itself when it is
-    certain and not certainly inside (a write into another directory or another project).
+    certain and not certainly inside (a write into another directory or another project). The
+    project directory is ``project_root``, which is set even when the session's working directory
+    is outside the project (``project`` is None there).
     """
     out: dict[str, None] = {}
     for action in actions:
-        projects = [p for p in (action.project, action.project_resolved) if p]
+        keys = (
+            action.project,
+            action.project_resolved,
+            action.project_root,
+            action.project_root_resolved,
+        )
+        projects = list(dict.fromkeys(p for p in keys if p))
         for path in action.paths:
             if path.access == "read":
                 continue
