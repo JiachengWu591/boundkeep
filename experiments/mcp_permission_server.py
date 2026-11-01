@@ -2,15 +2,17 @@
 是否触发、两个事件的 tool_use_id 是否相同）。仅标准库。
 
 `claude -p --permission-prompts host --permission-prompt-tool mcp__bkperm__approve` 把权限提示交给它：
-请求里含 DENYME 就拒绝，否则批准（原样返回输入）。每次收到的参数记到 raw/perm_tool.jsonl（纯 ASCII）。
-不做任何有副作用的事。
+请求里含 DENYME 就拒绝，否则批准（原样返回输入）。设了环境变量 BK_PERM_ONLY（正则）时，请求的 JSON 匹配不上它也拒绝。
+每次收到的参数记到 raw/perm_tool.jsonl（纯 ASCII）。不做任何有副作用的事。
 """
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RAW_DIR = os.environ.get("BK_PROBE_DIR") or os.path.join(HERE, "raw")
+ONLY = os.environ.get("BK_PERM_ONLY")
 
 
 def send(obj):
@@ -26,7 +28,8 @@ def log(args):
 
 
 def decide(args):
-    if "DENYME" in json.dumps(args, ensure_ascii=True):
+    text = json.dumps(args, ensure_ascii=True)
+    if "DENYME" in text or (ONLY and not re.search(ONLY, text)):
         return {"behavior": "deny", "message": "BK_PERM_DENIED"}
     return {"behavior": "allow", "updatedInput": args.get("input") or {}}
 
