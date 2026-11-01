@@ -313,6 +313,43 @@ M3a 修复的定向复审（`docs/reviews/M3a-rereview.md`）之后，提案 P-R
 - 普通 resume 在 2.1.304 上仍然沿用原来的 id，与 E9（2.1.291）一致。
 - 未测：`--continue --fork-session`、桌面应用与 VS Code 扩展里的 fork、`/compact` 在 2.1.304 上的 `source`、agent 团队的队友。
 
+## M3a 的真实冒烟（2026-11-01，Claude Code 2.1.304，Windows 11，CLI 引擎 `claude -p`，haiku；修订 7、8）
+
+上一节用的是观察用的 hook。这一节是真的 boundkeep：`init` 写的五个 hook、真守护进程、默认策略（`scripts/smoke_claude_m3a.py`，一次性目录）。这些链路之前只有假事件。26 项检查 0 失败；6 次运行共约 0.31 美元，各一次观察。结论来自 boundkeep 的审计日志与磁盘上的文件，不看模型怎么说。
+
+**fork**（不配 LLM；项目受信任；探针 `pytest -q`，`-p` 没有批准渠道，所以它一次也没有运行，看的是判决）：
+
+| 运行 | 参数 | SessionStart 的 `source` | `session_id` | `pytest -q` 的判决 |
+|---|---|---|---|---|
+| first | 无 | `startup` | S1 | 无决定（`allow-devtools-trusted-project`），会话干净 |
+| resume | `--resume S1` | `resume` | S1 | 同上：干净的会话 resume 之后仍然干净 |
+| fork | `--resume S1 --fork-session` | `fork` | 新的 S2 | ask（`ask-devtools-after-untrusted-content`），来源 `inherited:fork` |
+| marked | 无 | `startup` | 新的 S3 | ask（`ask-devtools-after-untrusted-project-write`）：会话干净，项目带标记（`marked_places` 1） |
+
+- SessionStart 的 hook 结果是 `success`，标准输出为空，所以没有内容进模型的上下文。
+- fork 的 SessionStart 记录比第一次工具调用早约 5.8 秒。这只说明 hook 在模型回答之前就处理完了，**不能证明宿主会等 hook 结束**。
+- marked 一行是真实宿主里的跨会话链路：fork 里被问到的 `pytest`（没有运行）给项目打了标记，下一个会话的 `pytest` 被问（P-F1、P-R6）。
+
+**window**（配 LLM：本机 127.0.0.1 的假服务，永远回答 allow；权限提示交给 `experiments/mcp_permission_server.py`，`BK_PERM_ONLY` 只放行下表的命令）：
+
+| 顺序 | 调用 | PreToolUse 时的 `taint_asks` | boundkeep 的决定 | 权限提示 | PostToolUse（同一个 `tool_use_id`） | 文件 |
+|---|---|---|---|---|---|---|
+| 1 | `Copy-Item BK_SEED.txt BK_W_0.txt` | | 无决定（`llm`） | 批准 | 有 | 有 |
+| 2 | `WebFetch https://example.invalid/bk-m3a` | | ask（`net-allowlist`） | 批准 | 没有（`getaddrinfo ENOTFOUND`） | |
+| 3 | `… BK_W_1.txt` | 0 | ask（`llm`，`tainted-sensitive`） | 批准 | 有 | 有 |
+| 4 | `… BK_DENYME.txt` | 1 | ask（同上） | 拒绝 | 没有 | 没有 |
+| 5 | `… BK_W_2.txt` | 1 | ask（同上） | 批准 | 有 | 有 |
+| 6 | `… BK_W_3.txt` | 2 | ask（同上） | 批准 | 有 | 有 |
+| 7 | `… BK_W_4.txt` | 3 | 无决定（`llm`），`tainted: false` | 批准 | 有 | 有 |
+
+- 窗口的计数与规格修订 8（P-R3）一致：被批准并运行了才计数，被拒绝的不计数，3 次之后模型的 allow 恢复。
+- 来源调用失败时没有 PostToolUse，会话仍然被污染：靠的是 PreToolUse 那一处标记（修订 6 的 P1）。
+- 假服务收到 6 个请求（第 2 步是规则定的，不送审），请求体里没有密钥。
+
+**`auto` 模式仍然没有测到**：`--permission-mode auto --permission-prompts none` 下，`init` 事件写 `permissionMode: auto`，hook 的 `permission_mode` 却是 `default`（与 E11 一样）；来源调用与被问的复制都被拒绝（"no approval surface"），没有 PostToolUse。分不清 auto 没有生效，还是 auto 不批准 hook 的 ask，所以"auto 下询问会不会被自动批准、消耗窗口"仍然未知（`docs/reviews/M3a-rereview-2.md` 第 7 节）。
+
+未测：真人在确认框里批准（这里由权限提示工具代替）；VS Code 扩展与桌面应用里的这些链路；`Bash` 工具；真实的 LLM 服务。
+
 ## 与官方文档的差异
 
 没有矛盾。文档没写或措辞不同的：deny JSON 配退出码 1 仍被执行；旧式 `decision: block` 仍被接受；`-p` 下项目 `permissions.allow` 被忽略；Git 装在非标准路径时 Claude Code 不自动发现 Git Bash；盘符大小写在同一会话里不稳定；VS Code 扩展的 payload 多 `scratchpad_dir` 与 `effort`。

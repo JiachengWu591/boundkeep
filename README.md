@@ -40,6 +40,16 @@ TODO: a short recording. Without boundkeep, an agent following a hidden instruct
 TODO (planned): `pip install boundkeep` then `boundkeep init`.
 Start in `audit-only` mode to see what it would have done before you let it block anything. No API key is needed for the default setup.
 
+## Trusted projects (optional)
+
+By default no project is trusted, so `pytest`, `ruff`, `mypy` and similar tools ask every time: they run the repository's own code. If that is too many prompts, you can list a project with `boundkeep trust add`. Run it yourself in a terminal outside Claude Code (the agent cannot do it), then start a new session. boundkeep then stops asking about these tools in that project; Claude Code's own permission flow still applies.
+
+Only do this for repositories you wrote or audited, and know what it leaves open:
+
+- In a session that has read nothing untrusted, an agent can write a test file and run `pytest` without boundkeep asking.
+- After a session reads a web page, a search result or MCP output, or runs a network command such as `curl` or `gh issue view`, these tools ask again in that session. They also ask in every session for a project it wrote to, until you run `boundkeep taint clear` yourself.
+- Untrusted text that arrives another way is not seen: a local file, `git clone`, or the output of a package run with `npx`. See `docs/threat-model.md` and `docs/policy-reference.md`.
+
 ## Development setup
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
@@ -79,7 +89,7 @@ With no LLM backend configured, nothing leaves your machine. With a backend, onl
 - Not a sandbox. Hooks run with your privileges; use a container or OS sandbox for strong isolation.
 - Not perfect defense. The goal is to raise the cost of an attack, not to make attacks impossible.
 - Only covers Claude Code tool calls, not other programs on your machine. Files you attach with `@` do not go through tool-call hooks.
-- Taint tracking is coarse: sources are recognized by tool name only.
+- Taint tracking is coarse: sources are recognized by tool name and by the network commands the parser understands. Reading an untrusted local file does not mark the session.
 
 ## Design origin
 
@@ -94,7 +104,7 @@ It is complementary to static scanners such as cc-audit, which check what you in
 - `docs/architecture.md`: the hook-to-daemon path, protocol, degradation table
 - `docs/hook-behavior.md`: measured Claude Code hook behavior (versioned)
 - `docs/platforms.md`: what has been run on which platform and host
-- `docs/threat-model.md`: TODO
+- `docs/threat-model.md`: what is and is not defended
 - `docs/design-origin.md`: TODO
 
 ## License
