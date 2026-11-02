@@ -118,7 +118,7 @@ SessionStart（规格修订 8，P-R9）没有可以降级的决定：失败时�
 
 ## 6a. 会话状态（M3a，`session/`）
 
-- **存储**：`<home>/session.sqlite`，WAL，`synchronous=NORMAL`；一个连接、一把锁，读改写都在 `BEGIN IMMEDIATE` 事务里，所以并行的工具调用不丢更新（另一个进程开同一个文件也一样，它会等忙超时）。表 `sessions`：会话 id、首次与最近出现的时间、上次污染来源调用之后被批准并执行了的污染询问的次数（NULL：没有过来源）、来源名；表 `pending_asks`（schema 3，规格修订 8）：还在等 PostToolUse 的污染询问的 `tool_use_id`，每个会话最多 64 个；表 `project_marks`：项目上的标记；表 `prompts`：最近几条任务意图（只在配置了 LLM 后端且允许发送时才写）。实测（本机，Python 3.12.11）：干净会话的一次 PreToolUse 只读不写，p50 约 0.008 毫秒；被污染过的会话每次调用写一次计数，p50 约 0.03 毫秒。
+- **存储**：`<home>/session.sqlite`，WAL，`synchronous=NORMAL`；一个连接、一把锁，读改写都在 `BEGIN IMMEDIATE` 事务里，所以并行的工具调用不丢更新（另一个进程开同一个文件也一样，它会等忙超时）。表 `sessions`：会话 id、首次与最近出现的时间、上次污染来源调用之后被批准并执行了的污染询问的次数（NULL：没有过来源）、来源名；表 `pending_asks`（schema 3，规格修订 8）：还在等 PostToolUse 的污染询问的 `tool_use_id`，每个会话最多 64 个；表 `project_marks`：项目上的标记（schema 4，规格修订 9，多一列 `kinds`：打标记的调用的类别）；表 `prompts`：最近几条任务意图（只在配置了 LLM 后端且允许发送时才写）。实测（本机，Python 3.12.11）：干净会话的一次 PreToolUse 只读不写，p50 约 0.008 毫秒；被污染过的会话每次调用写一次计数，p50 约 0.03 毫秒。
 - **事件**：SessionStart（修订 8）：`startup` / `clear` 记一行干净的会话，其他 `source`（resume、compact、fork……）遇到库里没有的会话 id 时按读过不可信内容开始；UserPromptSubmit 存任务意图；PostToolUse 对来源工具打标记，并对上等待中的污染询问（修订 8）；PreToolUse 计数，并把这次调用判在"它之前"的状态里（来源调用自己不算被污染），来源调用在这里也打标记（PostToolUse 失败时 hook 客户端什么也不做，只靠它会失败即放行）。session、prompt 与 post 事件的写入在 `asyncio.to_thread` 里做：不占事件循环，也不排在判定线程池后面。
 - **失败即关闭**：状态库打不开（损坏、未知的 schema 版本、目录不可写）时换成一个替身，每次调用都返回"状态未知"，管线把它当作已污染；启动时与 `ping` 的状态（`session=unavailable`）里说明。单次读写失败同样返回"未知"，守护进程按 1、10、100…… 次报告。
 - **清理**：守护进程启动时与每小时一次：30 天没有活动的会话连同任务意图删除；超过 5000 个会话时最久没活动的先删。保留期长是因为 resume 会沿用旧的 session_id。

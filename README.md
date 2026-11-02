@@ -48,7 +48,7 @@ Only do this for repositories you wrote or audited, and know what it leaves open
 
 - In a session that has read nothing untrusted, an agent can write a test file and run `pytest` without boundkeep asking.
 - After a session reads a web page, a search result or MCP output, or runs a network command such as `curl` or `gh issue view`, these tools ask again in that session. They also ask in every session for a project it wrote to, until you run `boundkeep taint clear` yourself.
-- Untrusted text that arrives another way is not seen: a local file, `git clone`, or the output of a package run with `npx`. See `docs/threat-model.md` and `docs/policy-reference.md`.
+- Untrusted text that arrives another way is not seen: a local file, `git clone`, or the output of a package run by its bare name with `npx`. See `docs/threat-model.md` and `docs/policy-reference.md`.
 
 ## Development setup
 

@@ -350,6 +350,8 @@ M3a 修复的定向复审（`docs/reviews/M3a-rereview.md`）之后，提案 P-R
 
 未测：真人在确认框里批准（这里由权限提示工具代替）；VS Code 扩展与桌面应用里的这些链路；`Bash` 工具；真实的 LLM 服务。
 
+**重跑（2026-11-02，同一版本，规格修订 9 的代码加前缀路径修复，未提交的工作区）**：26 项检查 0 失败，脚本估算约 0.225 美元。fork、window 的判决与计数和上面两张表一致。这只说明原有链路没被破坏：脚本不覆盖修订 9 新增的路径（漏记 SessionStart、PostToolUse 补记 shell 来源、`enforce` 下 deny 不打标记），也不覆盖会话库从 schema 3 迁移（一次性目录里是新库）。`auto` 这次的现象和上次不同：`init` 事件写的是 `permissionMode: default`，hook 也是 `default`，询问没有运行、没有 PostToolUse。原因不知道，`auto` 仍然没有测到。
+
 ## 与官方文档的差异
 
 没有矛盾。文档没写或措辞不同的：deny JSON 配退出码 1 仍被执行；旧式 `decision: block` 仍被接受；`-p` 下项目 `permissions.allow` 被忽略；Git 装在非标准路径时 Claude Code 不自动发现 Git Bash；盘符大小写在同一会话里不稳定；VS Code 扩展的 payload 多 `scratchpad_dir` 与 `effort`。
