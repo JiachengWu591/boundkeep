@@ -85,6 +85,7 @@ _LOCAL_SERVERS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "."})
 _PERCENT_FORBIDDEN = frozenset('%/\\:*?"<>|')
 _STREAM_TYPES = frozenset({"DATA", "INDEX_ALLOCATION", "I30", "BITMAP", "ATTRIBUTE_LIST"})
 _AMBIGUOUS_DOTS = "trailing-dots-spaces-ambiguous"
+_PREFIX_FOLDED = "prefix-path-folded"
 
 # Reasons that only describe what was done to the path and do not make it uncertain.
 _INFO_REASONS = frozenset(
@@ -1046,6 +1047,24 @@ def _unc_shape(comps: list[str], ctx: _Ctx, reasons: list[str]) -> _Shape:
     return _Shape("windows", f"//{server}/{share}", rest, absolute=True)
 
 
+def _fold_prefixed(comps: list[str]) -> list[str]:
+    """The components of a prefixed path after ``.`` and ``..`` fold, each still as written.
+
+    Win32 folds them before it reads the first component, and the prefix is the only root
+    (``GetFullPathNameW``): ``\\\\.\\foo\\..\\UNC\\srv\\s`` is UNC, and ``\\\\.\\C:\\..\\D:\\x`` is
+    on D:.
+    """
+    out: list[str] = []
+    for comp in comps:
+        part = _win_part(comp, [], final=False)
+        if part == "..":
+            if out:
+                out.pop()
+        elif part != ".":
+            out.append(comp)
+    return out
+
+
 def _shape_prefixed(text: str, plen: int, ctx: _Ctx, reasons: list[str]) -> _Shape:
     """``\\\\?\\...``, ``\\\\.\\...``, ``//./...`` and ``\\??\\...`` forms."""
     ns = "?" if text.startswith("\\??\\") else text[2]
@@ -1065,14 +1084,30 @@ def _shape_prefixed(text: str, plen: int, ctx: _Ctx, reasons: list[str]) -> _Sha
         _add(reasons, "extended-path-dots")
         uncertain = True
     comps = raw_body.replace("\\", "/").split("/")
-    first = comps[0]
-    if first.upper() == "UNC":
+    kept = [c for c in comps if c != ""]
+    folded = _fold_prefixed(kept)
+    if folded != kept or comps[0] == "":
+        # Nothing spells a path this way by accident: the key says what it can reach, and the path
+        # stays uncertain, so a deny or ask rule can match it and an allow rule cannot
+        _add(reasons, _PREFIX_FOLDED)
+        uncertain = True
+        comps = folded
+    first = comps[0] if comps else ""
+    # "UNC." and "C:." are UNC and C: to Win32. "UNC " and "UNC:x" are not, but that is the cautious
+    # reading, and the device key "//./unc/..." could only be read back as UNC.
+    unc = _win_part(first, [], final=False).upper() == "UNC"
+    drive = first.rstrip(" .")
+    is_drive = len(drive) == 2 and drive[1] == ":" and drive[0].isascii() and drive[0].isalpha()
+    if (unc and first.upper() != "UNC") or (is_drive and drive != first):
+        _add(reasons, _PREFIX_FOLDED)
+        uncertain = True
+    if unc:
         shape = _unc_shape(comps[1:], ctx, reasons)
         shape.uncertain = shape.uncertain or uncertain
         return shape
-    if len(first) == 2 and first[1] == ":" and first[0].isascii() and first[0].isalpha():
+    if is_drive:
         return _Shape(
-            "windows", f"{first[0].lower()}:/", _win_parts(comps[1:], reasons), True, uncertain
+            "windows", f"{drive[0].lower()}:/", _win_parts(comps[1:], reasons), True, uncertain
         )
     # A device or volume path: \\.\NUL, \\.\pipe\x, \\?\Volume{...}\x, \\?\GLOBALROOT\...
     parts = _win_parts(comps, reasons)
