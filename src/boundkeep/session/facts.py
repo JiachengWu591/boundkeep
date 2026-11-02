@@ -31,6 +31,11 @@ class SessionFacts:
     marks_known: bool = True
 
 
+# The source name of a session whose SessionStart was missed: the store does not know it although
+# every install registers that hook (PROJECT_SPEC.md §7, revision 9, P-S1). While it is the only
+# source the session's writes leave no project mark.
+NO_SESSION_START_SOURCE = "inherited:unknown"
+
 # A session that read nothing untrusted: what ``boundkeep test`` and the rules-only evaluation use.
 FRESH = SessionFacts(known=True, tainted=False, read_untrusted=False)
 UNKNOWN = SessionFacts(known=False, tainted=True, read_untrusted=True, marks_known=False)

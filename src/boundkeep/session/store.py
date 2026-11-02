@@ -8,8 +8,8 @@ session; revision 8, P-R3); and, only while an LLM audit is
 configured, the user's latest prompts as ``intent.extract_intent`` leaves them (IDE blocks removed,
 pasted text left out, secrets redacted, cut). Apart from the sessions, the places written by
 sessions that read untrusted content (``session.marks``: canonical keys of project directories or
-paths, at most ``MAX_MARKS``), with when they were marked and the names of the source tools. No
-tool input, no tool output, no file content.
+paths, at most ``MAX_MARKS``), with when they were marked, the names of the source tools and the
+kinds of call that marked them. No tool input, no tool output, no file content.
 
 Taint (PROJECT_SPEC.md §7, revisions 7 and 8): a session is *tainted* from a call of a taint
 source until ``window`` asks of the taint step were approved and their tools ran (``taint_asked``
@@ -17,13 +17,14 @@ records the ask, the PostToolUse of the same ``tool_use_id`` counts it; P-F6: ha
 use the window up; P-R3: refused or unseen asks do not either); a session has *read untrusted
 content* once any source was called (sticky: the window does not end it, only a new session does:
 ``/clear`` gives a new session_id, resume and compact keep it, docs/hook-behavior.md E9; a fork or a
-resume the store does not know starts as having read it, ``session_start``, P-R9). A source is also
-a shell call that reads remote text (``source_seen``, P-R5). A source is marked when its PreToolUse
-arrives and again when its PostToolUse does: the hook client drops a failed PostToolUse silently (it
-has no decision to degrade to), so marking only there would fail open; marking at PreToolUse may
-count a call that is then refused, which is the safe direction. Project marks (``mark_written``;
-P-F1) outlive the sessions: cleanup leaves them, only ``clear_marks`` (the user's ``boundkeep taint
-clear``) removes them.
+resume the store does not know starts as having read it, ``session_start``, P-R9; so does a session
+whose SessionStart was missed where every install registers that hook, ``unknown_inherited``,
+revision 9, P-S1). A source is also a shell call that reads remote text (``source_seen``, P-R5). A
+source is marked when its PreToolUse arrives and again when its PostToolUse does: the hook client
+drops a failed PostToolUse silently (it has no decision to degrade to), so marking only there would
+fail open; marking at PreToolUse may count a call that is then refused, which is the safe direction.
+Project marks (``mark_written``; P-F1) outlive the sessions: cleanup leaves them, only
+``clear_marks`` (the user's ``boundkeep taint clear``) removes them.
 
 Concurrency: one connection and one lock per store; every read-modify-write runs in a ``BEGIN
 IMMEDIATE`` transaction, so the call counter of parallel tool calls never loses an update, also
@@ -50,14 +51,19 @@ import sqlite3
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 
-from boundkeep.session.facts import UNKNOWN, SessionFacts, is_taint_source
+from boundkeep.session.facts import (
+    NO_SESSION_START_SOURCE,
+    UNKNOWN,
+    SessionFacts,
+    is_taint_source,
+)
 from boundkeep.session.marks import ALL_LOCATIONS, MAX_MARKS, location_key, within
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 RETENTION_S = 30 * 24 * 3600
 MAX_SESSIONS = 5000
 MAX_SOURCES = 16
@@ -95,6 +101,7 @@ _MARKS_TABLE = (
     " sources TEXT NOT NULL DEFAULT '[]'"
     ") WITHOUT ROWID"
 )
+_MARK_KINDS_COLUMN = "ALTER TABLE project_marks ADD COLUMN kinds TEXT NOT NULL DEFAULT '[]'"
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS sessions ("
     " session_id TEXT PRIMARY KEY,"
@@ -113,6 +120,7 @@ _SCHEMA = (
     ") WITHOUT ROWID",
     _MARKS_TABLE,
     _PENDING_TABLE,
+    _MARK_KINDS_COLUMN,
 )
 # Schema 1 counted every call since the latest source; schema 2 counts the taint step's asks
 # (revision 7, P-F6). An old count says nothing about asks, so every session that read untrusted
@@ -125,6 +133,8 @@ _MIGRATE_1_TO_2 = (
 # Schema 3 counts an ask once its tool ran (revision 8, P-R3): the asks waiting for that. The
 # counts of schema 2 are kept: they are at most what schema 3 would have counted.
 _MIGRATE_2_TO_3 = (_PENDING_TABLE,)
+# Schema 4 says what kind of call marked a place (revision 9, P-S7); of an old mark it is not known.
+_MIGRATE_3_TO_4 = (_MARK_KINDS_COLUMN,)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +145,7 @@ class Mark:
     first_marked: float
     last_marked: float
     sources: tuple[str, ...]
+    kinds: tuple[str, ...] = ()  # what kind of call marked it (``marks.KIND_*``); may be unknown
 
 
 def usable_session_id(value: object) -> str | None:
@@ -232,7 +243,7 @@ class SessionStore:
         # free pages; the database is small, so the extra writes cost nothing that matters
         conn.execute("PRAGMA secure_delete=ON")
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, SCHEMA_VERSION):
+        if version not in (0, 1, 2, 3, SCHEMA_VERSION):
             raise SessionStoreError(
                 f"the session database has schema version {version}, this boundkeep knows "
                 f"{SCHEMA_VERSION}: stop the daemon and delete {os.path.basename(self._path)}*"
@@ -250,6 +261,9 @@ class SessionStore:
                         conn.execute(statement)
                 if current in (1, 2):
                     for statement in _MIGRATE_2_TO_3:
+                        conn.execute(statement)
+                if current in (1, 2, 3):
+                    for statement in _MIGRATE_3_TO_4:
                         conn.execute(statement)
                 conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                 conn.execute("COMMIT")
@@ -309,13 +323,16 @@ class SessionStore:
         sources: tuple[str, ...],
         window: int,
         intents: int = 0,
+        unknown_inherited: bool = False,
     ) -> SessionFacts:
         """Note one PreToolUse and return the state THIS call is judged in.
 
         The call's own taint is the state before it: a source call is not tainted by itself. A
         call of a source then marks the session (tainted until the taint step has asked ``window``
         times, ``taint_asked``). The project marks of every session come along (``marks``).
-        ``intents`` > 0 also returns that many of the latest task intents.
+        ``intents`` > 0 also returns that many of the latest task intents. ``unknown_inherited``:
+        every install registers SessionStart, so a session not in the store missed it and starts
+        as having read untrusted content (revision 9, P-S1).
         """
         sid = usable_session_id(session_id)
         if sid is None:
@@ -329,6 +346,13 @@ class SessionStore:
                     "SELECT taint_asks, sources, last_seen FROM sessions WHERE session_id = ?",
                     (sid,),
                 ).fetchone()
+                if row is None and unknown_inherited:
+                    row = (0, _with_source([], NO_SESSION_START_SOURCE), now)
+                    conn.execute(
+                        "INSERT INTO sessions (session_id, first_seen, last_seen, taint_asks, "
+                        "sources) VALUES (?, ?, ?, ?, ?)",
+                        (sid, now, now, row[0], row[1]),
+                    )
                 facts = _with_marks(_facts(row, window), conn)
                 if source:
                     current = _sources_of(row[1]) if row is not None else []
@@ -391,14 +415,26 @@ class SessionStore:
             self._failed("taint ask", exc)
             return False
 
-    def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool:
+    def mark_written(
+        self,
+        locations: Iterable[str],
+        *,
+        sources: Iterable[str] = (),
+        kinds: Mapping[str, Iterable[str]] | None = None,
+    ) -> bool:
         """Mark the places a call of a session that read untrusted content may write to
-        (``marks.written_locations``; revision 7, P-F1). Beyond ``MAX_MARKS`` places one mark
-        for every place is stored instead of new ones (never dropping a mark)."""
-        wanted = [loc for loc in dict.fromkeys(locations) if location_key(loc) is not None]
+        (``marks.written_places``; revision 7, P-F1), with the kinds of call per place. Beyond
+        ``MAX_MARKS`` places one mark for every place is stored instead of new ones (never dropping
+        a mark)."""
+        wanted = [
+            loc
+            for loc in dict.fromkeys(locations)
+            if loc == ALL_LOCATIONS or location_key(loc) is not None
+        ]
         if not wanted:
             return True
         names = [_source_name(s) for s in sources if isinstance(s, str)][:MAX_SOURCES]
+        given = kinds if kinds is not None else {}
         try:
             now = self._clock()
             with self._transaction() as conn:
@@ -415,17 +451,30 @@ class SessionStore:
                     new = [ALL_LOCATIONS]
                 for loc in [*known, *new]:
                     row = conn.execute(
-                        "SELECT sources FROM project_marks WHERE location = ?", (loc,)
+                        "SELECT sources, kinds FROM project_marks WHERE location = ?", (loc,)
                     ).fetchone()
                     merged = _sources_of(row[0]) if row is not None else []
                     for name in names:
                         if name not in merged and len(merged) < MAX_SOURCES:
                             merged.append(name)
+                    merged_kinds = _sources_of(row[1]) if row is not None else []
+                    # the mark for every place stands for the places of this call that did not fit
+                    for place in wanted if loc == ALL_LOCATIONS else [loc]:
+                        for kind in given.get(place, ()):
+                            if kind not in merged_kinds and len(merged_kinds) < MAX_SOURCES:
+                                merged_kinds.append(kind)
                     conn.execute(
-                        "INSERT INTO project_marks (location, first_marked, last_marked, sources) "
-                        "VALUES (?, ?, ?, ?) ON CONFLICT (location) DO UPDATE SET "
-                        "last_marked = excluded.last_marked, sources = excluded.sources",
-                        (loc, now, now, json.dumps(merged, ensure_ascii=True)),
+                        "INSERT INTO project_marks (location, first_marked, last_marked, sources, "
+                        "kinds) VALUES (?, ?, ?, ?, ?) ON CONFLICT (location) DO UPDATE SET "
+                        "last_marked = excluded.last_marked, sources = excluded.sources, "
+                        "kinds = excluded.kinds",
+                        (
+                            loc,
+                            now,
+                            now,
+                            json.dumps(merged, ensure_ascii=True),
+                            json.dumps(merged_kinds, ensure_ascii=True),
+                        ),
                     )
             return True
         except Exception as exc:  # noqa: BLE001 - reported through last_error
@@ -437,11 +486,18 @@ class SessionStore:
         try:
             with self._transaction() as conn:
                 rows = conn.execute(
-                    "SELECT location, first_marked, last_marked, sources FROM project_marks "
+                    "SELECT location, first_marked, last_marked, sources, kinds FROM project_marks "
                     "ORDER BY location"
                 ).fetchall()
             return [
-                Mark(str(r[0]), float(r[1]), float(r[2]), tuple(_sources_of(r[3]))) for r in rows
+                Mark(
+                    str(r[0]),
+                    float(r[1]),
+                    float(r[2]),
+                    tuple(_sources_of(r[3])),
+                    tuple(_sources_of(r[4])),
+                )
+                for r in rows
             ]
         except Exception as exc:  # noqa: BLE001 - reported through last_error
             self._failed("read marks", exc)
@@ -511,15 +567,21 @@ class SessionStore:
         and that the store has never seen starts as having read untrusted content: a fork has a
         new id and names no parent (docs/hook-behavior.md), and a resume after cleanup has lost
         its row. A session the store knows keeps its state, so a fresh one (``startup``,
-        ``clear``) is recorded as clean: its later resumes and compactions are then known."""
+        ``clear``) is recorded as clean: its later resumes and compactions are then known. Only a
+        session that a PreToolUse or a prompt took for one that missed its SessionStart
+        (``NO_SESSION_START_SOURCE`` and nothing else) becomes clean again here: the host had not
+        waited for the hook (revision 9, P-S1)."""
         sid = usable_session_id(session_id)
         if sid is None:
             return False
-        if isinstance(source, str) and source in FRESH_SESSION_SOURCES:
+        missed = _with_source([], NO_SESSION_START_SOURCE)
+        fresh = isinstance(source, str) and source in FRESH_SESSION_SOURCES
+        if fresh:
             asks, sources = None, "[]"
         else:
-            name = INHERITED_PREFIX + (source if isinstance(source, str) and source else "unknown")
-            asks, sources = 0, _with_source([], name)
+            # never NO_SESSION_START_SOURCE: this session did not miss the hook
+            told = source if isinstance(source, str) and source != "unknown" else ""
+            asks, sources = 0, _with_source([], INHERITED_PREFIX + (told or "no-source"))
         try:
             now = self._clock()
             with self._transaction() as conn:
@@ -528,6 +590,12 @@ class SessionStore:
                     "sources) VALUES (?, ?, ?, ?, ?) ON CONFLICT (session_id) DO NOTHING",
                     (sid, now, now, asks, sources),
                 )
+                if fresh:
+                    conn.execute(
+                        "UPDATE sessions SET taint_asks = NULL, sources = '[]' "
+                        "WHERE session_id = ? AND sources = ?",
+                        (sid, missed),
+                    )
             return True
         except Exception as exc:  # noqa: BLE001 - reported through last_error
             self._failed("session start", exc)
@@ -564,19 +632,31 @@ class SessionStore:
             self._failed(what, exc)
             return False
 
-    def add_prompt(self, session_id: object, text: str, *, keep: int) -> bool:
-        """Store one task intent (already extracted) and keep only the latest ``keep``."""
+    def add_prompt(
+        self, session_id: object, text: str, *, keep: int, unknown_inherited: bool = False
+    ) -> bool:
+        """Store one task intent (already extracted) and keep only the latest ``keep``. A session
+        not in the store gets a row here: ``unknown_inherited`` as in ``tool_call``."""
         sid = usable_session_id(session_id)
         if sid is None or not isinstance(text, str) or not text:
             return False
         keep = max(1, min(keep, MAX_PROMPTS_KEPT))
+        asks, sources = (
+            (0, _with_source([], NO_SESSION_START_SOURCE))
+            if unknown_inherited
+            else (
+                None,
+                "[]",
+            )
+        )
         try:
             now = self._clock()
             with self._transaction() as conn:
                 conn.execute(
-                    "INSERT INTO sessions (session_id, first_seen, last_seen) VALUES (?, ?, ?) "
+                    "INSERT INTO sessions (session_id, first_seen, last_seen, taint_asks, "
+                    "sources) VALUES (?, ?, ?, ?, ?) "
                     "ON CONFLICT (session_id) DO UPDATE SET last_seen = excluded.last_seen",
-                    (sid, now, now),
+                    (sid, now, now, asks, sources),
                 )
                 last = conn.execute(
                     "SELECT COALESCE(MAX(seq), 0) FROM prompts WHERE session_id = ?", (sid,)
@@ -697,6 +777,7 @@ class UnavailableStore:
         sources: tuple[str, ...],
         window: int,
         intents: int = 0,
+        unknown_inherited: bool = False,
     ) -> SessionFacts:
         return UNKNOWN
 
@@ -719,7 +800,13 @@ class UnavailableStore:
     def taint_asked(self, session_id: object, tool_use_id: object = None) -> bool:
         return False
 
-    def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool:
+    def mark_written(
+        self,
+        locations: Iterable[str],
+        *,
+        sources: Iterable[str] = (),
+        kinds: Mapping[str, Iterable[str]] | None = None,
+    ) -> bool:
         return False
 
     def marks(self) -> list[Mark] | None:
@@ -728,7 +815,9 @@ class UnavailableStore:
     def clear_marks(self, directory: str | None) -> list[str] | None:
         return None
 
-    def add_prompt(self, session_id: object, text: str, *, keep: int) -> bool:
+    def add_prompt(
+        self, session_id: object, text: str, *, keep: int, unknown_inherited: bool = False
+    ) -> bool:
         return False
 
     def cleanup(

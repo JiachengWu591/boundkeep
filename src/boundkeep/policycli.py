@@ -236,6 +236,7 @@ class _FixedSession:
         sources: tuple[str, ...],
         window: int,
         intents: int = 0,
+        unknown_inherited: bool = False,
     ) -> SessionFacts:
         return self._facts
 
@@ -258,10 +259,18 @@ class _FixedSession:
     def taint_asked(self, session_id: object, tool_use_id: object = None) -> bool:
         return False
 
-    def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool:
+    def mark_written(
+        self,
+        locations: Iterable[str],
+        *,
+        sources: Iterable[str] = (),
+        kinds: Mapping[str, Iterable[str]] | None = None,
+    ) -> bool:
         return False
 
-    def add_prompt(self, session_id: object, text: str, *, keep: int) -> bool:
+    def add_prompt(
+        self, session_id: object, text: str, *, keep: int, unknown_inherited: bool = False
+    ) -> bool:
         return False
 
 

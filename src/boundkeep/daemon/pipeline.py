@@ -13,17 +13,19 @@ default an allow is "no decision" and Claude Code's own permission flow continue
 Session state (M3a): UserPromptSubmit stores the task intent (only while an LLM audit is configured
 and allowed to send it), PostToolUse marks a call of a taint source, and every PreToolUse is counted
 and judged in its session's taint state (``session.store``; a call of a source marks the session
-there too, and so does a shell call that reads remote text, ``session.sources``; revision 8,
-P-R5). Rules see that state through ``session_read_untrusted``; the taint step of PROJECT_SPEC.md
-§7 turns an allow that no rule made of a sensitive action into an ask while the session is tainted
-(the LLM's allows get the same step in ``audit.verdict``), and each such ask uses up one call of
-the taint window once its tool ran: the PostToolUse of the same ``tool_use_id`` (revision 7, P-F6;
-revision 8, P-R3). A call of a session that read untrusted content marks the places it may write
-(``session.marks``; P-F1, P-R6, P-R7), which every session's rules see through
+there too; a shell call that reads remote text, ``session.sources``, is a source at both events;
+revision 8, P-R5). Rules see that state through ``session_read_untrusted``; the taint step of
+PROJECT_SPEC.md §7 turns an allow that no rule made of a sensitive action into an ask while the
+session is tainted (the LLM's allows get the same step in ``audit.verdict``), and each such ask uses
+up one call of the taint window once its tool ran: the PostToolUse of the same ``tool_use_id``
+(revision 7, P-F6; revision 8, P-R3). A call of a session that read untrusted content marks the
+places it may write (``session.marks``; P-F1, P-R6, P-R7), which every session's rules see through
 ``project_written_after_untrusted``; a gray call that runs code in such a project is not sent to
 the LLM (P-R2). SessionStart of a resumed, compacted or forked session the store does not know
-starts it as having read untrusted content (P-R9). Without a session layer (``boundkeep test``,
-``explain``, the rules-only evaluation) every call is judged as in a fresh session.
+starts it as having read untrusted content (P-R9), and so does any call of a session the store does
+not know where every install registers that hook (revision 9, P-S1). Without a session layer
+(``boundkeep test``, ``explain``, the rules-only evaluation) every call is judged as in a fresh
+session.
 
 M0's canary is a built-in rule of ``policy.evaluate``. If the policy file is unusable, PreToolUse
 events are answered with ``ask`` (fail closed). A deny reason reads ``boundkeep (<rule-id>): ...``;
@@ -52,9 +54,14 @@ from boundkeep.policy.schema import (
     Rule,
     escape_glob_literal,
 )
-from boundkeep.session.facts import FRESH, SessionFacts, is_taint_source
+from boundkeep.session.facts import (
+    FRESH,
+    NO_SESSION_START_SOURCE,
+    SessionFacts,
+    is_taint_source,
+)
 from boundkeep.session.intent import extract_intent
-from boundkeep.session.marks import marked, written_locations
+from boundkeep.session.marks import marked, written_places
 from boundkeep.session.sources import NETWORK_SOURCE_PREFIX, network_source
 
 SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
@@ -84,6 +91,7 @@ class SessionAccess(Protocol):
         sources: tuple[str, ...],
         window: int,
         intents: int = 0,
+        unknown_inherited: bool = False,
     ) -> SessionFacts: ...
 
     def tool_result(
@@ -101,9 +109,17 @@ class SessionAccess(Protocol):
 
     def taint_asked(self, session_id: object, tool_use_id: object = None) -> bool: ...
 
-    def mark_written(self, locations: Iterable[str], *, sources: Iterable[str] = ()) -> bool: ...
+    def mark_written(
+        self,
+        locations: Iterable[str],
+        *,
+        sources: Iterable[str] = (),
+        kinds: Mapping[str, Iterable[str]] | None = None,
+    ) -> bool: ...
 
-    def add_prompt(self, session_id: object, text: str, *, keep: int) -> bool: ...
+    def add_prompt(
+        self, session_id: object, text: str, *, keep: int, unknown_inherited: bool = False
+    ) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -772,7 +788,11 @@ def taint_settings(policy: Policy | None) -> tuple[tuple[str, ...], int]:
 
 
 def _note_prompt(
-    payload: Mapping[str, Any], policy: Policy | None, session: SessionAccess | None
+    payload: Mapping[str, Any],
+    policy: Policy | None,
+    session: SessionAccess | None,
+    *,
+    unknown_inherited: bool,
 ) -> None:
     """Store the task intent, only while an LLM audit is configured and may send it."""
     if session is None or policy is None:
@@ -782,7 +802,38 @@ def _note_prompt(
         return
     text = extract_intent(payload.get("prompt"), llm.intent_chars)
     if text:
-        session.add_prompt(payload.get("session_id"), text, keep=llm.intent_prompts)
+        session.add_prompt(
+            payload.get("session_id"),
+            text,
+            keep=llm.intent_prompts,
+            unknown_inherited=unknown_inherited,
+        )
+
+
+def _note_shell_result(
+    payload: Mapping[str, Any],
+    session: SessionAccess,
+    *,
+    platform: Platform | None,
+    env: Mapping[str, str] | None,
+    home: str | None,
+) -> None:
+    """A shell call that reads remote text is marked at its PostToolUse too, like a source tool: its
+    PreToolUse may never have reached the daemon (second re-review of M3a, S-3). The call ran, so
+    no verdict matters here, and only the programs do: no look into directories. Only reaches the
+    daemon where the matcher is ``*`` (``policy.loader.post_matcher_for``: an LLM backend)."""
+    if not shell_command(payload):
+        return
+    actions = normalize_event(
+        payload,
+        platform=platform or local_platform(),
+        env=env if env is not None else os.environ,
+        home=home,
+        protected_globs=(),
+    )
+    network = network_source(actions)
+    if network is not None:
+        session.source_seen(payload.get("session_id"), f"{NETWORK_SOURCE_PREFIX}{network}")
 
 
 def decide(
@@ -798,12 +849,15 @@ def decide(
     scan_disk: bool = True,
     session: SessionAccess | None = None,
     auditor: Auditor | None = None,
+    session_start_expected: bool = False,
 ) -> Decision:
     """The decision for one event. ``session`` None: no session layer (every call is judged as
-    in a fresh session, nothing is recorded). ``auditor`` None: gray calls ask."""
+    in a fresh session, nothing is recorded). ``auditor`` None: gray calls ask.
+    ``session_start_expected``: every install registers SessionStart, so a session the store does
+    not know missed it (revision 9, P-S1)."""
     sources, window = taint_settings(policy)
     if event == protocol.EVENT_PROMPT:
-        _note_prompt(payload, policy, session)
+        _note_prompt(payload, policy, session, unknown_inherited=session_start_expected)
         return Decision(protocol.DECISION_NONE, "", "no-decision-for-event")
     if event == protocol.EVENT_POST:
         if session is not None:
@@ -813,6 +867,7 @@ def decide(
                 sources=sources,
                 tool_use_id=payload.get("tool_use_id"),
             )
+            _note_shell_result(payload, session, platform=platform, env=env, home=home)
         return Decision(protocol.DECISION_NONE, "", "no-decision-for-event")
     if event == protocol.EVENT_SESSION:
         if session is not None:
@@ -830,6 +885,7 @@ def decide(
             sources=sources,
             window=window,
             intents=auditor.wants_intents if auditor is not None else 0,
+            unknown_inherited=session_start_expected,
         )
         taint = taint_record(facts)
     if policy_error is not None or policy is None:
@@ -855,17 +911,22 @@ def decide(
     new_sources = [f"{NETWORK_SOURCE_PREFIX}{network}"] if network is not None else []
     if isinstance(tool, str) and is_taint_source(tool, sources):
         new_sources.append(tool)
-    if session is not None and (facts.read_untrusted or new_sources):
+    # P-S7: a call a rule denies never runs (in audit-only mode it does). P-S1: a session whose only
+    # source is a missed SessionStart asks itself but leaves no mark: that the daemon started late
+    # must not become a state of the project.
+    denied = mode == MODE_ENFORCE and result.verdict.decision == "deny"
+    read_it = facts.read_untrusted and facts.sources != (NO_SESSION_START_SOURCE,)
+    if session is not None and not denied and (read_it or new_sources):
         # P-F1: what this session writes stays in the project after the session (marked at
         # PreToolUse like a source call: a write that is then refused is the safe direction).
         # A source call is judged in the state before it but marks in the state after it, so its
         # own write counts (revision 8, P-R6).
         decisions = {v.index: v.decision for v in result.verdict.actions}
-        places = written_locations(
+        places = written_places(
             result.actions, tuple(decisions.get(i) for i in range(len(result.actions)))
         )
         if places:
-            session.mark_written(places, sources=(*facts.sources, *new_sources))
+            session.mark_written(places, sources=(*facts.sources, *new_sources), kinds=places)
     decision = _finish(
         result,
         mode,

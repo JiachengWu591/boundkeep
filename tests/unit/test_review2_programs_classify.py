@@ -439,8 +439,10 @@ def peeled(*texts: str) -> Any:
     ("argv", "rest", "marker"),
     [
         (["uv", "run", "boundkeep", "uninstall"], ["boundkeep", "uninstall"], "uv-run"),
-        (["uv", "run", "--with", "x", "-p", "3.12", "cmd", "-q"], ["cmd", "-q"], "uv-run"),
-        (["uv", "run", "--with=x", "--isolated", "cmd"], ["cmd"], "uv-run"),
+        (["uv", "run", "--with", "x", "-p", "3.12", "cmd", "-q"], ["cmd", "-q"], "uv-run-remote"),
+        (["uv", "run", "--with=x", "--isolated", "cmd"], ["cmd"], "uv-run-remote"),
+        (["uv", "run", "https://x.example/a.py"], ["https://x.example/a.py"], "uv-run-remote"),
+        (["uv", "run", "-p", "3.12", "--isolated", "cmd"], ["cmd"], "uv-run"),
         (["uv", "run", "--", "rm", "-rf"], ["rm", "-rf"], "uv-run"),
         (["uv", "run", "--", "--odd"], ["--odd"], "uv-run"),
         (["UV.EXE", "run", "cmd"], ["cmd"], "uv-run"),

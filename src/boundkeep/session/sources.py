@@ -10,6 +10,17 @@ packages (what they print is progress, build and test output). Anything not in t
 a missing entry only makes the session ask more. Accepted residue: install scripts and git print
 text a remote wrote too.
 
+Running a package from a registry is a source as well: its output is text someone else wrote
+(second re-review of M3a, S-2). That is ``pnpm dlx``, ``yarn dlx``, ``pnpx``, the ``create`` family,
+``npm init <initializer>``, ``go run pkg@version``, ``pipx run``, ``uvx``, ``uv tool run``, ``uv run
+--with`` and ``uv run URL`` (the normalizer peels these runners off, so the action is the inner
+program, with no network at all: ``normalize.programs.REMOTE_PACKAGE_RUNNERS`` are their markers).
+npx, bunx and ``npm exec`` take the project's copy of a bare name, so ``npx prettier`` stays out,
+and what the words cannot tell stays a residue: ``npx cowsay`` in a project without cowsay downloads
+it. A version, a scope, a URL or ``--package`` names a package
+(``normalize.programs.NAMED_PACKAGE_FLAG``) and counts, also when the project happens to hold
+exactly that.
+
 Pure functions, no I/O; nothing here imports the policy package.
 """
 
@@ -20,6 +31,7 @@ from collections.abc import Sequence
 from typing import Final
 
 from boundkeep.normalize.model import Action
+from boundkeep.normalize.programs import NAMED_PACKAGE_FLAG, REMOTE_PACKAGE_RUNNERS
 
 SHELL_SOURCE_TOOLS: Final = frozenset({"Bash", "PowerShell"})
 NETWORK_SOURCE_PREFIX: Final = "shell-network:"
@@ -37,14 +49,15 @@ def _subs(text: str, *, bare: bool = False) -> frozenset[str | None]:
 _PIP_MOVES: Final = _subs("install download wheel lock")
 # package manager -> the subcommands whose network use is fetching packages (the subcommand sets
 # with network in ``normalize.programs._PKG``, minus the ones that print what a registry holds:
-# view, info, search, audit, outdated, publish and the account commands still count)
+# view, info, search, audit, outdated, publish and the account commands still count; and minus the
+# ones that always run a package from a registry: dlx, create)
 _MOVES_CODE: Final[dict[str, frozenset[str | None]]] = {
     "pip": _PIP_MOVES,
     "python": _PIP_MOVES,  # python -m pip install ...
     "py": _PIP_MOVES,
     "npm": _subs(
         "install i add ci update up upgrade dedupe ddp prune install-test it install-ci-test cit "
-        "link ln exec x dlx create init",
+        "link ln exec x init",
         bare=True,
     ),
     "npx": _subs("", bare=True),
@@ -66,7 +79,7 @@ _MOVES_CODE: Final[dict[str, frozenset[str | None]]] = {
         "groupinstall"
     ),
     "apk": _subs("add update upgrade fetch"),
-    "pipx": _subs("install run upgrade upgrade-all inject reinstall-all"),
+    "pipx": _subs("install upgrade upgrade-all inject reinstall-all"),
 }
 _ALIASES: Final = {
     "pipenv": "pip",
@@ -74,7 +87,6 @@ _ALIASES: Final = {
     "pnpm": "npm",
     "bun": "npm",
     "bunx": "npx",
-    "pnpx": "npx",
     "apt-get": "apt",
     "aptitude": "apt",
     "yum": "dnf",
@@ -99,15 +111,23 @@ def moves_code(action: Action) -> bool:
     if family == "git":
         return action.subcommand in _GIT_SYNC
     subs = _MOVES_CODE.get(family)
-    return subs is not None and action.subcommand in subs
+    if subs is None or action.subcommand not in subs or NAMED_PACKAGE_FLAG in action.flags:
+        return False
+    if family == "uv" and action.subcommand == "tool":
+        return "run" not in action.args  # ``uv --quiet tool run x``: not peeled by the normalizer
+    if family == "go" and action.subcommand == "run":
+        return not any("@" in word for word in action.args)  # ``go run pkg@version``
+    return True
 
 
 def network_source(actions: Sequence[Action]) -> str | None:
     """The program of the first shell action that may read remote text (a taint source), or
     None when no action of a shell call reaches the network except to move code."""
     for action in actions:
-        if action.tool not in SHELL_SOURCE_TOOLS or not (action.network or action.domains):
+        if action.tool not in SHELL_SOURCE_TOOLS:
             continue
-        if not moves_code(action):
+        if not REMOTE_PACKAGE_RUNNERS.isdisjoint(action.wrappers):
+            return action.program or "?"
+        if (action.network or action.domains) and not moves_code(action):
             return action.program or "?"
     return None

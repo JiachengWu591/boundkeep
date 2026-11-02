@@ -436,4 +436,4 @@ def test_nothing_but_names_and_counters_is_stored(store: SessionStore) -> None:
         columns = [row[1] for row in conn.execute("PRAGMA table_info(sessions)")]
         marks = [row[1] for row in conn.execute("PRAGMA table_info(project_marks)")]
     assert columns == ["session_id", "first_seen", "last_seen", "taint_asks", "sources"]
-    assert marks == ["location", "first_marked", "last_marked", "sources"]
+    assert marks == ["location", "first_marked", "last_marked", "sources", "kinds"]

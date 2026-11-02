@@ -370,6 +370,7 @@ class Daemon:
         self._auditor_llm: LlmAudit | None = None
         self._retired_auditors: list[Auditor] = []
         self._session_failures = 0
+        self._start_expected: tuple[tuple[int, int] | None, bool] | None = None
 
     @property
     def requests_served(self) -> int:
@@ -541,6 +542,21 @@ class Daemon:
                 request.request_id, protocol.ERR_INTERNAL, "internal error"
             )
 
+    def _session_start_expected(self) -> bool:
+        """``install.session_start_expected``, read again when the manifest file changes."""
+        path = paths.manifest_file(self._home)
+        try:
+            found = os.stat(path)
+            stamp: tuple[int, int] | None = (found.st_mtime_ns, found.st_size)
+        except OSError:
+            stamp = None
+        cached = self._start_expected
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        expected = install.session_start_expected(path)
+        self._start_expected = (stamp, expected)
+        return expected
+
     def _observe(self, request: protocol.Request) -> tuple[pipeline.Decision, str]:
         """A prompt, post or config event: the session bookkeeping, then "no decision"."""
         state = self._refresh_policy()
@@ -554,6 +570,7 @@ class Daemon:
             env=os.environ,
             home=self._user_home,
             session=self._session,
+            session_start_expected=self._session_start_expected(),
         )
         self._check_session()
         return decision, state.mode
@@ -580,6 +597,7 @@ class Daemon:
             home=self._user_home,
             session=self._session,
             auditor=auditor,
+            session_start_expected=self._session_start_expected(),
         )
         self._check_session()
         return decision, state.mode

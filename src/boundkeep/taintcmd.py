@@ -17,12 +17,24 @@ from typing import Any
 
 from boundkeep import console, paths
 from boundkeep.normalize import paths as norm_paths
-from boundkeep.session.marks import ALL_LOCATIONS, location_key, within
+from boundkeep.session.marks import (
+    ALL_LOCATIONS,
+    KIND_HIDDEN_WRITE,
+    KIND_RUN,
+    KIND_WRITE,
+    location_key,
+    within,
+)
 from boundkeep.session.store import Mark, SessionStore, SessionStoreError
 from boundkeep.trust import _stdin_is_tty, agent_environment, canonical_dir, printable_entry
 
 EXIT_OK = 0
 EXIT_PROBLEM = 1
+_KIND_TEXT = {
+    KIND_WRITE: "a write",
+    KIND_HIDDEN_WRITE: "a write that shows no path",
+    KIND_RUN: "a command that runs code",
+}
 
 
 def _fail(message: str) -> int:
@@ -40,7 +52,10 @@ def _open() -> SessionStore | None:
 
 def _shown(location: str) -> str:
     if location == ALL_LOCATIONS:
-        return "every project (more places were marked than are kept)"
+        return (
+            "every project (more places were marked than are kept, or a dev-tool configuration "
+            "was written at a drive root; only --all clears it)"
+        )
     return printable_entry(location)
 
 
@@ -79,7 +94,9 @@ def cmd_list(_args: argparse.Namespace) -> int:
     for mark in marks:
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(mark.last_marked))
         sources = printable_entry(", ".join(mark.sources), 80) or "?"
-        console.out(f"  {when}  {_shown(mark.location)}  (after {sources})")
+        kinds = ", ".join(_KIND_TEXT.get(kind, "?") for kind in mark.kinds)
+        how = f"; by {kinds}" if kinds else ""  # a mark from before schema 4 does not say
+        console.out(f"  {when}  {_shown(mark.location)}  (after {sources}{how})")
     console.out("Clear one with 'boundkeep taint clear --project-dir DIR', all with --all.")
     return EXIT_OK
 

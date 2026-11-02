@@ -570,7 +570,8 @@ def _check_own_hooks(
                 name,
                 WARN,
                 f"{path}: no boundkeep hook for SessionStart: a forked or resumed session that "
-                "the session store does not know starts as clean",
+                "the session store does not know starts as clean, in every install while one "
+                "lacks the hook",
                 "run 'boundkeep init' again",
             )
         )

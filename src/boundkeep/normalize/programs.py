@@ -31,6 +31,8 @@ from boundkeep.normalize.model import Access, Redirect, RiskTag, Shell, Word
 __all__ = [
     "DEVTOOLS",
     "DEVTOOL_RISKY_FLAGS",
+    "NAMED_PACKAGE_FLAG",
+    "REMOTE_PACKAGE_RUNNERS",
     "CmdInfo",
     "DevToolForm",
     "classify",
@@ -1861,6 +1863,11 @@ _RUNNER_TABLE: dict[str, tuple[tuple[str, ...], frozenset[str], frozenset[str], 
     "pipx": (("run",), _PIPX_VALUES, _PIPX_FLAGS, "pipx-run"),
     "poetry": (("run",), _POETRY_VALUES, _POETRY_FLAGS, "poetry-run"),
 }
+_UV_RUN_WITH = _fs("--with --with-editable --with-requirements")
+# The markers of runners that fetch what they run (``uv run`` only with --with or a URL). The action
+# is the inner program, which has no network of its own; a shell call with one is a taint source
+# (session.sources; S-2).
+REMOTE_PACKAGE_RUNNERS = frozenset({"uvx", "pipx-run", "uv-run-remote"})
 _PY_VALUE_FLAGS = frozenset({"-W", "-X", "-Q"})
 
 
@@ -1924,12 +1931,16 @@ def peel_runner(argv: Sequence[Word]) -> tuple[int, str, Word | None] | str | No
         name, eq, _ = t.partition("=")
         if name in values:
             i += 1 if eq else 2
+            if marker == "uv-run" and name in _UV_RUN_WITH:
+                marker = "uv-run-remote"
         elif name in flags and not eq:
             i += 1
         else:
             return "unsure"
     if i >= n:
         return None  # nothing to run (``uv run`` alone)
+    if marker == "uv-run" and "://" in argv[i].text:
+        marker = "uv-run-remote"  # ``uv run https://example.com/x.py``
     return i, marker, None
 
 
@@ -3218,7 +3229,15 @@ for _alias, _target in (
     ("micromamba", "conda"),
 ):
     _PKG[_alias] = _PKG[_target]
-_NPX_PROGRAMS = _fs("npx bunx pnpx")
+_NPX_PROGRAMS = _fs("npx bunx pnpx pnx")
+# npx, bunx and ``npm exec`` run the project's copy of a bare name when there is one, so the name
+# says nothing about the network. A version, a scope, a URL, ``--package`` or ``--yes`` (it answers
+# the question asked before a download) name a package to fetch unless the project holds exactly
+# that, and ``--call`` runs a command line nobody reads here. Such an action carries this flag, a
+# name no real option has: it is a taint source (session.sources; PROJECT_SPEC.md §7, P-R5).
+NAMED_PACKAGE_FLAG = "--named-package"
+_NPX_NAMES_PACKAGE = _fs("-p --package -c --call -y --yes")
+_BARE_BIN_NAME = re.compile(r"[A-Za-z0-9._-]+")
 
 
 def _pkg_spec_word(a: _Acc, w: Word, spec: PkgSpec) -> None:
@@ -3279,6 +3298,16 @@ def _h_pkg(a: _Acc, args: Sequence[Word], spec: PkgSpec) -> None:
             _generic_arg(a, w)
 
 
+def _names_a_package(a: _Acc, sc: _Scan, operands: Sequence[Word]) -> bool:
+    """The words of an npx-style call say more than a bin of the project (see the flag's note)."""
+    if a.urls or sc.dynamic or not _NPX_NAMES_PACKAGE.isdisjoint(sc.flags):
+        return True
+    if not operands:
+        return False
+    first = operands[0]
+    return first.expands or first.glob or _BARE_BIN_NAME.fullmatch(first.text) is None
+
+
 def _h_npm(a: _Acc, args: Sequence[Word], spec: PkgSpec) -> None:
     """npm / yarn / pnpm / bun: ``config set`` rewrites ~/.npmrc, bare ``yarn`` installs."""
     _h_pkg(a, args, spec)
@@ -3292,6 +3321,15 @@ def _h_npm(a: _Acc, args: Sequence[Word], spec: PkgSpec) -> None:
         a.network = True
         a.exec_hint = True
         a.write_hint = True
+    # ``npm exec`` and ``bun x`` choose as npx does; ``pnpm exec``, ``yarn exec`` and ``bun exec``
+    # only run what the project has. ``npm init NAME`` is ``npm exec create-NAME``, ``npm init``
+    # writes a package.json.
+    if a.sub == "x" or (a.sub == "exec" and a.prog == "npm"):
+        sc = _scan(args, spec.opts)
+        if _names_a_package(a, sc, sc.pos[1:]):
+            a.flags.append(NAMED_PACKAGE_FLAG)
+    elif a.sub == "init" and a.prog == "npm" and len(_scan(args, spec.opts).pos) > 1:
+        a.flags.append(NAMED_PACKAGE_FLAG)
 
 
 def _h_npx(a: _Acc, args: Sequence[Word]) -> None:
@@ -3307,6 +3345,8 @@ def _h_npx(a: _Acc, args: Sequence[Word]) -> None:
         _pkg_spec_word(a, w, _PKG["npm"])
     for w in sc.pos[1:]:
         _generic_arg(a, w)
+    if _names_a_package(a, sc, sc.pos):
+        a.flags.append(NAMED_PACKAGE_FLAG)
 
 
 _DOCKER_GLOBAL = _opts(
@@ -4353,6 +4393,7 @@ def _dispatch(name: str) -> _DispatchFn | None:
         "npx": _h_npx,
         "bunx": _h_npx,
         "pnpx": _h_npx,
+        "pnx": _h_npx,
         "sqlite3": _h_sqlite,
         "psql": _h_psql,
         "mysql": _h_mysql,

@@ -641,6 +641,18 @@ def load_manifest(path: str) -> list[InstallRecord]:
     return [_record_from_json(item, path) for item in installs]
 
 
+def session_start_expected(path: str) -> bool:
+    """Every install in the manifest at ``path`` registered SessionStart, so a session the store
+    does not know missed it (PROJECT_SPEC.md §7, revision 9, P-S1). An older record, or no install
+    at all, says nothing; a manifest that cannot be read counts as expected (asks more)."""
+    try:
+        records = load_manifest(path)
+    except Exception:  # noqa: BLE001 - not known: the safe direction
+        return True
+    has_hook = (r.events is not None and "SessionStart" in r.events for r in records)
+    return bool(records) and all(has_hook)
+
+
 def save_manifest(path: str, records: Sequence[InstallRecord]) -> None:
     """Write the manifest atomically (JSON, indent 2, LF)."""
     payload = {
