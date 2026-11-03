@@ -36,6 +36,10 @@
 > **修订 9（2026-11-01，使用者按建议接受："按建议实现"）**：第二轮定向复审（`docs/reviews/M3a-rereview-2.md`）的低危残余，提案在 `docs/reports/M3a-low-residuals.md` 第 7 节。
 > - §7：所有安装记录都注册了 SessionStart 时，库里没有的会话按 `inherited:unknown` 开始，只有这一个来源时不打项目标记（P-S1）；开发工具配置写在根目录时记"所有位置"（P-S6）；`enforce` 下规则判决是 deny 的调用不打项目标记，标记记下打标记的调用的类别（P-S7）；shell 来源在 PostToolUse 也记、git 名单与代码对齐（P-S35）；P-R5 的名单拿掉运行注册表里的包的写法（S-2）。
 > - §10：SessionStart 没到或失败时的行为（P-S1）。
+>
+> **修订 10（2026-11-02，使用者说"修设备路径"）**：前缀路径折叠修复留下的残余（`docs/reports/M3a-prefix-folding.md` 第 5 节），记录在 `docs/reports/M3a-device-paths.md`。
+> - §7：碰到 Windows 设备路径的灰色调用不送审，直接 ask（`decided_by: gray-device-path`）；`NUL` 除外。盘符后面什么都没有的写法（`\\.\C:`）是卷本身，算设备路径。
+> - §9.2：同一条，写明模型看不到这类调用。
 
 > **当前进度（2026-11-02）**
 >
@@ -47,7 +51,8 @@
 > - **M3a 已实现并提交**（2026-10-30，代码提交 `46169eb`，报告 `docs/reports/M3a.md`）：SQLite 会话状态（任务意图、污染窗口与粘性位、并发、清理）、M-2 的 ask 规则 `ask-devtools-after-untrusted-content`、后端接口与假后端、OpenAI 兼容适配器（只对本地假服务测过）、发送出口、二次裁决、缓存、`boundkeep llm check`、一致性测试、`rules+taint` 评测行（相对 `rules-only` 的增量为 0，原因见报告）。报告第 7 节的规格变更提案 P1 到 P12 已由使用者于 2026-10-30 接受，已写进本文件（修订 6）。
 > - **M3a 的 X1 审查**（2026-10-30）：中危 F1–F6，没有高危。F3、F4、F5 已修并提交（`1959969`、`4d723c0`）；F1、F6、P-F2、P-F34 的规格变更已接受（修订 7），实现记录在 `docs/reports/M3a-review-fixes-2.md`。定向复审（2026-10-31）：中危 R-1 到 R-5；R-1、R-4、R-10 已修并提交（`f8b7a71`），R-2、R-3、R-5、R-6、R-7、R-9 按修订 8 实现并提交（`dc9b268`、`4a6c07d`）。第二轮定向复审（`docs/reviews/M3a-rereview-2.md`）没有高危、中危，低危 S-1 到 S-7。真实 Claude Code 冒烟（2026-11-01，`scripts/smoke_claude_m3a.py`，`docs/hook-behavior.md`）26 项通过，`auto` 模式没有测到。全量测试 26870 通过、169 跳过、0 失败。收尾记录 `docs/reports/M3a-closeout.md`；使用者于 2026-11-01 决定打 `m3a-done`，`trusted_projects` 改为有条件推荐（默认仍是空列表）。
 > - **M3a 之后的低危残余**（已提交，未推送、未打标签；记录 `docs/reports/M3a-low-residuals.md`）：第二轮定向复审的 S-1、S-2、S-3、S-5、S-6、S-7 已处理，规格修订 9。规则、策略与评测数字没变。全量测试 27203 通过、169 跳过、0 失败（也包括下一条的修复）。真实冒烟重跑通过（26 项，0 失败），但只验证原有链路；这些新路径真实宿主里没有跑，`auto` 模式仍未测。
-> - **带前缀路径的折叠**（已提交，未推送、未打标签；记录 `docs/reports/M3a-prefix-folding.md`）：路径规范化先读第一段、Win32 先折叠再读第一段，这个错误在 `m3a-done` 上就有。已修，只在配置了 LLM 后端时才有影响；没有独立审查。残余（记录第 5 节）：真正的设备路径配置了后端时仍会送审，模型说放行就不再问；要改 §9，等使用者决定。
+> - **带前缀路径的折叠**（已提交，未推送、未打标签；记录 `docs/reports/M3a-prefix-folding.md`）：路径规范化先读第一段、Win32 先折叠再读第一段，这个错误在 `m3a-done` 上就有。已修，只在配置了 LLM 后端时才有影响；没有独立审查。
+> - **Windows 设备路径不送审**（修订 10，已提交，`2f0f009` 代码，文档在其后一个提交，未推送、未打标签；记录 `docs/reports/M3a-device-paths.md`）：key 在 `//./` 之下的灰色调用不送审、直接问，确实的 `NUL` 除外；`\\.\C:` 是卷。规则、策略与评测数字没变；没有独立审查，真实宿主里没有跑。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -328,6 +333,9 @@ event(pre) ─> normalize ─> Action
                                      否 ─> 没被完整分析？ ── 是 ─> ASK（不送审，decided_by=gray-unanalysed）
                                               │ 否
                                               ▼
+                                           碰到 Windows 设备路径？ ── 是 ─> ASK（不送审，decided_by=gray-device-path）
+                                              │ 否
+                                              ▼
                                      send_gate ─> backend.audit(请求，§9.2) ─> code 二次裁决（§9.5）─> allow / ask / deny
 ```
 
@@ -403,6 +411,12 @@ event(pre) ─> normalize ─> Action
   - **请求装不下的输入**（修订 7，P-F34；X1 审查 F3、F4）：命令里的 here-document 或 here-string（shell 自己当命令读的除外，它们被解析成单独的命令）、`NAME=value` 赋值（命令前缀、`env NAME=v`、单独的赋值）、PowerShell 里管道进解释器的字符串与赋值语句、MCP 调用的参数。§9.2 的请求从不带这些内容，模型看不到它们。
 
   这些调用直接 ask（`decided_by: gray-unanalysed`，理由里写明没有送审），不按 `on_failure`：它们不是审计失败，与没有配置后端时的灰色相同。
+- **碰到 Windows 设备路径的灰色调用不送审**（修订 10）：路径的 key 在 `//./` 之下时，key 说不清它通向哪里，模型放行的只是一串字符。`//./globalroot/device/mup/srv/share/x` 是网络共享（公开资料的说法，没有实测），`//./pipe/x` 是在那个管道上监听的程序，`//./volume{...}`、`//./harddiskvolume1` 与 `//./c:` 是整个卷，`//./com1`、`//./con` 是硬件与控制台，`//./aux` 也可能是项目里的 `aux.py`。这些调用直接 ask（`decided_by: gray-device-path`，理由里写明没有送审，不写路径），不按 `on_failure`。
+  - **`NUL` 例外**：写进去的内容被丢弃，读到的是空，而 `2>NUL` 很常见，不例外就会多出大量询问。只有 Win32 确实读成 `NUL` 的写法才照常送审：最后一段恰好是 `nul`（可带末尾的点或空格、`\\.\` 一类前缀），在哪个目录都一样。`nul.bat`、`nul:x`、`\\srv\share\nul` 的 key 也是 `//./nul`，但它们是普通文件（`GetFullPathNameW`，Windows 11 build 26200），不算；`//./nul/x`、折叠出来的 `\\.\foo\..\NUL`、带变量或通配符的也不算。判断时路径身上有名单之外的理由就不例外，所以多问，不会多放。
+  - **文件名恰好是设备名的路径**（`aux.py`、`C:\proj\con`）：key 仍是 `//./aux`（M1 按旧版 Windows 的谨慎读法），所以也不送审。这是代价：配置了后端时，`cat src/aux.py` 也要问。
+  - **卷本身**：`\\.\C:`、`\\?\C:`、`\??\C:` 这样盘符后面什么都没有的写法打开的是卷，不是根目录，key 是 `//./c:`，不确定。`\\.\C:\` 是根目录，key 仍是 `c:/`。Win32 折叠之后只剩盘符的写法（`\\.\foo\..\C:`）也按卷算；`\\.\C:\.` 实际是根目录，这里也按卷算，因为这是谨慎的读法。
+  - **规则照常在前面判**：`no-raw-disk-access` 仍然 deny 物理磁盘，`net-allowlist` 仍然问 UNC，`rm-outside-project` 仍然 deny。卷本身不在 `no-raw-disk-access` 里，是 ask，不是 deny。没有配置后端时没有变化（灰色本来就问）。
+  - **范围**：只看 `Action.paths`。POSIX 的 `/dev/...` 不算（`no-raw-disk-access` 列了裸磁盘与内存设备，其余照常送审）；`C:\proj\aux\x` 这种路径中间带设备名的不算（它不在设备命名空间里）。
 
 **Action（归一化后的动作）**
 
@@ -612,6 +626,7 @@ M3a 的失败分类、重试与预算：
   - `domains`、`network`、`risk_tags`、`wrappers`；
   - 规则判不了的简短原因（`unclear`）、`dynamic_args`；
   - MCP 调用不送审：它的参数从来不发，模型看不到（修订 7，§7"请求装不下的输入"）。
+  - 碰到 Windows 设备路径的调用不送审，`NUL` 除外（修订 10，§7）。
 - **不发**：原始命令行、`cwd`、文件内容、工具输出，以及白名单之外的 hook 字段。
 - **其余字段**：
   - `task_intent`：没有配置 `send_task_intent` 时是 `null`。
