@@ -965,6 +965,8 @@ _PS_SCRIPT = r"""
 param([string]$NamesFile, [string]$AliasFile, [string]$OutFile)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+# The messages sorted by their English text below follow the UI language (zh-CN under code page 936)
+[System.Threading.Thread]::CurrentThread.CurrentUICulture = [cultureinfo]::GetCultureInfo('en-US')
 $ctxs = @(
   $null, ($env:SystemDrive + '\'), 'HKCU:\Software', 'Cert:\CurrentUser\My',
   'Env:\', 'Function:\', 'Variable:\', 'Alias:\'
