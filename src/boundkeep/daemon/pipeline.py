@@ -5,8 +5,9 @@ A PreToolUse payload becomes a list of ``Action`` (one per simple command of a s
 other tools); the policy rules are evaluated per action and merged strictest-first (deny > ask >
 gray > allow). With no LLM backend a gray outcome is an ``ask``; with one, ``audit.auditor`` asks
 the model and ``audit.verdict`` rules on its answer (any failure: ``llm_audit.on_failure``). A gray
-call the normalizer did not see whole (``incomplete_analysis``), or with code or arguments the
-request cannot show (``unshown_input``), is not sent and asks.
+call the normalizer did not see whole (``incomplete_analysis``), with code or arguments the
+request cannot show (``unshown_input``), or that touches a Windows device (``device_path``), is not
+sent and asks.
 ``allow`` is only ever emitted to Claude Code when the policy sets ``defaults.emit_allow``; by
 default an allow is "no decision" and Claude Code's own permission flow continues.
 
@@ -662,6 +663,29 @@ def unshown_input(actions: Sequence[Action]) -> str | None:
     return None
 
 
+# NUL discards what is written and reads empty, and ``2>NUL`` is everywhere. Only the spellings
+# Win32 reads as NUL (GetFullPathNameW, build 26200): ``nul.bat``, ``nul:x`` and ``\\srv\share\nul``
+# have the same key and are ordinary files. Any other reason on the path: not exempt.
+_NUL_KEY: Final = "//./nul"
+_NUL_REASONS: Final = frozenset(
+    {"device:NUL", "device-prefix", "extended-prefix", "nt-prefix", "trailing-dots-spaces"}
+)
+
+
+def device_path(actions: Sequence[Action]) -> bool:
+    """A path in the Windows device namespace, NUL aside (revision 10). Its key does not say where
+    it leads: ``//./globalroot/device/mup/srv/share/x`` is a network share, ``//./pipe/x`` whatever
+    listens there, ``//./c:`` a whole volume, ``//./aux`` maybe ``C:\\proj\\aux.py``. The model
+    would be allowing a string, so such a call is not sent. The rules have already run:
+    ``no-raw-disk-access`` still denies."""
+    return any(
+        ref.key.startswith("//./")
+        and not (ref.key == _NUL_KEY and _NUL_REASONS.issuperset(ref.reasons))
+        for action in actions
+        for ref in action.paths
+    )
+
+
 def runs_in_marked_project(actions: Sequence[Action], facts: SessionFacts) -> bool:
     """An action that runs code (``exec``) is in a project with a mark, read as the rule field
     ``project_written_after_untrusted`` reads it (marks that could not be read count). Such a
@@ -747,6 +771,18 @@ def _finish(
                 "backend": policy.llm_audit.backend,
                 "outcome": "not-sent",
                 "detail": unseen if unseen is not None else hidden,
+            }
+        elif device_path(result.actions):
+            # No path in the reason or the record: they go into the audit log
+            reason = (
+                "boundkeep: no rule decides this action and it touches a Windows device path, "
+                "which the LLM audit could not judge; asking (not sent to the LLM audit)"
+            )
+            decided_by = "gray-device-path"
+            llm = {
+                "backend": policy.llm_audit.backend,
+                "outcome": "not-sent",
+                "detail": "device-path",
             }
         else:
             outcome = auditor.review(

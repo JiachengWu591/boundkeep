@@ -191,10 +191,14 @@ AGREES_WITH_WIN32 = [
     "\\\\.\\foo\\..\\NUL",
     "\\\\.\\foo\\..\\pipe\\x",
     "\\\\.\\foo\\..",
+    "\\\\.\\foo\\..\\C:",
+    "\\\\.\\C:.",
     # no folding at all
     "\\\\.\\UNC\\srv\\share\\x",
     "\\\\.\\C:\\Users\\bob",
     "\\\\.\\pipe\\x",
+    "\\\\.\\C:",
+    "\\\\.\\C:\\",
 ]
 
 

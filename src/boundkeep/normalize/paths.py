@@ -12,7 +12,8 @@ Key format (what ``path_glob`` and ``inside_project`` compare):
 
 * Windows flavor: all forward slashes, ``.``/``..`` and repeated separators collapsed, no trailing
   slash (roots excepted), the whole key ``casefold``-ed: ``c:/users/bob/.ssh/id_rsa``. UNC is
-  ``//server/share/...``, a device is ``//./nul`` (or ``//./pipe/name``).
+  ``//server/share/...``, a device is ``//./nul`` (or ``//./pipe/name``, or ``//./c:`` for the
+  volume itself).
 * POSIX flavor: the same, but case is kept: ``/home/dev/proj/a.py``.
 * A relative path with no usable ``cwd`` keeps a relative key (``a/b``, ``../x``) and is
   ``uncertain``. An unresolved variable stays in the key verbatim (``$foo/x`` after casefolding).
@@ -86,6 +87,7 @@ _PERCENT_FORBIDDEN = frozenset('%/\\:*?"<>|')
 _STREAM_TYPES = frozenset({"DATA", "INDEX_ALLOCATION", "I30", "BITMAP", "ATTRIBUTE_LIST"})
 _AMBIGUOUS_DOTS = "trailing-dots-spaces-ambiguous"
 _PREFIX_FOLDED = "prefix-path-folded"
+_DEVICE_NAME_SUFFIX = "device-name-suffix"
 
 # Reasons that only describe what was done to the path and do not make it uncertain.
 _INFO_REASONS = frozenset(
@@ -1106,6 +1108,12 @@ def _shape_prefixed(text: str, plen: int, ctx: _Ctx, reasons: list[str]) -> _Sha
         shape.uncertain = shape.uncertain or uncertain
         return shape
     if is_drive:
+        if len(comps) == 1:
+            # Nothing after the drive: the volume itself (what dd reads and writes), not its root
+            _add(reasons, f"device:{drive.upper()}")
+            return _Shape(
+                "windows", "//./", [drive.lower()], absolute=True, uncertain=True, is_device=True
+            )
         return _Shape(
             "windows", f"{drive[0].lower()}:/", _win_parts(comps[1:], reasons), True, uncertain
         )
@@ -1296,6 +1304,9 @@ def _norm(raw: str | None, ctx: _Ctx, *, literal: bool, glob_literal: bool = Fal
         if parts and not is_device:
             base = _device_base(parts[-1])
             if base is not None:
+                if parts[-1].upper() != base:
+                    # "aux.py": an ordinary file to Windows 11, this device to older ones
+                    _add(reasons, _DEVICE_NAME_SUFFIX)
                 anchor, parts, absolute, is_device = "//./", [base.lower()], True, True
                 _add(reasons, f"device:{base}")
         if is_device:
