@@ -40,8 +40,13 @@
 > **修订 10（2026-11-02，使用者说"修设备路径"）**：前缀路径折叠修复留下的残余（`docs/reports/M3a-prefix-folding.md` 第 5 节），记录在 `docs/reports/M3a-device-paths.md`。
 > - §7：碰到 Windows 设备路径的灰色调用不送审，直接 ask（`decided_by: gray-device-path`）；`NUL` 除外。盘符后面什么都没有的写法（`\\.\C:`）是卷本身，算设备路径。
 > - §9.2：同一条，写明模型看不到这类调用。
+>
+> **修订 11（2026-11-04，使用者说"一起修"）**：独立审查 `docs/reviews/M3a-path-gate-review.md` 的 G-1、G-2、G-3、G-4、G-5、G-9、G-13，记录在 `docs/reports/M3a-path-gate-fixes.md`。
+> - §5.1：不是最后一段的末尾带点或空格、`\\?\` 与 `\??\` 下任何一段末尾带点或空格、第一个字符不是英文字母的盘符，都标为不确定；`$FOO\..` 不折叠；链接通向设备时 key 写设备；解析结果不在本机固定盘上时不再 `stat`。
+> - §7：`NUL` 的例外缩小到 shell 命令里的裸名字和只带前缀的写法；UNC 的 `pipe`、`mailslot`、`ipc$` 也不送审；更正修订 10 关于 `\\.\C:\.` 的说法。
+> - 归一化：`which` 以两个分隔符开头的参数算读路径，网络规则看得到。
 
-> **当前进度（2026-11-02）**
+> **当前进度（2026-11-04）**
 >
 > - **已完成并有标签**：M0a、M0、M1、M1b、M1c、M1c-2、M1c-3、M1c-4、M2（`m2-baseline`）、M3a（`m3a-done`，2026-11-01；LLM 层没有接过真实服务）。M1+M1b、M1c / M1c-2 的独立 X1 审查与复审都已做完，高危、中危清零，修复已提交（M1c / M1c-2 的规则冻结在 `6821142`，标签 `m1c2-x1-rereview2-fixes-done`；审查在 `docs/reviews/`，修复报告 `docs/reports/M1c2-review-fixes*.md`）。M1c-4 的真实会话手工验收未做（`docs/reports/M1c4.md`）。
 > - **M2**：评测集 633 条（恶意 241、正常 392，全部经使用者确认）、评测框架 `src/boundkeep/evalkit` 与 `eval/run_eval.py`、`rules-only` 基线（报告 `docs/reports/M2.md`，口径 `docs/eval-methodology.md`）。**已知缺口：obfuscation 只有 11 条（目标 30 条）**。
@@ -50,9 +55,10 @@
 > - **未做 / 等你做**：真实 Claude Code 里的手工验收（包括在 Claude Code 之外的终端里运行 `trust add`）；Linux 容器套件；补 obfuscation 样本；L-1 的选项白名单（会改规则）。
 > - **M3a 已实现并提交**（2026-10-30，代码提交 `46169eb`，报告 `docs/reports/M3a.md`）：SQLite 会话状态（任务意图、污染窗口与粘性位、并发、清理）、M-2 的 ask 规则 `ask-devtools-after-untrusted-content`、后端接口与假后端、OpenAI 兼容适配器（只对本地假服务测过）、发送出口、二次裁决、缓存、`boundkeep llm check`、一致性测试、`rules+taint` 评测行（相对 `rules-only` 的增量为 0，原因见报告）。报告第 7 节的规格变更提案 P1 到 P12 已由使用者于 2026-10-30 接受，已写进本文件（修订 6）。
 > - **M3a 的 X1 审查**（2026-10-30）：中危 F1–F6，没有高危。F3、F4、F5 已修并提交（`1959969`、`4d723c0`）；F1、F6、P-F2、P-F34 的规格变更已接受（修订 7），实现记录在 `docs/reports/M3a-review-fixes-2.md`。定向复审（2026-10-31）：中危 R-1 到 R-5；R-1、R-4、R-10 已修并提交（`f8b7a71`），R-2、R-3、R-5、R-6、R-7、R-9 按修订 8 实现并提交（`dc9b268`、`4a6c07d`）。第二轮定向复审（`docs/reviews/M3a-rereview-2.md`）没有高危、中危，低危 S-1 到 S-7。真实 Claude Code 冒烟（2026-11-01，`scripts/smoke_claude_m3a.py`，`docs/hook-behavior.md`）26 项通过，`auto` 模式没有测到。全量测试 26870 通过、169 跳过、0 失败。收尾记录 `docs/reports/M3a-closeout.md`；使用者于 2026-11-01 决定打 `m3a-done`，`trusted_projects` 改为有条件推荐（默认仍是空列表）。
-> - **M3a 之后的低危残余**（已提交，未推送、未打标签；记录 `docs/reports/M3a-low-residuals.md`）：第二轮定向复审的 S-1、S-2、S-3、S-5、S-6、S-7 已处理，规格修订 9。规则、策略与评测数字没变。全量测试 27203 通过、169 跳过、0 失败（也包括下一条的修复）。真实冒烟重跑通过（26 项，0 失败），但只验证原有链路；这些新路径真实宿主里没有跑，`auto` 模式仍未测。
-> - **带前缀路径的折叠**（已提交，未推送、未打标签；记录 `docs/reports/M3a-prefix-folding.md`）：路径规范化先读第一段、Win32 先折叠再读第一段，这个错误在 `m3a-done` 上就有。已修，只在配置了 LLM 后端时才有影响；没有独立审查。
-> - **Windows 设备路径不送审**（修订 10，已提交，`2f0f009` 代码，文档在其后一个提交，未推送、未打标签；记录 `docs/reports/M3a-device-paths.md`）：key 在 `//./` 之下的灰色调用不送审、直接问，确实的 `NUL` 除外；`\\.\C:` 是卷。规则、策略与评测数字没变；没有独立审查，真实宿主里没有跑。
+> - **M3a 之后的低危残余**（已提交并推送，未打标签；记录 `docs/reports/M3a-low-residuals.md`）：第二轮定向复审的 S-1、S-2、S-3、S-5、S-6、S-7 已处理，规格修订 9。规则、策略与评测数字没变。全量测试 27203 通过、169 跳过、0 失败（也包括下一条的修复）。真实冒烟重跑通过（26 项，0 失败），但只验证原有链路；这些新路径真实宿主里没有跑，`auto` 模式仍未测。
+> - **带前缀路径的折叠**（已提交并推送，未打标签；记录 `docs/reports/M3a-prefix-folding.md`）：路径规范化先读第一段、Win32 先折叠再读第一段，这个错误在 `m3a-done` 上就有。已修，只在配置了 LLM 后端时才有影响。
+> - **Windows 设备路径不送审**（修订 10，已提交并推送，`2f0f009` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-device-paths.md`）：key 在 `//./` 之下的灰色调用不送审、直接问，确实的 `NUL` 除外；`\\.\C:` 是卷。规则、策略与评测数字没变；真实宿主里没有跑。
+> - **路径与闸门的审查修复**（修订 11，已提交，`7f7ffe9` 代码，文档在其后一个提交，未推送、未打标签；审查 `docs/reviews/M3a-path-gate-review.md`，记录 `docs/reports/M3a-path-gate-fixes.md`）：审查的 G-1、G-2、G-3、G-4、G-5、G-9、G-13 已修；判决数字没变，规则条目没变；其余低危与测试缺口留着；没有复审，真实宿主里没有跑。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -273,7 +279,9 @@ Claude Code
 - **IPC（`ipc/`）**：POSIX 与 Windows 两个传输实现同一接口。Windows 服务端用 ctypes 调 `CreateNamedPipeW`：管道名含 `init` 生成的随机令牌（令牌存在用户配置目录；它只防**其他用户**抢占名称，同一用户能读到）；DACL 只授予当前用户 SID；`PIPE_REJECT_REMOTE_CLIENTS`；首实例带 `FILE_FLAG_FIRST_PIPE_INSTANCE`（创建失败即报错，`doctor` 提示管道名被占用）；预建多个实例，建完之后收紧 DACL：去掉"创建新实例"权限，并加一条 OWNER RIGHTS ACE 只授予 `READ_CONTROL`（提高同一用户的门槛）；工作线程只做 Disconnect/Connect 复用实例。客户端永不输出守护进程回答的 `allow`，除非 hook 命令显式带 `--emit-allow`（见 §7）。不用 asyncio 的管道服务端（无法指定安全属性）；asyncio 在 Windows 上也没有 Unix 套接字服务、不支持 `loop.add_signal_handler`。客户端：`FileNotFoundError` 表示常驻进程没起，立即降级 `ask`；其他 `OSError` 视为"管道忙"，在总预算内退避重试；总预算从进程启动起算、覆盖读 stdin 与 IPC 全程，由"工作线程 + `join` 超时 + `os._exit`"实现，且小于 settings 里的 `timeout`。
 - **路径规范化**分两层，以便跨平台测试（设计原则 10）：
   - **词法层**（纯函数，不碰文件系统；显式使用 `ntpath` / `PureWindowsPath` / `posixpath`，不用当前平台默认的 `os.path`）：展开 `~`、`%VAR%`、`$env:VAR`、`$HOME` 等已知变量（无法解析的变量 → 灰色）；统一分隔符；去掉 `\\?\` 与 `\\.\` 前缀；去掉 NTFS 备用数据流后缀（`:stream`、`::$DATA`）与尾随的点和空格；折叠 `..`；识别驱动器相对路径、UNC 与设备名（`NUL`、`CON`、`COMn` 等，设备名不算项目内）；MSYS 路径（`/c/Users/...`、`/cygdrive/c/...`）与 WSL 的 `/mnt/<盘>/...` 翻译为 Windows 路径；Git Bash 的 `/`、`/usr`、`/tmp` 等无法可靠映射，一律按项目外处理。
-  - **文件系统层**（仅本机）：`realpath`，展开符号链接、联接点与存在路径上的 8.3 短名。
+    - **尾随的点和空格**（修订 11）：只有最后一段的才算确定。中间一段 Win32 只去掉一个点，Node 一个都不去（实测：`C:\proj.\x` 读到的是 `proj.` 目录下的文件），所以这样的路径标为不确定，`inside_project` 不说 True。`\\?\` 与 `\??\` 下点和空格是字面字符，任何一段带都标为不确定（`extended-path-dots`）。
+    - **其他**（修订 11）：第一个字符不是英文字母的盘符（`1:\x`）标为不确定（`non-letter-drive`），因为 Win32 接受任何字符作盘符（公开资料的说法，没有实测 `subst`）。以未知内容开头的路径（`$FOO\..`）保留开头这一段，折叠不到它，否则第二遍规范化会读成当前目录。
+  - **文件系统层**（仅本机）：`realpath`，展开符号链接、联接点与存在路径上的 8.3 短名。解析结果是设备时 key 写设备，§7 的闸门和规则看得到；解析结果不在本机固定盘上时不再 `stat` 它（修订 11）。`realpath` 自己沿着链接打开目标这一点没有改，也没有实测。
   - 比较一律不区分大小写（casefold）。（M1 澄清：POSIX 风格的路径在 allow 侧区分大小写，见 §7。）**方向规则**：deny / ask 侧"可能匹配即匹配"；allow 侧（`inside_project`）"确定在内才算在内"；无法确定（不存在且含短名的路径、含未解析变量、驱动器相对路径）不算在内，进灰色。
   - 输入既可能是反斜杠形式（hook 的 `file_path`），也可能是 POSIX 形式（Bash 命令里的路径）；规则里的 `path_glob` 一律用正斜杠书写，匹配前双方转成同一规范形式。
   - `protect-guard-config` 的路径集要包含实际生效的配置目录（设置了 `CLAUDE_CONFIG_DIR` 时）。
@@ -412,9 +420,13 @@ event(pre) ─> normalize ─> Action
 
   这些调用直接 ask（`decided_by: gray-unanalysed`，理由里写明没有送审），不按 `on_failure`：它们不是审计失败，与没有配置后端时的灰色相同。
 - **碰到 Windows 设备路径的灰色调用不送审**（修订 10）：路径的 key 在 `//./` 之下时，key 说不清它通向哪里，模型放行的只是一串字符。`//./globalroot/device/mup/srv/share/x` 是网络共享（公开资料的说法，没有实测），`//./pipe/x` 是在那个管道上监听的程序，`//./volume{...}`、`//./harddiskvolume1` 与 `//./c:` 是整个卷，`//./com1`、`//./con` 是硬件与控制台，`//./aux` 也可能是项目里的 `aux.py`。这些调用直接 ask（`decided_by: gray-device-path`，理由里写明没有送审，不写路径），不按 `on_failure`。
-  - **`NUL` 例外**：写进去的内容被丢弃，读到的是空，而 `2>NUL` 很常见，不例外就会多出大量询问。只有 Win32 确实读成 `NUL` 的写法才照常送审：最后一段恰好是 `nul`（可带末尾的点或空格、`\\.\` 一类前缀），在哪个目录都一样。`nul.bat`、`nul:x`、`\\srv\share\nul` 的 key 也是 `//./nul`，但它们是普通文件（`GetFullPathNameW`，Windows 11 build 26200），不算；`//./nul/x`、折叠出来的 `\\.\foo\..\NUL`、带变量或通配符的也不算。判断时路径身上有名单之外的理由就不例外，所以多问，不会多放。
-  - **文件名恰好是设备名的路径**（`aux.py`、`C:\proj\con`）：key 仍是 `//./aux`（M1 按旧版 Windows 的谨慎读法），所以也不送审。这是代价：配置了后端时，`cat src/aux.py` 也要问。
-  - **卷本身**：`\\.\C:`、`\\?\C:`、`\??\C:` 这样盘符后面什么都没有的写法打开的是卷，不是根目录，key 是 `//./c:`，不确定。`\\.\C:\` 是根目录，key 仍是 `c:/`。Win32 折叠之后只剩盘符的写法（`\\.\foo\..\C:`）也按卷算；`\\.\C:\.` 实际是根目录，这里也按卷算，因为这是谨慎的读法。
+  - **`NUL` 例外**（修订 11 缩小）：写进去的内容被丢弃，读到的是空，而 shell 里 `2>NUL` 很常见，不例外就会多出大量询问。只有 shell 命令（Bash、PowerShell）里的这两类写法才照常送审：裸名字 `nul`（不分大小写，可带末尾的点或空格），以及只带前缀、后面什么都没有的 `\\.\nul`、`\\?\nul`、`\??\nul`、`//./nul`、`//?/nul`。
+    - 文件工具不例外：没有人 `Read NUL`，而 Node 可能把 `C:\proj\nul` 读成普通文件（`toNamespacedPath` 的结果，没有在宿主里实测）。
+    - 带目录或盘符的写法不例外（`C:\proj\nul`、`src/nul`、`nul\`、`C:\x\nul\.`）：它们可能是那个目录下的普通文件，而模型和缓存分不清它们与真 `NUL`（请求里都是 `//./nul`）。裸名字最坏也只是当前目录下一个叫 `nul` 的文件（Git Bash 里的读法没有实测）。
+    - 判断看的是路径的原文，带变量或通配符的都不算，所以多问，不会多放。`nul.bat`、`nul:x`、`\\srv\share\nul`、`//./nul/x`、`\\.\foo\..\NUL` 都不算。
+  - **文件名恰好是设备名的路径**（`aux.py`、`C:\proj\con`）：key 仍是 `//./aux`（M1 按旧版 Windows 的谨慎读法），所以也不送审。这是代价：配置了后端时，`cat src/aux.py` 也要问。前缀后面跟盘符的写法（`\\?\C:\Users\bob\.ssh\nul`）NT 路径也是那个目录下的普通文件，key 同样是 `//./nul`，同样不送审；它不是 §7 的 `NUL` 例外。key 不写真实路径，因为 `c:/users/bob/.ssh/nul` 再规范化一遍就读成了设备。
+  - **管道的 UNC 写法**（修订 11）：UNC 的共享名是 `pipe`、`mailslot` 或 `ipc$` 时（`\\localhost\pipe\x`、`\\127.0.0.1\IPC$\x`），同样不送审。只看共享名，不看服务器：这些共享不是文件，key 说不清对面是什么。普通共享（`\\127.0.0.1\share\x`）的 key 说得清位置，照旧。
+  - **卷本身**：`\\.\C:`、`\\?\C:`、`\??\C:` 这样盘符后面什么都没有的写法打开的是卷，不是根目录，key 是 `//./c:`，不确定。`\\.\C:\` 是根目录，key 仍是 `c:/`。Win32 折叠之后只剩盘符的写法（`\\.\foo\..\C:`、`\\.\C:\.`，后者的 NT 路径是 `\??\C:`）也是卷；`\\.\foo\..\C:\` 实际是根目录，这里也按卷算，这是谨慎的读法。
   - **规则照常在前面判**：`no-raw-disk-access` 仍然 deny 物理磁盘，`net-allowlist` 仍然问 UNC，`rm-outside-project` 仍然 deny。卷本身不在 `no-raw-disk-access` 里，是 ask，不是 deny。没有配置后端时没有变化（灰色本来就问）。
   - **范围**：只看 `Action.paths`。POSIX 的 `/dev/...` 不算（`no-raw-disk-access` 列了裸磁盘与内存设备，其余照常送审）；`C:\proj\aux\x` 这种路径中间带设备名的不算（它不在设备命名空间里）。
 
