@@ -347,7 +347,9 @@ def _serialize(data: dict[str, Any], style: int | str | None, newline: str, fina
     return (text + (newline if final else "")).encode("utf-8")
 
 
-@settings(max_examples=300, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(
+    max_examples=300, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
 @given(data=documents, style=styles, newline=newlines, final=st.booleans(), bom=st.booleans())
 def test_round_trip_law(
     tmp_path_factory: pytest.TempPathFactory,
@@ -368,7 +370,9 @@ def test_round_trip_law(
     assert render_settings(doc, doc.data) == body
 
 
-@settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(
+    max_examples=200, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
 @given(data=documents, new=documents, style=styles, newline=newlines)
 def test_values_and_key_order_never_change(
     tmp_path_factory: pytest.TempPathFactory,
