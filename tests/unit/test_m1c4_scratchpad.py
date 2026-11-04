@@ -688,13 +688,19 @@ def test_windows_names_compare_without_case_and_accept_other_spellings() -> None
         plain.replace("\\x.py", "\\.\\x.py"),
         plain.replace("\\x.py", "\\\\x.py"),
         plain.replace("\\x.py", "\\sub\\..\\x.py"),
-        plain.replace("\\scratchpad", "\\scratchpad."),  # Win32 drops ONE trailing dot
     ):
         for tool in ("Write", "Read"):
             assert _decide("default", "windows", tool, _tool_input(tool, target)) == "allow", (
                 tool,
                 target,
             )
+
+
+def test_a_trailing_dot_on_the_scratchpad_directory_is_not_the_scratchpad() -> None:
+    # Win32 drops it, but Node keeps it: that is another directory (review G-2, revision 11)
+    target = at("windows", "x.py").replace("\\scratchpad", "\\scratchpad.")
+    for tool in ("Write", "Read"):
+        assert _decide("default", "windows", tool, _tool_input(tool, target)) != "allow", tool
 
 
 def test_a_windows_stream_name_is_the_same_file() -> None:

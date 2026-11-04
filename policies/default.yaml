@@ -1556,7 +1556,9 @@ rules:
     # (`which python3`). A name that expands (`which $X`) is never allowed (the error message of
     # `which` repeats the name). A path given to it (`which ./x`) is only tested for being
     # executable: the rules do not see it as a path, so `which ./.env` only tells whether the file
-    # exists and is executable (and a missing name makes `which` print the whole PATH).
+    # exists and is executable (and a missing name makes `which` print the whole PATH). A name that
+    # starts with two separators IS a path to the rules: its lookup reaches that host, so
+    # `which //srv/share/x` is net-allowlist's (review G-5).
     tool: [Bash]
     match:
       program: [pwd, which]
@@ -2497,6 +2499,8 @@ tests:
   - { tool: Bash, input: { command: "which $TOOL" },                  expect: gray }   # the error message repeats the name
   - { tool: Bash, input: { command: "which python3 > out.txt" },      expect: gray }   # the redirect writes
   - { tool: Bash, input: { command: "which -i x < ../other/aliases" }, expect: ask }   # R7-3: stdin from outside the project
+  - { tool: Bash, input: { command: "which //srv/share/x" },          expect: ask }    # G-5: the lookup reaches that host
+  - { tool: Bash, input: { command: "which ./x" },                    expect: allow }
   - { tool: Bash, input: { command: "python3 --version" },            expect: allow }
   - { tool: Bash, input: { command: "node --version" },               expect: allow }
   - { tool: Bash, input: { command: "pip --version" },                expect: allow }

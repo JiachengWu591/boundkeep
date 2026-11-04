@@ -401,10 +401,11 @@ LEXICAL = [
     c("ads-not-stripped-on-posix", "/home/dev/a.txt:s", "P", "/home/dev/a.txt:s", "p"),
     # --- trailing dots and spaces
     c("dots-trailing-space", "C:\\proj\\x. ", "W", "c:/proj/x", "w", r=("trailing-dots-spaces",)),
-    c("dots-trailing-dot-on-project", "c:\\PROJ.\\x", "W", "c:/proj/x", "w"),
-    # Win32 strips every trailing dot/space only from the LAST component, one dot from the others.
-    # The key strips more (so deny rules over-match) but the path is then ambiguous.
-    c("dots-mid-single-dot-is-exact", "C:\\proj\\a.\\b", "W", "c:/proj/a/b", "w"),
+    # Win32 strips every trailing dot/space only from the LAST component, one dot from the others,
+    # and Node none of those. The key strips them all (so deny rules over-match) but only the last
+    # component stays certain.
+    c("dots-mid-single-dot-is-ambiguous", "C:\\proj\\a.\\b", "W", "c:/proj/a/b", "w", unc=True),
+    c("dots-trailing-dot-on-project", "c:\\PROJ.\\x", "W", "c:/proj/x", "w", unc=True),
     c(
         "dots-mid-dot-space-dot-is-ambiguous",
         "C:\\proj\\a. .\\b",
@@ -824,7 +825,8 @@ LEXICAL = [
         "W",
         "c:/proj/\u0441/proj",
         "w",
-        r=("ads-stripped",),
+        unc=True,
+        r=("non-letter-drive", "ads-stripped"),
     ),
     c("unicode-combining-is-not-composed", "C:\\proj\\e\u0301", "W", "c:/proj/e\u0301", "w"),
     c("unicode-precomposed", "C:\\proj\\\u00e9", "W", "c:/proj/\u00e9", "w"),
@@ -1163,7 +1165,7 @@ INSIDE = [
     ipc("win-extended-prefix", "\\\\?\\C:\\proj\\x", WROOT, "W", True),
     ipc("win-ads-suffix-same-file", "C:\\proj\\x::$DATA", WROOT, "W", True),
     ipc("win-ads-on-root", "C:\\proj::$DATA", WROOT, "W", True),
-    ipc("win-trailing-dot-same-dir", "c:\\PROJ.\\x", WROOT, "W", True),
+    ipc("none-trailing-dot-on-project-dir", "c:\\PROJ.\\x", WROOT, "W", None),
     ipc("win-trailing-dots-on-last-component", "C:\\proj\\x. ", WROOT, "W", True),
     ipc("win-trailing-dots-and-spaces-mid-path-is-unsure", "C:\\proj \\x. ", WROOT, "W", None),
     ipc("none-trailing-space-on-project-dir", "C:\\proj \\x", WROOT, "W", None),

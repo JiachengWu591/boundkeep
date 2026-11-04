@@ -2,13 +2,13 @@
 
 The key of such a path does not say where it leads: ``//./globalroot/device/mup/srv/share/x`` is a
 network share, ``//./pipe/x`` whatever service listens on that pipe, ``//./c:`` a whole volume. The
-model would be allowing a string. ``NUL`` is the exception: it discards what is written and reads
-empty, and ``2>NUL`` is everywhere. Rules still come first; without a backend nothing changes.
+model would be allowing a string. ``NUL`` in a shell command is the exception: it discards what is
+written and reads empty, and ``2>NUL`` is everywhere (which spellings: test_m3a_path_gate_fixes.py).
+Rules still come first; without a backend nothing changes.
 """
 
 from __future__ import annotations
 
-import ctypes
 import json
 import re
 import sys
@@ -185,47 +185,6 @@ def test_a_device_path_in_powershell(command: str) -> None:
 
 
 # --- what stays the model's to judge ------------------------------------------------------------
-
-
-REALLY_NUL = [
-    "NUL",
-    "nul",
-    "Nul",
-    "nul.",
-    "nul ",
-    "C:\\proj\\NUL",
-    "C:\\proj\\sub\\nul",
-    "src/nul",
-    "..\\nul",
-    "\\\\.\\NUL",
-    "\\\\?\\NUL",
-    "\\??\\nul",
-    "//./nul",
-]
-
-
-@pytest.mark.parametrize("raw", REALLY_NUL)
-def test_nul_still_goes_to_the_model(raw: str) -> None:
-    decision, backend = decide("Read", {"file_path": raw})
-    assert decision.decided_by == "llm"
-    assert len(backend.requests) == 1
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="asks Win32")
-@pytest.mark.parametrize("raw", REALLY_NUL)
-def test_what_is_exempt_is_nul_to_win32(raw: str) -> None:
-    # GetFullPathNameW is lexical: it touches neither the disk nor the network
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
-    kernel32.GetFullPathNameW.argtypes = [
-        ctypes.c_wchar_p,
-        ctypes.c_ulong,
-        ctypes.c_wchar_p,
-        ctypes.c_void_p,
-    ]
-    kernel32.GetFullPathNameW.restype = ctypes.c_ulong
-    buffer = ctypes.create_unicode_buffer(4096)
-    assert kernel32.GetFullPathNameW(raw, 4096, buffer, None) > 0
-    assert buffer.value.casefold() in ("\\\\.\\nul", "\\\\?\\nul")
 
 
 @pytest.mark.parametrize(

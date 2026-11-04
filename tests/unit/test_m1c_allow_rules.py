@@ -368,7 +368,8 @@ def test_the_no_path_rules_only_name_programs_the_normalizer_knows_take_no_path(
     bash_no_path = set(programs._NO_PATH_PROGRAMS)
     ps_no_path = {name.casefold() for name in psprograms._NOPATH}
     rules = _allow_rules("default")
-    assert _programs(rules["allow-no-path-commands"]) <= bash_no_path
+    # which: only a name that starts with two separators counts as a path (review G-5)
+    assert _programs(rules["allow-no-path-commands"]) <= bash_no_path | {"which"}
     assert _programs(rules["allow-ps-no-path-commands"]) <= ps_no_path
     assert _programs(rules["allow-ps-data-shaping"]) <= ps_no_path
 

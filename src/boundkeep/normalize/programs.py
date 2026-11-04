@@ -1072,7 +1072,7 @@ def _h_files(a: _Acc, args: Sequence[Word], spec: Spec) -> None:
 
 _NO_PATH_PROGRAMS = _fs(
     "echo printf true false pwd date sleep whoami id uname hostname basename dirname seq yes tr "
-    "expr test [ printenv export unset set read alias unalias type which whereis hash wait exit "
+    "expr test [ printenv export unset set read alias unalias type whereis hash wait exit "
     "return : local declare typeset readonly shift umask ulimit jobs fg bg kill pkill pgrep ps "
     "top htop free uptime nproc arch getconf locale tty clear reset history help man info "
     "nice nohup time command builtin getopts let"
@@ -1082,6 +1082,17 @@ _NO_PATH_PROGRAMS = _fs(
 def _h_nopath(a: _Acc, args: Sequence[Word]) -> None:
     sc = _scan(args, _NOOPTS)
     a.flags.extend(sc.flags)
+
+
+def _h_which(a: _Acc, args: Sequence[Word]) -> None:
+    # A name is searched for on PATH, but a path is looked up as given, and the lookup of
+    # ``//host/share/x`` reaches that host (Git for Windows, measured on the loopback only). Only
+    # such a name counts as a path: ``which ./x`` tells no more than whether the file exists.
+    sc = _scan(args, _NOOPTS)
+    a.flags.extend(sc.flags)
+    for w in sc.pos:
+        if len(w.text) >= 2 and w.text[0] in "/\\" and w.text[1] in "/\\":
+            a.path(w, "read")
 
 
 def _h_cd(a: _Acc, args: Sequence[Word]) -> None:
@@ -4345,6 +4356,7 @@ def _dispatch(name: str) -> _DispatchFn | None:
     if name in _NO_PATH_PROGRAMS:
         return _h_nopath
     simple: dict[str, _DispatchFn] = {
+        "which": _h_which,
         "cd": _h_cd,
         "pushd": _h_cd,
         "popd": _h_nopath,

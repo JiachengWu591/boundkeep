@@ -36,6 +36,7 @@ every reason shown or stored is sanitized (``_clean``): gray reasons carry text 
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -45,7 +46,7 @@ from boundkeep import protocol
 from boundkeep.audit.auditor import Auditor, AuditOutcome
 from boundkeep.normalize import paths as norm_paths
 from boundkeep.normalize.event import HARMLESS_TOOLS, normalize_event
-from boundkeep.normalize.model import Action, Platform
+from boundkeep.normalize.model import Action, PathRef, Platform
 from boundkeep.normalize.subtree import RuleGlob
 from boundkeep.policy import Policy, Verdict, evaluate
 from boundkeep.policy.glob import MAX_PATTERN_LENGTH
@@ -663,27 +664,29 @@ def unshown_input(actions: Sequence[Action]) -> str | None:
     return None
 
 
-# NUL discards what is written and reads empty, and ``2>NUL`` is everywhere. Only the spellings
-# Win32 reads as NUL (GetFullPathNameW, build 26200): ``nul.bat``, ``nul:x`` and ``\\srv\share\nul``
-# have the same key and are ordinary files. Any other reason on the path: not exempt.
-_NUL_KEY: Final = "//./nul"
-_NUL_REASONS: Final = frozenset(
-    {"device:NUL", "device-prefix", "extended-prefix", "nt-prefix", "trailing-dots-spaces"}
-)
+# NUL discards what is written and reads empty, and ``2>NUL`` is everywhere in shell commands. Only
+# the bare name and a prefix with nothing else: with a directory or a drive, what is there may be an
+# ordinary file named nul, and the model and the cache could not tell (the key is ``//./nul`` for
+# all). The bare name at worst is such a file in the working directory. Read from the text as
+# written, so a variable, a wildcard or anything added later is not exempt.
+_REALLY_NUL: Final = re.compile(r"(?:\\\\[.?]\\|\\\?\?\\|//[.?]/)nul|nul[. ]*", re.IGNORECASE)
+# Not files: the key cannot say what listens there, whichever server it names
+_IPC_SHARE: Final = re.compile(r"//[^/]+/(?:pipe|mailslot|ipc\$)(?:/|$)")
 
 
 def device_path(actions: Sequence[Action]) -> bool:
-    """A path in the Windows device namespace, NUL aside (revision 10). Its key does not say where
-    it leads: ``//./globalroot/device/mup/srv/share/x`` is a network share, ``//./pipe/x`` whatever
-    listens there, ``//./c:`` a whole volume, ``//./aux`` maybe ``C:\\proj\\aux.py``. The model
-    would be allowing a string, so such a call is not sent. The rules have already run:
-    ``no-raw-disk-access`` still denies."""
-    return any(
-        ref.key.startswith("//./")
-        and not (ref.key == _NUL_KEY and _NUL_REASONS.issuperset(ref.reasons))
-        for action in actions
-        for ref in action.paths
-    )
+    """A path in the Windows device namespace, NUL aside (revisions 10, 11). Its key does not say
+    where it leads: ``//./globalroot/device/mup/srv/share/x`` is a network share, ``//./pipe/x``
+    and ``//localhost/pipe/x`` whatever listens there, ``//./c:`` a whole volume, ``//./aux`` maybe
+    ``C:\\proj\\aux.py``. The model would be allowing a string, so such a call is not sent. The
+    rules have already run: ``no-raw-disk-access`` still denies."""
+
+    def counts(action: Action, ref: PathRef) -> bool:
+        if ref.key.startswith("//./"):
+            return not (action.shell is not None and _REALLY_NUL.fullmatch(ref.raw))
+        return ref.flavor == "windows" and _IPC_SHARE.match(ref.key) is not None
+
+    return any(counts(action, ref) for action in actions for ref in action.paths)
 
 
 def runs_in_marked_project(actions: Sequence[Action], facts: SessionFacts) -> bool:

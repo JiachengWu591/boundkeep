@@ -26,6 +26,8 @@ output too long for the conversation and tells the agent to read it (match field
 ``path_in_session_tool_results`` and ``except_session_tool_results``). The temp directory and the
 home come from the ``env`` / ``home`` passed in, never from the real machine.
 
+A link that leads to a device has the key of that device, so rules and the device gate see it.
+
 Direction rule: this module only ever produces *information*. ``inside_project`` answers ``True``
 only when the path is definitely inside; everything doubtful is ``None`` and a definite outsider is
 ``False``. Nothing here can make an action allowed by itself.
@@ -88,6 +90,7 @@ _STREAM_TYPES = frozenset({"DATA", "INDEX_ALLOCATION", "I30", "BITMAP", "ATTRIBU
 _AMBIGUOUS_DOTS = "trailing-dots-spaces-ambiguous"
 _PREFIX_FOLDED = "prefix-path-folded"
 _DEVICE_NAME_SUFFIX = "device-name-suffix"
+_UNKNOWN_START = frozenset("$%~")  # a first component starting so has no known anchor
 
 # Reasons that only describe what was done to the path and do not make it uncertain.
 _INFO_REASONS = frozenset(
@@ -318,10 +321,10 @@ _MEMORY_LAYOUT = (".claude", "projects", _SLUG, "memory")  # below the home
 # its path that is not an ASCII letter or digit into "-" (``E:\boundkeep`` -> ``E--boundkeep``)
 _NOT_IN_SLUG = re.compile(r"[^A-Za-z0-9]")
 # What the path layer may have done to a path that still counts as "the scratchpad": spellings of
-# the SAME file (an NTFS stream name, one trailing dot, the ``\\?\`` / ``\\.\`` / ``\??\`` prefixes,
-# the on-disk resolved form). Anything else (a translated MSYS / Cygwin / WSL path, an admin share,
-# a UNC name, an expanded ``~`` or variable, a reason added later) is a reading the daemon cannot
-# tell is what the tool will do, and is never marked.
+# the SAME file (an NTFS stream name, trailing dots of the last component, the ``\\?\`` / ``\\.\`` /
+# ``\??\`` prefixes, the on-disk resolved form). Anything else (a translated MSYS / Cygwin / WSL
+# path, an admin share, a UNC name, an expanded ``~`` or variable, a reason added later) is a
+# reading the daemon cannot tell is what the tool will do, and is never marked.
 _PLAIN_REASONS = frozenset(
     {
         "ads-stripped",
@@ -872,12 +875,13 @@ def _win_part(part: str, reasons: list[str], *, final: bool) -> str:
     """One Windows path component without NTFS stream suffix and trailing dots and spaces.
 
     ``name:stream`` and ``name::$DATA`` name the same file as ``name``. Win32 drops *all* trailing
-    dots and spaces of the last component of a path that does not end in a separator, but of any
-    other component only one trailing dot. Stripping more than Win32 would is still what the key
-    does (a deny rule should match the possible target), but the path is then marked ambiguous so
-    that ``inside_project`` never says True for it. A component made only of dots and spaces
-    becomes ``..`` when it holds two or more dots (the escaping reading, the cautious one) and
-    ``.`` otherwise.
+    dots and spaces of the last component of a path that does not end in a separator, of any other
+    component only one trailing dot, and Node (which the file tools run on) none of those
+    (``C:\\proj.\\x`` is really below ``proj.``, measured). The key strips them all anyway (a deny
+    rule should match the possible target), but only the last component stays exact: the path is
+    otherwise marked ambiguous so that ``inside_project`` never says True for it. A component made
+    only of dots and spaces becomes ``..`` when it holds two or more dots (the escaping reading,
+    the cautious one) and ``.`` otherwise.
     """
     if ":" in part:
         # An unresolved ``$env:NAME`` / ``${env:NAME}`` is a variable, not a stream: keep its name
@@ -900,8 +904,7 @@ def _win_part(part: str, reasons: list[str], *, final: bool) -> str:
     if stripped == part:
         return part
     _add(reasons, "trailing-dots-spaces")
-    exact = stripped != "" and (final or (part.endswith(".") and part[:-1] == stripped))
-    if not exact:
+    if stripped == "" or not final:
         _add(reasons, _AMBIGUOUS_DOTS)
     if stripped == "":
         return ".." if part.count(".") >= 2 else "."
@@ -1081,8 +1084,11 @@ def _shape_prefixed(text: str, plen: int, ctx: _Ctx, reasons: list[str]) -> _Sha
     raw_body = text[plen:]
     uncertain = False
     literal_ns = ns == "?" and text[0] == "\\" and text[1] in "\\?"
-    if literal_ns and ("/" in raw_body or any(s in (".", "..") for s in raw_body.split("\\"))):
-        # In the real \\?\ namespace these are literal characters, not path operators.
+    if literal_ns and (
+        "/" in raw_body or any(s.endswith((".", " ")) for s in raw_body.split("\\"))
+    ):
+        # In the real \\?\ namespace these are literal characters, not path operators: the NT path
+        # of \\?\C:\proj.\x is below "proj.", and \\?\C:\x. is a file with that dot in its name
         _add(reasons, "extended-path-dots")
         uncertain = True
     comps = raw_body.replace("\\", "/").split("/")
@@ -1178,7 +1184,7 @@ def _shape_relative(text: str, ctx: _Ctx, reasons: list[str]) -> _Shape:
         parts = text.split("/")
     # A path that *starts* with something unknowable ($FOO/x, ~bob/x) has no known anchor; the
     # test looks at the visible text so that normalizing the key again decides the same way.
-    unanchored = bool(parts) and parts[0][:1] in ("$", "%", "~")
+    unanchored = bool(parts) and parts[0][:1] in _UNKNOWN_START
     if unanchored:
         _add(reasons, "unanchored")
         uncertain = True
@@ -1204,6 +1210,13 @@ def _shape(text: str, plen: int, ctx: _Ctx, reasons: list[str]) -> _Shape:
     if len(text) >= 2 and text[1] == ":" and text[0].isascii() and text[0].isalpha():
         return _shape_drive(text, ctx, reasons)
     c0 = text[0]
+    if ctx.windows_ctx and len(text) >= 2 and text[1] == ":" and c0 not in "\\/":
+        # The NT path of 1:\x is on a drive named "1" (subst may define one: public documentation,
+        # not tried), not the file or stream "1" of the current directory the key reads it as
+        _add(reasons, "non-letter-drive")
+        shape = _shape_relative(text, ctx, reasons)
+        shape.uncertain = True
+        return shape
     if c0 in "\\/":
         lead = len(text) - len(text.lstrip("\\/"))
         uncertain = False
@@ -1282,7 +1295,11 @@ def _norm(raw: str | None, ctx: _Ctx, *, literal: bool, glob_literal: bool = Fal
 
     shape = _shape(text, plen, ctx, reasons)
     uncertain = uncertain or shape.uncertain
-    parts = _collapse(shape.parts, rooted=shape.anchor is not None)
+    if shape.anchor is None and shape.parts and shape.parts[0][:1] in _UNKNOWN_START:
+        # "$FOO/.." keeps its start: folded to ".", the next pass would read the working directory
+        parts = shape.parts[:1] + _collapse(shape.parts[1:], rooted=False)
+    else:
+        parts = _collapse(shape.parts, rooted=shape.anchor is not None)
     if _AMBIGUOUS_DOTS in reasons:
         uncertain = True
     anchor = shape.anchor
@@ -1313,6 +1330,9 @@ def _norm(raw: str | None, ctx: _Ctx, *, literal: bool, glob_literal: bool = Fal
             uncertain = True
 
     key = ("/".join(parts) or ".") if anchor is None else _join(anchor, parts)
+    if anchor is None and key[1:2] == ":" and key[0].isascii() and key[0].isalpha():
+        # "./D:x" with no known cwd: without its "./" the next pass would read a drive
+        key = "./" + key
     if shape.flavor == "windows":
         key = key.casefold()
     if not key.strip():
@@ -1518,14 +1538,15 @@ def _resolve_on_disk(path: NormPath) -> NormPath:
     native = path.key.replace("/", "\\") if path.flavor == "windows" else path.key
     resolved = os.path.realpath(native)
     new = _norm(resolved, _literal_ctx(), literal=True)
-    if not new.absolute or new.is_device:
+    if not new.absolute:
         return path
     reasons = [r for r in path.reasons if r != "short-name-unresolved"]
     for r in new.reasons:
         _add(reasons, r)
     if new.key != path.key:
         _add(reasons, "resolved-on-disk")
-    if _hard_linked(resolved):
+    # Not a stat of a UNC target: that reaches the server (and sends it NTLM) before any verdict
+    if is_local_disk(new) and _hard_linked(resolved):
         _add(reasons, HARD_LINKED)
     return dataclasses.replace(
         new, raw=path.raw, reasons=tuple(reasons), uncertain=new.uncertain or bool(blocking)
