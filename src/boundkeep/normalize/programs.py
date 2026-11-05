@@ -74,6 +74,9 @@ class CmdInfo:
     # root to scan; a file operand has no subtree, so listing one is harmless. When the command
     # names no path but acts on the current directory, ``paths`` holds ``"."``.
     recursive: bool = False
+    # True: a git operand begins with pathspec magic (``:/``, ``:(top)``, ``:!x``). ``paths`` holds
+    # what the rules look at (see ``_pathspec``), so the magic itself is no longer visible there.
+    pathspec_magic: bool = False
 
 
 # ---------------------------------------------------------------------------------------------
@@ -520,6 +523,7 @@ class _Acc:
         "known",
         "network",
         "paths",
+        "pathspec_magic",
         "prog",
         "recursive",
         "secret_hint",
@@ -541,6 +545,7 @@ class _Acc:
         self.write_hint = False
         self.secret_hint = False
         self.recursive = False
+        self.pathspec_magic = False
 
     def path(self, w: Word, access: Access) -> None:
         t = w.text
@@ -2561,6 +2566,9 @@ _GIT_PATH_ALL = _fs(
 # stash, the work tree elsewhere) and may replace the file: ``unknown``, never plain ``write``.
 _GIT_SOURCE_SUBS = _fs("add rm mv update-index checkout-index commit stash")
 _GIT_READ_PATH_SUBS = _fs("blame annotate archive")  # operands are paths that are only read
+# Of _GIT_PATH_ALL, those whose operands git reads as pathspecs. The others take a plain path:
+# ``git apply :x`` opens a file named so, and ``git blame -- :/x`` looks for that very name.
+_GIT_PATHSPEC_ALL = _fs("add rm clean restore commit")
 _GIT_REVPATH_SUBS = _fs("show cat-file diff archive grep")  # operands may be REV:PATH
 _GIT_PATCH_FLAGS = _fs("-p -u --patch -c --cc --patch-with-raw --patch-with-stat --textconv")
 _GIT_NOCONTENT_FLAGS = _fs(
@@ -2745,6 +2753,20 @@ def _git_config_entry(a: _Acc, w: Word, key_value: str) -> None:
         a.path(_sub(w, value), "read")
 
 
+def _pathspec(a: _Acc, w: Word) -> Word:
+    """What the rules look at for an operand git reads as a pathspec.
+
+    ``:/src``, ``:!x`` and ``:(top)x`` are git's own magic: git parses the word and never opens it,
+    Git Bash passes it unchanged, and a ``:x`` that Git Bash would write as a name of its own is not
+    what git reads (all measured, PROJECT_SPEC.md §5.1). So it is no path with a stream name: the
+    magic, up to the first separator, reads as ``.`` (``:/src`` is ``./src``, ``:!x`` is ``.``).
+    """
+    if not w.text.startswith(":"):
+        return w
+    a.pathspec_magic = True
+    return _sub(w, re.sub(r"^:[^/\\]*", ".", w.text))
+
+
 def _git_url_or_path(a: _Acc, w: Word, access: Access) -> None:
     t = w.text
     helper, sep, _ = t.partition("::")
@@ -2821,8 +2843,9 @@ def _git_operands(
     if sub == "archive":
         # ``git archive TREE-ISH [PATH...]``: every operand after the tree-ish is a path read
         for w in pos[1:]:
-            a.path(w, "read")
-            _scoped_path(a, chain, w, "read")
+            spec = _pathspec(a, w)
+            a.path(spec, "read")
+            _scoped_path(a, chain, spec, "read")
     restricted = bool(after) or (sub == "archive" and len(pos) > 1)
     restricted = restricted or any(_outside_like(w.text) for w in before)
     if not restricted and chain is None:
@@ -3008,25 +3031,28 @@ def _h_git(a: _Acc, args: Sequence[Word]) -> None:
         a.flags.append(GIT_STASH_OTHER_FLAG)
     if sub == "stash" and sub2 in ("push", "save"):
         for w in (*before[1:], *after):  # every operand of ``stash push`` is a pathspec
-            a.path(w, operand_access)
-            _scoped_path(a, chain, w, operand_access)
+            spec = _pathspec(a, w)
+            a.path(spec, operand_access)
+            _scoped_path(a, chain, spec, operand_access)
     if sub in _GIT_PATH_ALL:
         file_access: Access = "read" if sub in _GIT_READ_FILE_SUBS else operand_access
         for w in pos:
-            a.path(w, file_access)
-            _scoped_path(a, chain, w, file_access)
+            spec = _pathspec(a, w) if sub in _GIT_PATHSPEC_ALL else w
+            a.path(spec, file_access)
+            _scoped_path(a, chain, spec, file_access)
         return
     tail_access: Access = "read" if sub in _GIT_READ_PATH_SUBS else operand_access
     for w in before:
         if _outside_like(w.text) or w.expands or w.glob:
             a.path(w, tail_access)
     for w in after:
-        a.path(w, tail_access)
-        _scoped_path(a, chain, w, tail_access)
+        spec = _pathspec(a, w)
+        a.path(spec, tail_access)
+        _scoped_path(a, chain, spec, tail_access)
     if sub == "checkout" and chain is not None and sc.dd_at < 0:
         # ``git -C d checkout settings.json``: without ``--`` a pathspec looks like a branch name
         for w in pos:
-            _scoped_path(a, chain, w, access)
+            _scoped_path(a, chain, _pathspec(a, w), access)
 
 
 def _git_config(a: _Acc, sc: _Scan, seen: set[str]) -> None:
@@ -4514,6 +4540,7 @@ def _classify(
         tags=tags,
         gray=tuple(dict.fromkeys(a.gray)),
         recursive=a.recursive,
+        pathspec_magic=a.pathspec_magic,
     )
 
 

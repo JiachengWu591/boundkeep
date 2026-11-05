@@ -315,7 +315,9 @@
 - {id: m2r-h1-007, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pytest --foo ''@args.txt'''}, expect: gray, expect_untrusted: gray}
 - {id: m2r-h1-008, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'ruff check -- ''@args.txt'''}, expect: gray, expect_untrusted: gray}
 - {id: m2r-h1-009, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pytest -k ''@args.txt'''}, expect: gray, expect_untrusted: gray}
-- {id: m2r-h1-010, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pytest ''@C:\Users\testuser\x.txt'''}, expect: gray, expect_untrusted: gray}
+# The file named is outside the project. Spec revision 13: a colon before the last component is
+# uncertain, so the path rule can see it, as it already does for m2r-h1-017 and m2r-h1-018.
+- {id: m2r-h1-010, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'pytest ''@C:\Users\testuser\x.txt'''}, expect: ask, expect_untrusted: gray}
 - {id: m2r-h1-011, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'black ''@args.txt'''}, expect: gray, expect_untrusted: gray}
 - {id: m2r-h1-012, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'isort ''@args.txt'''}, expect: gray, expect_untrusted: gray}
 - {id: m2r-h1-013, tool: PowerShell, platform: windows, trusted: true, adv: true, input: {command: 'flake8 ''@args.txt'''}, expect: gray, expect_untrusted: gray}

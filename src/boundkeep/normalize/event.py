@@ -342,20 +342,21 @@ _STAGE_SCAN_SKIP = subtree.VCS_DIR_NAMES | frozenset(
 )
 
 
-def _stages_whole_repository(flags: set[str], targets: list[str]) -> bool:
+def _stages_whole_repository(info: programs.CmdInfo) -> bool:
     """Does this `git add` stage the whole repository, whatever directory it runs in?
 
     `-A`, `--all` and `--no-ignore-removal` (each also by unique abbreviation) do, and so does any
     pathspec that starts with `:` (`:/`, `:(top)`, and the exclude-only magic `:!x`, `:^x`,
     `:(exclude)x`, which select everything but x; X1 review R5-1, R6-1). Only plain paths do not.
     """
+    flags = set(info.flags)
     if "-A" in flags:
         return True
     if any(f.startswith("--a") and "--all".startswith(f) for f in flags):
         return True
     if any(f.startswith("--no-i") and "--no-ignore-removal".startswith(f) for f in flags):
         return True
-    return any(target.startswith(":") for target in targets)
+    return info.pathspec_magic
 
 
 def _add_may_stage_protected(
@@ -374,8 +375,7 @@ def _add_may_stage_protected(
         return False
     words = [w for w, _access in info.paths] or [Word(".")]
     targets = [w.text for w in words]
-    flags = set(info.flags)
-    if _stages_whole_repository(flags, targets) and ctx.root is not None:
+    if _stages_whole_repository(info) and ctx.root is not None:
         # from a sub-directory `-A`, `--all`, `:/` and `:(top)` still stage the whole repository
         # (X1 review R5-1): the project root is looked at too, not only the working directory
         targets.append(ctx.root.raw)
@@ -951,10 +951,12 @@ def _refs_one(
     if "brace" in norm.reasons:
         return refs
     # Disk forms: a symlink / junction / 8.3 name that leads somewhere else (paths.resolve_on_disk
-    # itself refuses anything uncertain for other reasons than an unresolved short name).
+    # itself refuses anything uncertain for other reasons than an unresolved short name or which
+    # reading a program takes: unsure of the reading, a deny rule still has to see the target).
+    reading = norm.uncertain and paths.reading_only(norm.reasons)
     if (
         norm.absolute
-        and (not norm.uncertain or "short-name-unresolved" in norm.reasons)
+        and (not norm.uncertain or "short-name-unresolved" in norm.reasons or reading)
         and paths.is_local_disk(norm)
     ):
         resolved = _disk_resolve(ctx, norm)
@@ -971,9 +973,55 @@ def _refs_one(
                 )
             )
         refs = _mark_hard_linked(refs, resolved)
+        if reading:
+            refs += _kept_forms(ctx, text, access, cwd, dialect, refs)
     if not uncertain and norm.flavor == "posix" and _posix_host() and _has_dotdot(text):
         refs += _dotdot_forms(ctx, text, norm, access, cwd, dialect, refs)
     return refs
+
+
+def _kept_forms(
+    ctx: _Ctx,
+    text: str,
+    access: Access,
+    cwd: str | None,
+    dialect: str,
+    existing: Sequence[PathRef],
+) -> list[PathRef]:
+    """``keys./x``: where the reading that keeps the dots goes (Git Bash, Node's file reads).
+
+    The key has them stripped, so ``resolve_on_disk`` follows the other reading. ``keys.`` next to
+    ``keys`` can be a link of its own. The path stays uncertain whatever this finds.
+    """
+    kept = paths.reading_text(
+        text,
+        cwd=cwd,
+        home=ctx.home,
+        env=ctx.env,
+        dialect=dialect,  # type: ignore[arg-type]
+    )
+    if kept is None:
+        return []
+    real = paths.normalize_path(
+        _disk_realpath(ctx, "\\\\?\\" + kept.replace("/", "\\")),
+        cwd=None,
+        home=None,
+        dialect="tool",
+        literal=True,
+    )
+    if any(ref.key == real.key for ref in existing):
+        return []
+    return [
+        _make_ref(
+            ctx,
+            text,
+            real,
+            access,
+            uncertain=True,
+            reasons=_with(real.reasons, "resolved-on-disk", paths.KEPT_READING),
+            resolved=True,
+        )
+    ]
 
 
 def _dotdot_forms(
@@ -1089,9 +1137,10 @@ def _unc_server(ctx: _Ctx, key: str) -> str | None:
     server = key[2:].split("/", 1)[0].split("@", 1)[0]
     if not server or server == "?":
         return None
-    low = server.casefold()
+    # Not casefold: Windows does not read \\localho{U+017F}t as this machine (measured)
+    low = paths.windows_fold(server)
     computer = ctx.env.get("COMPUTERNAME") or ctx.env.get("computername")
-    if low in _LOCAL_UNC_SERVERS or (computer and low == computer.casefold()):
+    if low in _LOCAL_UNC_SERVERS or (computer and low == paths.windows_fold(computer)):
         return None
     return server
 
@@ -1113,7 +1162,9 @@ def _unc_refs(ctx: _Ctx, refs: Sequence[PathRef]) -> tuple[tuple[str, ...], bool
         if server is None:
             continue
         host = domains.canonical_host(server)
-        if host is None or host.kind == "unknown":
+        if host is None or host.kind == "unknown" or not server.isascii():
+            # IDNA reads U+017F as "s", so a non-ASCII name could pass for localhost or an allowed
+            # domain. A share is not a URL: that is not what Windows reads there (measured).
             unknown = True
         elif host.kind == "localhost" or (host.kind == "ip" and host.name in ("127.0.0.1", "::1")):
             continue
@@ -1129,7 +1180,9 @@ def _unc_refs(ctx: _Ctx, refs: Sequence[PathRef]) -> tuple[tuple[str, ...], bool
 
 def _native_dir(ref: PathRef) -> str | None:
     """The directory ``ref`` names, as a path this machine can scan; None when it cannot be."""
-    if ref.uncertain or not ref.key or ref.key == _SYNTHETIC_KEY:
+    if (ref.uncertain and not paths.reading_only(ref.reasons)) or not ref.key:
+        return None
+    if ref.key == _SYNTHETIC_KEY:
         return None
     norm = paths.NormPath(ref.raw, ref.key, ref.flavor, True, False, ())
     if not paths.is_local_disk(norm):
@@ -1222,11 +1275,23 @@ def _cd_target(ctx: _Ctx, text: str, cwd: str | None, dialect: str = "bash") -> 
         env=ctx.env,
         dialect=dialect,  # type: ignore[arg-type]
     )
-    if norm.uncertain or not norm.absolute or norm.is_device or not norm.key:
+    if not norm.absolute or norm.is_device or not norm.key:
         return None
     if norm.key.count("/") > MAX_KEY_DEPTH:
         return None
-    return norm.key
+    if not norm.uncertain:
+        return norm.key
+    if not paths.reading_only(norm.reasons):
+        return None
+    # Unsure of the reading, not of the place: what is below it is looked at, and stays uncertain
+    # because this text keeps its dots ("cd keys." leads to .ssh when keys is a link to it)
+    return paths.reading_text(
+        text,
+        cwd=cwd,
+        home=ctx.home,
+        env=ctx.env,
+        dialect=dialect,  # type: ignore[arg-type]
+    )
 
 
 def _merge_cwds(old: Sequence[str | None], new: Sequence[str | None]) -> tuple[str | None, ...]:
@@ -1940,7 +2005,10 @@ def _search_action(ctx: _Ctx, tool: str, tool_input: Mapping[str, Any]) -> Actio
         base = paths.normalize_path(
             directory, cwd=ctx.cwd, home=ctx.home, env=ctx.env, dialect="tool", glob_literal=True
         )
-        anchor = base.key if base.absolute and not base.uncertain else None
+        known = base.absolute and (not base.uncertain or paths.reading_only(base.reasons))
+        anchor = (
+            base.key if known else None
+        )  # ``dynamic``: what comes of it is uncertain either way
         refs += _refs(ctx, notes, pattern, "read", cwds=(anchor,), dialect="tool", dynamic=True)
         notes.append("glob-pattern-path")
     elif pattern and tool == "Grep":

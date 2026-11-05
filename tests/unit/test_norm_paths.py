@@ -396,8 +396,15 @@ LEXICAL = [
     c("ads-stream-name", "C:\\proj\\a.txt:hidden", "W", "c:/proj/a.txt", "w", r=("ads-stripped",)),
     c("ads-data-stream", "C:\\proj\\a.txt::$DATA", "W", "c:/proj/a.txt", "w", r=("ads-stripped",)),
     c("ads-on-directory", "C:\\proj::$DATA", "W", "c:/proj", "w", r=("ads-stripped",)),
-    c("ads-index-allocation", "C:\\proj\\dir::$INDEX_ALLOCATION\\x", "W", "c:/proj/dir/x", "w"),
-    c("ads-only-stream-component", "C:\\proj\\::$DATA\\x", "W", "c:/proj/x", "w"),
+    c(
+        "ads-index-allocation",
+        "C:\\proj\\dir::$INDEX_ALLOCATION\\x",
+        "W",
+        "c:/proj/dir/x",
+        "w",
+        unc=True,
+    ),
+    c("ads-only-stream-component", "C:\\proj\\::$DATA\\x", "W", "c:/proj/x", "w", unc=True),
     c("ads-not-stripped-on-posix", "/home/dev/a.txt:s", "P", "/home/dev/a.txt:s", "p"),
     # --- trailing dots and spaces
     c(

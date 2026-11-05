@@ -49,7 +49,7 @@ import re
 import stat
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -67,6 +67,8 @@ __all__ = [
     "memory_for",
     "normalize_path",
     "project_slug",
+    "reading_only",
+    "reading_text",
     "resolve_on_disk",
     "scratch_plain",
     "scratchpad_for",
@@ -89,6 +91,14 @@ _LOCAL_SERVERS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "."})
 _PERCENT_FORBIDDEN = frozenset('%/\\:*?"<>|')
 _STREAM_TYPES = frozenset({"DATA", "INDEX_ALLOCATION", "I30", "BITMAP", "ATTRIBUTE_LIST"})
 _AMBIGUOUS_DOTS = "trailing-dots-spaces-ambiguous"
+_AMBIGUOUS_STREAM = "stream-name-ambiguous"
+KEPT_READING = "reading-kept-dots"  # a PathRef from the reading ``reading_text`` gives
+# Uncertain only about which reading a program takes (see ``reading_only``). ``cwd-uncertain`` comes
+# with the working directory's own reasons, which then decide.
+_READING_REASONS = frozenset(
+    {_AMBIGUOUS_DOTS, _AMBIGUOUS_STREAM, "extended-path-dots", "cwd-uncertain", KEPT_READING}
+)
+_CYGWIN_COLON = chr(0xF03A)  # what Git Bash writes on disk for the ":" of a name (measured)
 _PREFIX_FOLDED = "prefix-path-folded"
 _DEVICE_NAME_SUFFIX = "device-name-suffix"
 _UNKNOWN_START = frozenset("$%~")  # a first component starting so has no known anchor
@@ -294,6 +304,74 @@ def expanded_text(
         return None
 
 
+def reading_only(reasons: Sequence[str]) -> bool:
+    """Is a path with these ``reasons`` uncertain only about which reading a program takes?
+
+    Trailing dots and spaces, a stream name. That keeps the allow side out (``inside_project`` is
+    not True), and it must not keep the deny side out: the disk is still looked at, or a link in the
+    project would hide a target that a deny rule names (``guard\\policy.yaml.``, with ``guard`` a
+    junction to the guard's own directory, is written by PowerShell 5.1, measured).
+    """
+    return any(r in _READING_REASONS for r in reasons) and all(
+        r in _READING_REASONS or r in _INFO_REASONS for r in reasons
+    )
+
+
+def reading_text(
+    raw: str,
+    *,
+    cwd: str | None,
+    home: str | None,
+    env: Mapping[str, str] | None = None,
+    dialect: Dialect = "tool",
+) -> str | None:
+    """``raw`` as a program that keeps trailing dots and spaces reads it: ``c:/proj/keys./x``.
+
+    Git Bash and Node's file reads open ``keys.``, which is not ``keys``, and the key cannot say so.
+    In Git Bash ``:`` is a character of the name too (``U+F03A`` on disk, measured); elsewhere it
+    starts a stream, dropped from the last component. Absolute, ``.`` and ``..`` folded, no prefix.
+    None when this says nothing the key does not, the text is not a plain drive path, or a colon
+    stands before the last component outside Git Bash. Pure; never raises.
+    """
+    try:
+        text = expanded_text(raw, cwd=cwd, home=home, env=env, dialect=dialect)
+        return None if text is None else _reading_text(text, bash=dialect == "bash")
+    except Exception:  # noqa: BLE001 - never raise from a helper
+        return None
+
+
+def _reading_text(text: str, *, bash: bool) -> str | None:
+    body = text[_ext_prefix_len(text) :].replace("\\", "/")
+    if body.startswith("//"):
+        return None
+    if body[:1] == "/":
+        msys = _match_msys([c for c in body.split("/") if c])
+        if msys is None:
+            return None
+        drive, comps = msys[0], msys[1]
+    elif body[1:3] == ":/" and body[0].isascii() and body[0].isalpha():
+        drive, comps = body[0].lower(), [c for c in body[3:].split("/") if c]
+    else:
+        return None
+    parts: list[str] = []
+    mapped = False
+    for index, comp in enumerate(comps):
+        if ":" in comp:
+            if bash:
+                comp, mapped = comp.replace(":", _CYGWIN_COLON), True
+            elif index == len(comps) - 1:
+                comp = comp.split(":", 1)[0]
+            else:
+                return None
+        if comp == "..":
+            del parts[-1:]
+        elif comp not in ("", "."):
+            parts.append(comp)
+    if not mapped and not any(p.endswith((".", " ")) for p in parts):
+        return None
+    return f"{drive}:/" + "/".join(parts)
+
+
 def inside_project(path: NormPath, project_root: NormPath | None) -> bool | None:
     """True only when ``path`` is *definitely* inside ``project_root``; None if unsure, else False.
 
@@ -313,9 +391,10 @@ def resolve_on_disk(path: NormPath) -> NormPath:
     """File system layer: expand symlinks, junctions and 8.3 short names of an existing path.
 
     Only for a path that is absolute, certain (or uncertain *only* because of an unresolved short
-    name), not a device, not a UNC path (it could block on the network) and of this machine's
-    flavor. The result is re-normalized, keeps ``raw`` and gets the reason ``resolved-on-disk``
-    when the key changed. Never raises; on any failure the path is returned unchanged.
+    name, or of which reading a program takes, ``reading_only``: the result stays uncertain then),
+    not a device, not a UNC path (it could block on the network) and of this machine's flavor. The
+    result is re-normalized, keeps ``raw`` and gets the reason ``resolved-on-disk`` when the key
+    changed. Never raises; on any failure the path is returned unchanged.
     """
     try:
         return _resolve_on_disk(path)
@@ -1065,9 +1144,11 @@ def _unc_shape(comps: list[str], ctx: _Ctx, reasons: list[str]) -> _Shape:
     rest = comps[2:]
     admin = len(share) == 2 and share[1] == "$" and share[0].isascii() and share[0].isalpha()
     if admin:
-        local = server.casefold() in _LOCAL_SERVERS
+        # Not casefold: Windows does not read \\localho{U+017F}t as this machine (measured), it goes
+        # to the network's name resolution with it
+        local = windows_fold(server) in _LOCAL_SERVERS
         computer = _env_get(ctx.env, "COMPUTERNAME", True)
-        if computer and server.casefold() == computer.casefold():
+        if computer and windows_fold(server) == windows_fold(computer):
             local = True
         if local:
             # \\localhost\c$\x is C:\x: do not let the share spelling hide a drive path
@@ -1291,6 +1372,16 @@ def _shape(text: str, plen: int, ctx: _Ctx, reasons: list[str]) -> _Shape:
 # --------------------------------------------------------------------------------------------
 
 
+def _stream_before_last(body: str) -> bool:
+    """Is there a ``:`` in ``body`` (a path without its prefix) before the last component?
+
+    The ``:`` of a leading drive does not count."""
+    if body[1:2] == ":" and body[0].isascii() and body[0].isalpha():
+        body = body[2:]
+    comps = [c for c in body.replace("\\", "/").split("/") if c]
+    return any(":" in c for c in comps[:-1])
+
+
 def _norm(raw: str | None, ctx: _Ctx, *, literal: bool, glob_literal: bool = False) -> NormPath:
     """``literal`` skips ``~``/variable expansion and glob detection (for real path values);
     ``glob_literal`` only skips the glob detection."""
@@ -1327,6 +1418,16 @@ def _norm(raw: str | None, ctx: _Ctx, *, literal: bool, glob_literal: bool = Fal
     else:
         parts = _collapse(shape.parts, rooted=shape.anchor is not None)
     if _AMBIGUOUS_DOTS in reasons:
+        uncertain = True
+    if (
+        shape.flavor == "windows"
+        and "ads-stripped" in reasons
+        and (ctx.dialect == "bash" or _stream_before_last(body))
+    ):
+        # In Git Bash "work:s" is a directory of its own (U+F03A on disk, measured). Win32 opens a
+        # colon before the last component only in dir::$INDEX_ALLOCATION\x (it reads dir\x,
+        # measured), which no one writes by accident.
+        _add(reasons, _AMBIGUOUS_STREAM)
         uncertain = True
     anchor = shape.anchor
     absolute = shape.absolute
@@ -1496,7 +1597,11 @@ def _glob_pattern(segment: str) -> str:
 def _expand_glob(
     path: NormPath, limit: int, max_entries: int, deadline: float | None, dotfiles: bool = False
 ) -> GlobResult:
-    blocking = [r for r in path.reasons if r not in _INFO_REASONS and r not in ("glob", "brace")]
+    blocking = [
+        r
+        for r in path.reasons
+        if r not in _INFO_REASONS and r not in _READING_REASONS and r not in ("glob", "brace")
+    ]
     if blocking or not is_local_disk(path):
         return GlobResult((), "unsupported")
     split = _split_key(path.key, path.flavor)
@@ -1554,9 +1659,14 @@ def _hard_linked(native: str) -> bool:
 def _resolve_on_disk(path: NormPath) -> NormPath:
     if path.is_device or not path.absolute or not path.key or "\x00" in path.key:
         return path
-    blocking = [r for r in path.reasons if r not in _INFO_REASONS and r != "short-name-unresolved"]
+    blocking = [
+        r
+        for r in path.reasons
+        if r not in _INFO_REASONS and r not in _READING_REASONS and r != "short-name-unresolved"
+    ]
     if path.uncertain and blocking:
         return path
+    reading = any(r in _READING_REASONS for r in path.reasons)
     if (path.flavor == "windows") != (os.name == "nt"):
         return path
     if not is_local_disk(path):
@@ -1575,5 +1685,8 @@ def _resolve_on_disk(path: NormPath) -> NormPath:
     if is_local_disk(new) and _hard_linked(resolved):
         _add(reasons, HARD_LINKED)
     return dataclasses.replace(
-        new, raw=path.raw, reasons=tuple(reasons), uncertain=new.uncertain or bool(blocking)
+        new,
+        raw=path.raw,
+        reasons=tuple(reasons),
+        uncertain=new.uncertain or bool(blocking) or reading,
     )
