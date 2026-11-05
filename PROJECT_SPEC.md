@@ -55,6 +55,11 @@
 > - §5.1：流名不是最后一段，或在 bash 方言里（任何一段），都标为不确定：Git Bash 把 `:` 当名字的一部分（磁盘上是 `U+F03A`），`work:s` 是另一个目录。文件工具和 PowerShell 的最后一段 `a.txt:s` 仍是同一个文件的流。git 的 pathspec 魔法（`:/src`、`:!x`、`:(top)x`）不算流名：这些词 git 自己解析，不当路径打开（实测）。
 > - §5.1：UNC 的主机名判断"是不是本机"时用 `windows_fold`，不用 `casefold`；非 ASCII 的主机名不经 IDNA 算成本机，目的地按未知算：Windows 不把 `localhoſt` 读成 `localhost`（实测）。
 
+> **修订 14（2026-11-05，使用者说"修 RV-7"）**：复审 `docs/reviews/M3a-dots-and-folding-review.md` 的 RV-7，记录在 `docs/reports/M3a-program-fold.md`。
+> - §5.1：判断带路径的程序在不在系统目录时用 `windows_fold`，不用 `casefold`。
+> - §5.1：Windows 上程序名仍按 `casefold` 认，deny / ask 规则看得到；但只有 `casefold` 才读成这个名字的写法（`lſ`、`ﬁnd`、`Teſt-Path`）是灰色 `program-fold-variant`，allow 规则用不上：NTFS 和 PATH 分得开这些名字，PowerShell 也不把它们认成原来的命令（实测）。
+> - §7：这样的调用不送审（`gray-unanalysed`）：发给模型的是折叠之后的名字，模型看不出写的不是 `sed`。
+
 > **当前进度（2026-11-05）**
 >
 > - **已完成并有标签**：M0a、M0、M1、M1b、M1c、M1c-2、M1c-3、M1c-4、M2（`m2-baseline`）、M3a（`m3a-done`，2026-11-01；LLM 层没有接过真实服务）。M1+M1b、M1c / M1c-2 的独立 X1 审查与复审都已做完，高危、中危清零，修复已提交（M1c / M1c-2 的规则冻结在 `6821142`，标签 `m1c2-x1-rereview2-fixes-done`；审查在 `docs/reviews/`，修复报告 `docs/reports/M1c2-review-fixes*.md`）。M1c-4 的真实会话手工验收未做（`docs/reports/M1c4.md`）。
@@ -69,7 +74,8 @@
 > - **Windows 设备路径不送审**（修订 10，已提交并推送，`2f0f009` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-device-paths.md`）：key 在 `//./` 之下的灰色调用不送审、直接问，确实的 `NUL` 除外；`\\.\C:` 是卷。规则、策略与评测数字没变；真实宿主里没有跑。
 > - **路径与闸门的审查修复**（修订 11，已提交并推送，`7f7ffe9` 代码，文档在其后一个提交，未打标签；审查 `docs/reviews/M3a-path-gate-review.md`，记录 `docs/reports/M3a-path-gate-fixes.md`）：审查的 G-1、G-3、G-4、G-5、G-9、G-13 已修，G-2 修了一半（见下一条）；判决数字没变，规则条目没变；其余低危与测试缺口留着；真实宿主里没有跑。
 > - **修订 11 的定向复审与修订 12**（已提交并推送，`bede21d` 代码，`ae99b20` 文档，未打标签；复审 `docs/reviews/M3a-path-gate-rereview.md`，不是独立的；记录 `docs/reports/M3a-dots-and-folding.md`）：复审发现 G-2 只修了一半（GR-1），还有一条更早就有的大小写折叠问题（GR-2），两条都不需要后端。已修：任何一段的尾随点和空格都不确定；Windows 的 key 按 NTFS 的比较方式折叠，`path_glob` 仍然 `casefold`。规则条目与评测数字没变。全量分六段跑，不是一个进程：27803 通过、169 跳过、0 失败。GR-3、GR-4、GR-5 没有修；这次修复没有复审，真实宿主里没有跑。
-> - **修订 12 的定向复审与修订 13**（已提交，未推送，`372bfa1` 代码，文档在其后一个提交，未打标签；复审 `docs/reviews/M3a-dots-and-folding-review.md`，不是独立的；记录 `docs/reports/M3a-readings-fixes.md`）：修订 12 的两个目标达到了，但带尾随点的路径不再查磁盘，经过链接时 deny 变成了问或送审（RV-1，中间一段始于修订 11）；另有两条更早就有的同类问题（RV-2 Git Bash 的冒号，RV-3 主机名的 `casefold`）。三条都已修，规则条目与策略文件没变。全量分六段跑，不是一个进程：28098 通过、169 跳过、0 失败。这之前的第一次全量有 10 个失败：9 个是修 RV-2 时把 git 的 pathspec 魔法也算成不确定（已修，见 §5.1），1 个是语料钉的旧值（`m2r-h1-010` 由灰色改成问）。RV-4、RV-6、RV-7、GR-3、GR-4、GR-5 没有修；这次修复没有复审，真实宿主里没有跑。
+> - **修订 12 的定向复审与修订 13**（已提交，未推送，`372bfa1` 代码，文档在其后一个提交，未打标签；复审 `docs/reviews/M3a-dots-and-folding-review.md`，不是独立的；记录 `docs/reports/M3a-readings-fixes.md`）：修订 12 的两个目标达到了，但带尾随点的路径不再查磁盘，经过链接时 deny 变成了问或送审（RV-1，中间一段始于修订 11）；另有两条更早就有的同类问题（RV-2 Git Bash 的冒号，RV-3 主机名的 `casefold`）。三条都已修，规则条目与策略文件没变。全量分六段跑，不是一个进程：28098 通过、169 跳过、0 失败。这之前的第一次全量有 10 个失败：9 个是修 RV-2 时把 git 的 pathspec 魔法也算成不确定（已修，见 §5.1），1 个是语料钉的旧值（`m2r-h1-010` 由灰色改成问）。RV-4、RV-6、GR-3、GR-4、GR-5 没有修（RV-7 见下一条）；这次修复没有复审，真实宿主里没有跑。
+> - **RV-7 与修订 14**（已提交，未推送，`fef9fe9` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-program-fold.md`）：判断带路径的程序在不在系统目录时用 `windows_fold`。程序名有同样的问题，复审没有写（`lſ a.txt`、`Teſt-Path a.txt` 也由规则放行）：名字仍按 `casefold` 认，deny / ask 规则看得到，但只有 `casefold` 才读成这个名字的写法是灰色 `program-fold-variant`，不送审。规则条目与策略文件没变，差分没有变松，评测除日期和延迟外相同。全量分六段跑，不是一个进程：28212 通过、169 跳过、0 失败。同时查到系统目录的判断还丢盘符、前缀太宽（`D:/Windows/System32/git.exe status` 由规则放行，不需要特殊字符），没有修，要先定设计（记录第 7 节）。这次修复没有复审，真实宿主里没有跑。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -298,6 +304,7 @@ Claude Code
   - **文件系统层**（仅本机）：`realpath`，展开符号链接、联接点与存在路径上的 8.3 短名。解析结果是设备时 key 写设备，§7 的闸门和规则看得到；解析结果不在本机固定盘上时不再 `stat` 它（修订 11）。`realpath` 自己沿着链接打开目标这一点没有改，也没有实测。
   - 比较不区分大小写。（M1 澄清：POSIX 风格的路径在 allow 侧区分大小写，见 §7。）
     - **Windows 的 key 按 NTFS 的比较方式折叠**（修订 12）：完整的 `casefold` 会把 NTFS 分得开的字符合并：项目 `work` 和旁边把 `k` 换成开尔文符号（`U+212A`）的目录，`в` 和 `U+1C80`，`Å` 和 `U+212B`，都是不同的目录（实测），key 却相同。这些字符（基本平面里 324 个，按 `RtlUpcaseUnicodeChar` 量出，以及基本平面之外的全部）留在 key 里原样。所以 `inside_project`、会话目录与 `project_trusted` 分得开；`path_glob` 匹配时两边仍然 `casefold`，所以 `.ſſh` 仍然命中 `.ssh` 的 deny。只量了 NTFS。
+    - **程序名和系统目录也一样**（修订 14）：判断带路径的程序在不在系统目录时用 `windows_fold`，`C:\Windowſ\System32\git.exe` 不是系统里的 `git`，是灰色 `program-path-qualified`。程序名仍按 `casefold` 认，`ſudo` 仍然命中 `sudo` 的规则；但 `windows_fold` 和 `casefold` 读出来不一样的写法（`lſ`、`ﬁnd`、`Teſt-Path`）是灰色 `program-fold-variant`，allow 规则用不上，也不送审（§7）。真实 Git Bash 里 `lſ` 经 PATH 跑的是另一个文件，真实 PowerShell 5.1 找不到 `Teſt-Path`（实测）。
   - **方向规则**：deny / ask 侧"可能匹配即匹配"；allow 侧（`inside_project`）"确定在内才算在内"；无法确定（不存在且含短名的路径、含未解析变量、驱动器相对路径）不算在内，进灰色。
   - 输入既可能是反斜杠形式（hook 的 `file_path`），也可能是 POSIX 形式（Bash 命令里的路径）；规则里的 `path_glob` 一律用正斜杠书写，匹配前双方转成同一规范形式。
   - `protect-guard-config` 的路径集要包含实际生效的配置目录（设置了 `CLAUDE_CONFIG_DIR` 时）。
