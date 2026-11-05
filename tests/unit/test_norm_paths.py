@@ -400,10 +400,18 @@ LEXICAL = [
     c("ads-only-stream-component", "C:\\proj\\::$DATA\\x", "W", "c:/proj/x", "w"),
     c("ads-not-stripped-on-posix", "/home/dev/a.txt:s", "P", "/home/dev/a.txt:s", "p"),
     # --- trailing dots and spaces
-    c("dots-trailing-space", "C:\\proj\\x. ", "W", "c:/proj/x", "w", r=("trailing-dots-spaces",)),
-    # Win32 strips every trailing dot/space only from the LAST component, one dot from the others,
-    # and Node none of those. The key strips them all (so deny rules over-match) but only the last
-    # component stays certain.
+    c(
+        "dots-trailing-space",
+        "C:\\proj\\x. ",
+        "W",
+        "c:/proj/x",
+        "w",
+        unc=True,
+        r=("trailing-dots-spaces",),
+    ),
+    # Win32 strips every trailing dot/space only from the LAST component and one dot from the
+    # others; Git Bash and Node's file reads none of those. The key strips them all (so deny rules
+    # over-match) and no such path is certain.
     c("dots-mid-single-dot-is-ambiguous", "C:\\proj\\a.\\b", "W", "c:/proj/a/b", "w", unc=True),
     c("dots-trailing-dot-on-project", "c:\\PROJ.\\x", "W", "c:/proj/x", "w", unc=True),
     c(
@@ -421,7 +429,7 @@ LEXICAL = [
     c("dots-three-dots-component-read-as-parent", "C:\\proj\\...\\x", "W", "c:/x", "w", unc=True),
     c("dots-dotdot-space-read-as-parent", "C:\\proj\\.. \\x", "W", "c:/x", "w", unc=True),
     c("dots-space-only-component", "C:\\proj\\ \\x", "W", "c:/proj/x", "w", unc=True),
-    c("dots-last-component-all-stripped", "C:\\proj\\x. . ", "W", "c:/proj/x", "w"),
+    c("dots-last-component-all-stripped", "C:\\proj\\x. . ", "W", "c:/proj/x", "w", unc=True),
     c("dots-kept-on-posix", "/home/dev/proj/x.", "P", "/home/dev/proj/x.", "p"),
     # --- drive-relative and rooted
     c(
@@ -1166,7 +1174,7 @@ INSIDE = [
     ipc("win-ads-suffix-same-file", "C:\\proj\\x::$DATA", WROOT, "W", True),
     ipc("win-ads-on-root", "C:\\proj::$DATA", WROOT, "W", True),
     ipc("none-trailing-dot-on-project-dir", "c:\\PROJ.\\x", WROOT, "W", None),
-    ipc("win-trailing-dots-on-last-component", "C:\\proj\\x. ", WROOT, "W", True),
+    ipc("none-trailing-dots-on-last-component", "C:\\proj\\x. ", WROOT, "W", None),
     ipc("win-trailing-dots-and-spaces-mid-path-is-unsure", "C:\\proj \\x. ", WROOT, "W", None),
     ipc("none-trailing-space-on-project-dir", "C:\\proj \\x", WROOT, "W", None),
     ipc("none-two-trailing-dots-on-project-dir", "C:\\proj..\\x", WROOT, "W", None),

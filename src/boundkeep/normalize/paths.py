@@ -11,9 +11,9 @@ Two layers (PROJECT_SPEC.md section 5.1, docs/m1-design.md module A):
 Key format (what ``path_glob`` and ``inside_project`` compare):
 
 * Windows flavor: all forward slashes, ``.``/``..`` and repeated separators collapsed, no trailing
-  slash (roots excepted), the whole key ``casefold``-ed: ``c:/users/bob/.ssh/id_rsa``. UNC is
-  ``//server/share/...``, a device is ``//./nul`` (or ``//./pipe/name``, or ``//./c:`` for the
-  volume itself).
+  slash (roots excepted), the whole key folded the way NTFS compares names (``windows_fold``):
+  ``c:/users/bob/.ssh/id_rsa``. UNC is ``//server/share/...``, a device is ``//./nul`` (or
+  ``//./pipe/name``, or ``//./c:`` for the volume itself).
 * POSIX flavor: the same, but case is kept: ``/home/dev/proj/a.py``.
 * A relative path with no usable ``cwd`` keeps a relative key (``a/b``, ``../x``) and is
   ``uncertain``. An unresolved variable stays in the key verbatim (``$foo/x`` after casefolding).
@@ -72,6 +72,7 @@ __all__ = [
     "scratchpad_for",
     "temp_dir_text",
     "tool_results_for",
+    "windows_fold",
 ]
 
 Dialect = Literal["bash", "powershell", "tool"]
@@ -91,6 +92,41 @@ _AMBIGUOUS_DOTS = "trailing-dots-spaces-ambiguous"
 _PREFIX_FOLDED = "prefix-path-folded"
 _DEVICE_NAME_SUFFIX = "device-name-suffix"
 _UNKNOWN_START = frozenset("$%~")  # a first component starting so has no known anchor
+
+# ``str.casefold`` merges each of these with a character NTFS keeps apart: real directories named
+# ``work`` and the same with ``U+212A`` for its ``k``, ``U+0432`` and ``U+1C80``, ``U+00C5`` and
+# ``U+212B`` are different ones. Measured with ``RtlUpcaseUnicodeChar`` (Windows 11 build 26200,
+# Unicode 15.0); a test computes the list again from the kernel.
+_NTFS_APART_RANGES = (
+    "00B5 00DF 0130 0149 017F 01C5 01C8 01CB 01F0 01F2 0345 037F 0390 03B0 03C2 03D0-03D1 "
+    "03D5-03D6 03F0-03F1 03F4-03F5 0524 0526 0528 052A 052C 052E 0587 10C7 10CD 13F8-13FD "
+    "1C80-1C88 1C90-1CBA 1CBD-1CBF 1E96-1E9B 1E9E 1F50 1F52 1F54 1F56 1F80-1FAF 1FB2-1FB4 "
+    "1FB6-1FB7 1FBC 1FBE 1FC2-1FC4 1FC6-1FC7 1FCC 1FD2-1FD3 1FD6-1FD7 1FE2-1FE4 1FE6-1FE7 "
+    "1FF2-1FF4 1FF6-1FF7 1FFC 2126 212A-212B 2C2F 2C70 2C7E-2C7F 2CEB 2CED 2CF2 A660 A698 "
+    "A69A A78D A790 A792 A796 A798 A79A A79C A79E A7A0 A7A2 A7A4 A7A6 A7A8 A7AA-A7AE "
+    "A7B0-A7B4 A7B6 A7B8 A7BA A7BC A7BE A7C0 A7C2 A7C4-A7C7 A7C9 A7D0 A7D6 A7D8 A7F5 "
+    "AB70-ABBF FB00-FB06 FB13-FB17"
+)
+_NTFS_KEEPS_APART = frozenset(
+    chr(code)
+    for item in _NTFS_APART_RANGES.split()
+    for first, _, last in [item.partition("-")]
+    for code in range(int(first, 16), int(last or first, 16) + 1)
+)
+
+
+def windows_fold(text: str) -> str:
+    """``text`` folded the way NTFS compares names, which is finer than ``str.casefold``.
+
+    A key must not say two places are one (the allow side needs that). Whatever casefold merges and
+    NTFS does not stays as written, and so does every character outside the basic plane: NTFS
+    compares UTF-16 units and gives those no case (a Deseret pair is two directories, measured).
+    ``path_glob`` still casefolds both sides, so a deny rule over-matches as before.
+    """
+    if text.isascii():
+        return text.lower()
+    return "".join(c if c in _NTFS_KEEPS_APART or ord(c) > 0xFFFF else c.casefold() for c in text)
+
 
 # Reasons that only describe what was done to the path and do not make it uncertain.
 _INFO_REASONS = frozenset(
@@ -264,8 +300,8 @@ def inside_project(path: NormPath, project_root: NormPath | None) -> bool | None
     None covers: no project root, an uncertain or non-absolute path or root, a device, a different
     flavor, a different drive or share (junctions and ``subst`` make "different drive" unknowable
     lexically). Inside means equal to the root or below it, compared on whole path segments
-    (``/proj2`` is not inside ``/proj``); Windows-flavor keys are already casefolded, POSIX keys
-    keep their case. Never raises.
+    (``/proj2`` is not inside ``/proj``); Windows-flavor keys are already folded, POSIX keys keep
+    their case. Never raises.
     """
     try:
         return _inside_project(path, project_root)
@@ -321,14 +357,13 @@ _MEMORY_LAYOUT = (".claude", "projects", _SLUG, "memory")  # below the home
 # its path that is not an ASCII letter or digit into "-" (``E:\boundkeep`` -> ``E--boundkeep``)
 _NOT_IN_SLUG = re.compile(r"[^A-Za-z0-9]")
 # What the path layer may have done to a path that still counts as "the scratchpad": spellings of
-# the SAME file (an NTFS stream name, trailing dots of the last component, the ``\\?\`` / ``\\.\`` /
-# ``\??\`` prefixes, the on-disk resolved form). Anything else (a translated MSYS / Cygwin / WSL
-# path, an admin share, a UNC name, an expanded ``~`` or variable, a reason added later) is a
-# reading the daemon cannot tell is what the tool will do, and is never marked.
+# the SAME file (an NTFS stream name, the ``\\?\`` / ``\\.\`` / ``\??\`` prefixes, the on-disk
+# resolved form). Anything else (trailing dots or spaces, a translated MSYS / Cygwin / WSL path, an
+# admin share, a UNC name, an expanded ``~`` or variable, a reason added later) is a reading the
+# daemon cannot tell is what the tool will do, and is never marked.
 _PLAIN_REASONS = frozenset(
     {
         "ads-stripped",
-        "trailing-dots-spaces",
         "extended-prefix",
         "device-prefix",
         "nt-prefix",
@@ -409,11 +444,11 @@ class SessionDir:
         layout: tuple[str, ...],
         slugs: frozenset[str] | None = None,
     ) -> None:
-        self.session = session.casefold()
+        self.session = windows_fold(session)
         self.flavor: Flavor = root.flavor
         self.layout = layout
-        # Windows keys are casefolded, so the names are too (the drive letter's case differs
-        # between the CLI and VS Code); POSIX keeps case
+        # Windows keys are folded, so the names are too (the drive letter's case differs between
+        # the CLI and VS Code); POSIX keeps case. A slug is ASCII, so casefold says the same.
         self.slugs = (
             None
             if slugs is None
@@ -471,9 +506,9 @@ class SessionDir:
                 ok = bool(part) and part not in (".", "..")
                 ok = ok and (self.slugs is None or part in self.slugs)
             elif want == _SESSION:
-                ok = part.casefold() == self.session
+                ok = windows_fold(part) == self.session
             elif self.flavor == "windows":
-                ok = part.casefold() == want
+                ok = windows_fold(part) == want
             else:
                 ok = part == want
             if not ok:
@@ -871,17 +906,16 @@ def _glob_reasons(body: str) -> list[str]:
     return out
 
 
-def _win_part(part: str, reasons: list[str], *, final: bool) -> str:
+def _win_part(part: str, reasons: list[str]) -> str:
     """One Windows path component without NTFS stream suffix and trailing dots and spaces.
 
-    ``name:stream`` and ``name::$DATA`` name the same file as ``name``. Win32 drops *all* trailing
-    dots and spaces of the last component of a path that does not end in a separator, of any other
-    component only one trailing dot, and Node (which the file tools run on) none of those
-    (``C:\\proj.\\x`` is really below ``proj.``, measured). The key strips them all anyway (a deny
-    rule should match the possible target), but only the last component stays exact: the path is
-    otherwise marked ambiguous so that ``inside_project`` never says True for it. A component made
-    only of dots and spaces becomes ``..`` when it holds two or more dots (the escaping reading,
-    the cautious one) and ``.`` otherwise.
+    ``name:stream`` and ``name::$DATA`` name the same file as ``name``. Who opens the path decides
+    what trailing dots and spaces mean (measured): Win32 drops *all* of the last component and one
+    dot of any other, while Git Bash and Node's file reads drop none (``cd ../proj.`` enters
+    ``proj.``, next to the project ``proj``). The key strips them all anyway (a deny rule should
+    match the possible target), and the path is marked ambiguous so that ``inside_project`` never
+    says True for it. A component made only of dots and spaces becomes ``..`` when it holds two or
+    more dots (the escaping reading, the cautious one) and ``.`` otherwise.
     """
     if ":" in part:
         # An unresolved ``$env:NAME`` / ``${env:NAME}`` is a variable, not a stream: keep its name
@@ -904,21 +938,15 @@ def _win_part(part: str, reasons: list[str], *, final: bool) -> str:
     if stripped == part:
         return part
     _add(reasons, "trailing-dots-spaces")
-    if stripped == "" or not final:
-        _add(reasons, _AMBIGUOUS_DOTS)
+    _add(reasons, _AMBIGUOUS_DOTS)
     if stripped == "":
         return ".." if part.count(".") >= 2 else "."
     return stripped
 
 
-def _win_parts(comps: list[str], reasons: list[str], *, ends_sep: bool | None = None) -> list[str]:
-    """``_win_part`` over the components of a path; the last one is "final" unless a separator
-    follows it (``ends_sep``, inferred from a trailing empty component when not given)."""
-    if ends_sep is None:
-        ends_sep = bool(comps) and comps[-1] == ""
-    kept = [c for c in comps if c != ""]
-    last = len(kept) - 1
-    return [_win_part(c, reasons, final=(i == last and not ends_sep)) for i, c in enumerate(kept)]
+def _win_parts(comps: list[str], reasons: list[str]) -> list[str]:
+    """``_win_part`` over the non-empty components of a path."""
+    return [_win_part(c, reasons) for c in comps if c != ""]
 
 
 def _collapse(parts: list[str], *, rooted: bool) -> list[str]:
@@ -1061,7 +1089,7 @@ def _fold_prefixed(comps: list[str]) -> list[str]:
     """
     out: list[str] = []
     for comp in comps:
-        part = _win_part(comp, [], final=False)
+        part = _win_part(comp, [])
         if part == "..":
             if out:
                 out.pop()
@@ -1103,7 +1131,7 @@ def _shape_prefixed(text: str, plen: int, ctx: _Ctx, reasons: list[str]) -> _Sha
     first = comps[0] if comps else ""
     # "UNC." and "C:." are UNC and C: to Win32. "UNC " and "UNC:x" are not, but that is the cautious
     # reading, and the device key "//./unc/..." could only be read back as UNC.
-    unc = _win_part(first, [], final=False).upper() == "UNC"
+    unc = _win_part(first, []).upper() == "UNC"
     drive = first.rstrip(" .")
     is_drive = len(drive) == 2 and drive[1] == ":" and drive[0].isascii() and drive[0].isalpha()
     if (unc and first.upper() != "UNC") or (is_drive and drive != first):
@@ -1152,11 +1180,9 @@ def _cwd_base(ctx: _Ctx) -> tuple[str, list[str]] | None:
     return _split_key(cwd.key, cwd.flavor)
 
 
-def _shape_rooted_windows(
-    comps: list[str], ctx: _Ctx, reasons: list[str], ends_sep: bool
-) -> _Shape:
+def _shape_rooted_windows(comps: list[str], ctx: _Ctx, reasons: list[str]) -> _Shape:
     """``\\foo`` (and ``/foo`` outside Git Bash): rooted on the *current* drive of the cwd."""
-    parts = _win_parts(comps, reasons, ends_sep=ends_sep)
+    parts = _win_parts(comps, reasons)
     base = _cwd_base(ctx)
     if base is not None and ctx.cwd is not None and ctx.cwd.flavor == "windows":
         _add(reasons, "rooted-current-drive")
@@ -1235,7 +1261,7 @@ def _shape(text: str, plen: int, ctx: _Ctx, reasons: list[str]) -> _Shape:
         # Collapse first: /tmp/../c/x is /c/x, and /c/../x is /x (not a path on drive c)
         comps_nz = _collapse(t_slash.split("/"), rooted=True)
         if c0 == "\\":
-            return _shape_rooted_windows(comps_nz, ctx, reasons, t_slash.endswith("/"))
+            return _shape_rooted_windows(comps_nz, ctx, reasons)
         msys = _match_msys(comps_nz)
         if msys is not None:
             drive, rest, tag = msys
@@ -1243,7 +1269,7 @@ def _shape(text: str, plen: int, ctx: _Ctx, reasons: list[str]) -> _Shape:
             return _Shape(
                 "windows",
                 f"{drive}:/",
-                _win_parts(rest, reasons, ends_sep=t_slash.endswith("/")),
+                _win_parts(rest, reasons),
                 absolute=True,
                 uncertain=uncertain,
             )
@@ -1253,7 +1279,7 @@ def _shape(text: str, plen: int, ctx: _Ctx, reasons: list[str]) -> _Shape:
             _add(reasons, "git-bash-root")
             return _Shape("posix", "/", comps_nz, absolute=True, uncertain=True)
         if ctx.windows_ctx:
-            shape = _shape_rooted_windows(comps_nz, ctx, reasons, t_slash.endswith("/"))
+            shape = _shape_rooted_windows(comps_nz, ctx, reasons)
             shape.uncertain = shape.uncertain or uncertain
             return shape
         return _Shape("posix", "/", text.split("/"), absolute=True, uncertain=uncertain)
@@ -1334,7 +1360,7 @@ def _norm(raw: str | None, ctx: _Ctx, *, literal: bool, glob_literal: bool = Fal
         # "./D:x" with no known cwd: without its "./" the next pass would read a drive
         key = "./" + key
     if shape.flavor == "windows":
-        key = key.casefold()
+        key = windows_fold(key)
     if not key.strip():
         # a relative path made of blanks only: say "empty" the way the next pass would
         key = ""
@@ -1496,7 +1522,7 @@ def _expand_glob(
                         name = entry.name
                         if name.startswith(".") and not segment.startswith(".") and not dotfiles:
                             continue
-                        if fnmatch.fnmatchcase(name.casefold() if windows else name, pattern):
+                        if fnmatch.fnmatchcase(windows_fold(name) if windows else name, pattern):
                             nxt.append(os.path.join(base, name))
                             if len(nxt) > limit:
                                 return GlobResult(tuple(nxt[:limit]), "too-many")

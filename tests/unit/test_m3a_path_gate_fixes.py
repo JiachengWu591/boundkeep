@@ -263,6 +263,9 @@ UNSURE_DOTS = [
     "C:\\proj\\sub.\\a.txt",
     "\\\\.\\C:\\proj.\\a.txt",
     "//?/C:/proj./a.txt",
+    # the last component without a prefix: revision 12, see test_m3a_dots_and_folding.py
+    "C:\\proj\\a.txt.",
+    "C:\\proj\\a.txt ",
 ]
 
 
@@ -306,8 +309,6 @@ def test_win32_keeps_the_literal_dot(raw: str, opened: str) -> None:
         ("C:\\proj\\a.txt", "c:/proj/a.txt"),
         ("\\\\?\\C:\\proj\\a.txt", "c:/proj/a.txt"),
         ("\\\\.\\C:\\proj\\a.b.txt", "c:/proj/a.b.txt"),
-        ("C:\\proj\\a.txt.", "c:/proj/a.txt"),  # the last one stays in the same directory
-        ("C:\\proj\\a.txt ", "c:/proj/a.txt"),
         ("C:\\proj\\.hidden\\x", "c:/proj/.hidden/x"),
     ],
 )

@@ -1,9 +1,10 @@
 """Path globs for policy rules: a small, linear-time matcher over canonical path keys.
 
-A ``path_glob`` is matched against ``PathRef.key`` (forward slashes, Windows keys already
-casefolded; see ``normalize/paths.py``). Both sides are casefolded here, so a deny or ask rule
-over-matches rather than under-matches (a case-variant of ``.ssh`` is still ``.ssh`` on Windows and
-macOS, and over-matching is the safe direction for a rule that blocks).
+A ``path_glob`` is matched against ``PathRef.key`` (forward slashes, Windows keys already folded
+the way NTFS compares names; see ``normalize/paths.py``). Both sides are casefolded here, which is
+coarser than that, so a deny or ask rule over-matches rather than under-matches (a case-variant of
+``.ssh`` is still ``.ssh`` on Windows and macOS, and over-matching is the safe direction for a rule
+that blocks).
 
 Syntax (forward slashes only; a backslash is an error, not an escape):
 

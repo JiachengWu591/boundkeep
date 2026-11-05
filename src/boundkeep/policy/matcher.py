@@ -68,6 +68,7 @@ from typing import Final, Literal
 
 from boundkeep.normalize.domains import canonical_host, host_matches
 from boundkeep.normalize.model import Action, PathRef, Platform
+from boundkeep.normalize.paths import windows_fold
 from boundkeep.normalize.psprograms import is_cmdlet_name
 from boundkeep.policy.glob import MAX_KEY_LENGTH, first_match
 from boundkeep.policy.schema import Match, Policy, Rule, mcp_declared_read_only
@@ -149,13 +150,14 @@ def _comparison_key(key: str) -> str | None:
 
     Usable: an absolute canonical key (``c:/dir`` or ``/dir``) with at least one segment below the
     anchor (a drive or filesystem root is never a project), no ``.`` / ``..`` / empty segment and
-    no NUL. Trailing separators are dropped; Windows-flavor keys (a drive) are casefolded.
+    no NUL. Trailing separators are dropped; Windows-flavor keys (a drive) are folded the way NTFS
+    compares names: this is the allow side, a directory that only looks the same is not trusted.
     """
     if not key or "\x00" in key or len(key) > MAX_KEY_LENGTH:
         return None
     if len(key) >= 3 and key[0].isascii() and key[0].isalpha() and key[1:3] == ":/":
-        anchor = key[:3].casefold()
-        body = key[3:].casefold()
+        anchor = windows_fold(key[:3])
+        body = windows_fold(key[3:])
         if "\\" in body:
             return None
     elif key.startswith("/") and not key.startswith("//"):
