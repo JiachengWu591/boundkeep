@@ -1359,7 +1359,8 @@ def _system_dir(directory: str, platform: Platform) -> bool:
         return True
     if platform != "windows":
         return False
-    low = text.casefold()
+    # Not casefold: C:\Windows and the same with U+017F for its "s" are two directories on NTFS
+    low = paths.windows_fold(text)
     if len(low) >= 2 and low[1] == ":":
         low = low[2:]
     return low in _POSIX_SYSTEM_DIRS or low.startswith(_WINDOWS_SYSTEM_PREFIXES)
@@ -1370,7 +1371,9 @@ def _canonical_program(ctx: _Ctx, word: Word) -> tuple[str, list[str]]:
 
     The basename of a path, ``.exe`` stripped, case-folded on Windows: ``/bin/rm``, ``rm.exe`` and
     ``RM`` are all ``rm``. A path-qualified name outside the system directories (``./rm``) is the
-    same program name for deny and ask rules but gray, so that no allow rule trusts it.
+    same program name for deny and ask rules but gray, so that no allow rule trusts it. So is a name
+    only casefold reads that way (``sudo`` with U+017F for its "s"): NTFS and PATH keep it apart
+    from ``sudo`` and PowerShell does not resolve it to a cmdlet (measured), yet it may be meant so.
     """
     text = word.text
     if _dynamic(word) or not text or "\x00" in text:
@@ -1381,9 +1384,11 @@ def _canonical_program(ctx: _Ctx, word: Word) -> tuple[str, list[str]]:
         return text, []
     if name.lower().endswith(".exe") and len(name) > 4:
         name = name[:-4]
-    if ctx.platform == "windows":
-        name = name.casefold()
     grays: list[str] = []
+    if ctx.platform == "windows":
+        if name.casefold() != paths.windows_fold(name):
+            grays.append("program-fold-variant")
+        name = name.casefold()
     if cut >= 0 and not _system_dir(text[:cut] or "/", ctx.platform):
         grays.append("program-path-qualified")
     return name, grays

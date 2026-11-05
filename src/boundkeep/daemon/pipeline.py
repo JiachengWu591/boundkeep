@@ -641,9 +641,14 @@ def incomplete_analysis(actions: Sequence[Action]) -> str | None:
     return None
 
 
-# PowerShell gray reasons for text the request cannot show: a string piped into an interpreter is
-# its code, and an assignment (``$env:NODE_OPTIONS = ...``) is not an action with words of its own.
-_UNSHOWN_REASONS: Final = ("ps-pipe-to-interpreter", "ps-compound:AssignmentStatementAst")
+# Gray reasons for text the request cannot show: a string piped into PowerShell's interpreter is its
+# code, an assignment (``$env:NODE_OPTIONS = ...``) is not an action with words of its own, and the
+# request names a program as folded, so ``sed`` with U+017F for its "s" would read as plain ``sed``.
+_UNSHOWN_REASONS: Final = (
+    "ps-pipe-to-interpreter",
+    "ps-compound:AssignmentStatementAst",
+    "program-fold-variant",
+)
 
 
 def unshown_input(actions: Sequence[Action]) -> str | None:
