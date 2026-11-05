@@ -45,6 +45,10 @@
 > - §5.1：不是最后一段的末尾带点或空格、`\\?\` 与 `\??\` 下任何一段末尾带点或空格、第一个字符不是英文字母的盘符，都标为不确定；`$FOO\..` 不折叠；链接通向设备时 key 写设备；解析结果不在本机固定盘上时不再 `stat`。
 > - §7：`NUL` 的例外缩小到 shell 命令里的裸名字和只带前缀的写法；UNC 的 `pipe`、`mailslot`、`ipc$` 也不送审；更正修订 10 关于 `\\.\C:\.` 的说法。
 > - 归一化：`which` 以两个分隔符开头的参数算读路径，网络规则看得到。
+>
+> **修订 12（2026-11-04，使用者说"修 GR-1、GR-2"）**：定向复审 `docs/reviews/M3a-path-gate-rereview.md` 的 GR-1、GR-2，记录在 `docs/reports/M3a-dots-and-folding.md`。
+> - §5.1：任何一段末尾带点或空格都标为不确定，最后一段也一样，去掉流之后再看。
+> - §5.1：Windows 的 key 按 NTFS 的比较方式折叠，不用完整的 `casefold`：NTFS 分得开的字符留在 key 里，`inside_project` 因此分得开。`path_glob` 匹配时两边仍然 `casefold`，deny / ask 侧不变。
 
 > **当前进度（2026-11-04）**
 >
@@ -58,7 +62,8 @@
 > - **M3a 之后的低危残余**（已提交并推送，未打标签；记录 `docs/reports/M3a-low-residuals.md`）：第二轮定向复审的 S-1、S-2、S-3、S-5、S-6、S-7 已处理，规格修订 9。规则、策略与评测数字没变。全量测试 27203 通过、169 跳过、0 失败（也包括下一条的修复）。真实冒烟重跑通过（26 项，0 失败），但只验证原有链路；这些新路径真实宿主里没有跑，`auto` 模式仍未测。
 > - **带前缀路径的折叠**（已提交并推送，未打标签；记录 `docs/reports/M3a-prefix-folding.md`）：路径规范化先读第一段、Win32 先折叠再读第一段，这个错误在 `m3a-done` 上就有。已修，只在配置了 LLM 后端时才有影响。
 > - **Windows 设备路径不送审**（修订 10，已提交并推送，`2f0f009` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-device-paths.md`）：key 在 `//./` 之下的灰色调用不送审、直接问，确实的 `NUL` 除外；`\\.\C:` 是卷。规则、策略与评测数字没变；真实宿主里没有跑。
-> - **路径与闸门的审查修复**（修订 11，已提交，`7f7ffe9` 代码，文档在其后一个提交，未推送、未打标签；审查 `docs/reviews/M3a-path-gate-review.md`，记录 `docs/reports/M3a-path-gate-fixes.md`）：审查的 G-1、G-2、G-3、G-4、G-5、G-9、G-13 已修；判决数字没变，规则条目没变；其余低危与测试缺口留着；没有复审，真实宿主里没有跑。
+> - **路径与闸门的审查修复**（修订 11，已提交，`7f7ffe9` 代码，文档在其后一个提交，未推送、未打标签；审查 `docs/reviews/M3a-path-gate-review.md`，记录 `docs/reports/M3a-path-gate-fixes.md`）：审查的 G-1、G-3、G-4、G-5、G-9、G-13 已修，G-2 修了一半（见下一条）；判决数字没变，规则条目没变；其余低危与测试缺口留着；真实宿主里没有跑。
+> - **修订 11 的定向复审与修订 12**（已修，**未提交**；复审 `docs/reviews/M3a-path-gate-rereview.md`，不是独立的；记录 `docs/reports/M3a-dots-and-folding.md`）：复审发现 G-2 只修了一半（GR-1），还有一条更早就有的大小写折叠问题（GR-2），两条都不需要后端。已修：任何一段的尾随点和空格都不确定；Windows 的 key 按 NTFS 的比较方式折叠，`path_glob` 仍然 `casefold`。规则条目与评测数字没变。全量分六段跑，不是一个进程：27803 通过、169 跳过、0 失败。GR-3、GR-4、GR-5 没有修；这次修复没有复审，真实宿主里没有跑。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -279,10 +284,12 @@ Claude Code
 - **IPC（`ipc/`）**：POSIX 与 Windows 两个传输实现同一接口。Windows 服务端用 ctypes 调 `CreateNamedPipeW`：管道名含 `init` 生成的随机令牌（令牌存在用户配置目录；它只防**其他用户**抢占名称，同一用户能读到）；DACL 只授予当前用户 SID；`PIPE_REJECT_REMOTE_CLIENTS`；首实例带 `FILE_FLAG_FIRST_PIPE_INSTANCE`（创建失败即报错，`doctor` 提示管道名被占用）；预建多个实例，建完之后收紧 DACL：去掉"创建新实例"权限，并加一条 OWNER RIGHTS ACE 只授予 `READ_CONTROL`（提高同一用户的门槛）；工作线程只做 Disconnect/Connect 复用实例。客户端永不输出守护进程回答的 `allow`，除非 hook 命令显式带 `--emit-allow`（见 §7）。不用 asyncio 的管道服务端（无法指定安全属性）；asyncio 在 Windows 上也没有 Unix 套接字服务、不支持 `loop.add_signal_handler`。客户端：`FileNotFoundError` 表示常驻进程没起，立即降级 `ask`；其他 `OSError` 视为"管道忙"，在总预算内退避重试；总预算从进程启动起算、覆盖读 stdin 与 IPC 全程，由"工作线程 + `join` 超时 + `os._exit`"实现，且小于 settings 里的 `timeout`。
 - **路径规范化**分两层，以便跨平台测试（设计原则 10）：
   - **词法层**（纯函数，不碰文件系统；显式使用 `ntpath` / `PureWindowsPath` / `posixpath`，不用当前平台默认的 `os.path`）：展开 `~`、`%VAR%`、`$env:VAR`、`$HOME` 等已知变量（无法解析的变量 → 灰色）；统一分隔符；去掉 `\\?\` 与 `\\.\` 前缀；去掉 NTFS 备用数据流后缀（`:stream`、`::$DATA`）与尾随的点和空格；折叠 `..`；识别驱动器相对路径、UNC 与设备名（`NUL`、`CON`、`COMn` 等，设备名不算项目内）；MSYS 路径（`/c/Users/...`、`/cygdrive/c/...`）与 WSL 的 `/mnt/<盘>/...` 翻译为 Windows 路径；Git Bash 的 `/`、`/usr`、`/tmp` 等无法可靠映射，一律按项目外处理。
-    - **尾随的点和空格**（修订 11）：只有最后一段的才算确定。中间一段 Win32 只去掉一个点，Node 一个都不去（实测：`C:\proj.\x` 读到的是 `proj.` 目录下的文件），所以这样的路径标为不确定，`inside_project` 不说 True。`\\?\` 与 `\??\` 下点和空格是字面字符，任何一段带都标为不确定（`extended-path-dots`）。
+    - **尾随的点和空格**（修订 11、12）：任何一段带都标为不确定，最后一段也一样，去掉流之后再看（`proj.:s` 也算），`inside_project` 不说 True。读法因程序而异（实测）：走 Win32 转换的程序（PowerShell 5.1、cmd、Python）去掉最后一段的全部和中间一段的一个点；Git Bash 和 Node 读文件时一个都不去（`cd ../proj.` 进的是 `proj.`，不是 `proj`）。key 仍然去掉它们，所以 deny 规则照常匹配。`\\?\` 与 `\??\` 下点和空格是字面字符，另加 `extended-path-dots`。
     - **其他**（修订 11）：第一个字符不是英文字母的盘符（`1:\x`）标为不确定（`non-letter-drive`），因为 Win32 接受任何字符作盘符（公开资料的说法，没有实测 `subst`）。以未知内容开头的路径（`$FOO\..`）保留开头这一段，折叠不到它，否则第二遍规范化会读成当前目录。
   - **文件系统层**（仅本机）：`realpath`，展开符号链接、联接点与存在路径上的 8.3 短名。解析结果是设备时 key 写设备，§7 的闸门和规则看得到；解析结果不在本机固定盘上时不再 `stat` 它（修订 11）。`realpath` 自己沿着链接打开目标这一点没有改，也没有实测。
-  - 比较一律不区分大小写（casefold）。（M1 澄清：POSIX 风格的路径在 allow 侧区分大小写，见 §7。）**方向规则**：deny / ask 侧"可能匹配即匹配"；allow 侧（`inside_project`）"确定在内才算在内"；无法确定（不存在且含短名的路径、含未解析变量、驱动器相对路径）不算在内，进灰色。
+  - 比较不区分大小写。（M1 澄清：POSIX 风格的路径在 allow 侧区分大小写，见 §7。）
+    - **Windows 的 key 按 NTFS 的比较方式折叠**（修订 12）：完整的 `casefold` 会把 NTFS 分得开的字符合并：项目 `work` 和旁边把 `k` 换成开尔文符号（`U+212A`）的目录，`в` 和 `U+1C80`，`Å` 和 `U+212B`，都是不同的目录（实测），key 却相同。这些字符（基本平面里 324 个，按 `RtlUpcaseUnicodeChar` 量出，以及基本平面之外的全部）留在 key 里原样。所以 `inside_project`、会话目录与 `project_trusted` 分得开；`path_glob` 匹配时两边仍然 `casefold`，所以 `.ſſh` 仍然命中 `.ssh` 的 deny。只量了 NTFS。
+  - **方向规则**：deny / ask 侧"可能匹配即匹配"；allow 侧（`inside_project`）"确定在内才算在内"；无法确定（不存在且含短名的路径、含未解析变量、驱动器相对路径）不算在内，进灰色。
   - 输入既可能是反斜杠形式（hook 的 `file_path`），也可能是 POSIX 形式（Bash 命令里的路径）；规则里的 `path_glob` 一律用正斜杠书写，匹配前双方转成同一规范形式。
   - `protect-guard-config` 的路径集要包含实际生效的配置目录（设置了 `CLAUDE_CONFIG_DIR` 时）。
 - **命令方言**：`Action.shell` 取 `bash` 或 `powershell`，由 `tool_name`（`Bash` / `PowerShell`）决定。

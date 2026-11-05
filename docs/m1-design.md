@@ -47,9 +47,9 @@ def key_of_home(home: str) -> str                   # 给策略加载用：把 h
 
 **key 的格式**（策略的 `path_glob` 与 `inside_project` 都按 key 比较）：
 - 一律正斜杠，折叠 `.`、`..` 与重复分隔符，无尾随斜杠（根除外）。
-- Windows 风格路径（盘符、反斜杠、UNC、`\\?\`、`\\.\` 前缀，或 `dialect` 为 powershell / tool 且明显是 Windows 形式）：盘符小写 + `:/`，整条 `casefold`，例如 `c:/users/bob/.ssh/id_rsa`；UNC 为 `//server/share/...`；设备名为 `//./nul` 一类。
+- Windows 风格路径（盘符、反斜杠、UNC、`\\?\`、`\\.\` 前缀，或 `dialect` 为 powershell / tool 且明显是 Windows 形式）：盘符小写 + `:/`，整条按 NTFS 的比较方式折叠（修订 12，`paths.windows_fold`；M1 时是完整的 `casefold`），例如 `c:/users/bob/.ssh/id_rsa`；UNC 为 `//server/share/...`；设备名为 `//./nul` 一类。
 - POSIX 风格路径：保持大小写，例如 `/home/dev/proj/a.py`。
-- `inside_project` 的前缀判断必须按路径段边界（`/proj` 不是 `/proj2` 的前缀），Windows 风格不区分大小写（key 已 casefold），POSIX 风格区分。
+- `inside_project` 的前缀判断必须按路径段边界（`/proj` 不是 `/proj2` 的前缀），Windows 风格不区分大小写（key 已折叠），POSIX 风格区分。
 
 **必须处理**（规格 §5.1 与 M1 提示词）：展开 `~`、`$HOME`、`${HOME}`、`%USERPROFILE%`、`$env:USERPROFILE`、`%APPDATA%`、`%LOCALAPPDATA%`、`%TEMP%`、`$PWD` 等（取自 `env` 与 `home`/`cwd` 参数；未知变量 → `uncertain`）；统一分隔符；去掉 `\\?\` 与 `\\.\` 前缀（`\\?\UNC\srv\share` → UNC）；NTFS 备用数据流后缀（`:stream`、`::$DATA`）；尾随的点与空格（每一段）；折叠 `..`（不能折叠出根之外：`C:\..\..\x` → `c:/x`）；驱动器相对路径（`C:foo`，`uncertain`）；UNC；设备名（`NUL`、`CON`、`PRN`、`AUX`、`COM1`–`COM9`、`LPT1`–`LPT9`，含带扩展名的 `NUL.txt`，`is_device`，不算项目内）；MSYS（`/c/Users/x`）、`/cygdrive/c/...` 与 WSL 的 `/mnt/c/...` 翻译为 Windows 路径；Git Bash 的 `/`、`/usr`、`/tmp`、`/home` 等无法可靠映射 → `uncertain`（按项目外处理）；8.3 短名（`PROGRA~1`）在词法层无法展开 → 标 `short-name-unresolved` 并 `uncertain`（文件系统层才能展开）；相对路径按 `cwd` 解析（`cwd` 为 None 则 `uncertain`）；全角与组合字符、Unicode 同形字不做"修复"（保持原样，不误判为同一路径）；空串与纯空白 → `uncertain`。
 **方向规则**：`inside_project` 只有在**确定**在内时才返回 True；无法确定（`uncertain`、项目根为 None、不同盘符/不同 flavor）返回 None；确定在外返回 False。
