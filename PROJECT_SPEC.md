@@ -49,8 +49,13 @@
 > **修订 12（2026-11-04，使用者说"修 GR-1、GR-2"）**：定向复审 `docs/reviews/M3a-path-gate-rereview.md` 的 GR-1、GR-2，记录在 `docs/reports/M3a-dots-and-folding.md`。
 > - §5.1：任何一段末尾带点或空格都标为不确定，最后一段也一样，去掉流之后再看。
 > - §5.1：Windows 的 key 按 NTFS 的比较方式折叠，不用完整的 `casefold`：NTFS 分得开的字符留在 key 里，`inside_project` 因此分得开。`path_glob` 匹配时两边仍然 `casefold`，deny / ask 侧不变。
+>
+> **修订 13（2026-11-05，使用者说"修这三条"）**：复审 `docs/reviews/M3a-dots-and-folding-review.md` 的 RV-1、RV-2、RV-3，记录在 `docs/reports/M3a-readings-fixes.md`。
+> - §5.1：**"读法不确定"只关 allow 侧。** 只因尾随的点、空格或流名而不确定的路径，照样查磁盘：链接解析、通配符展开、目录扫描、`cd` 之后的相对路径都不跳过。结果仍然不确定，deny / ask 规则看得到，allow 规则用不上。两种读法都解析：去掉的（走 Win32 转换的程序），保留的（Git Bash、Node 读文件）。
+> - §5.1：流名不是最后一段，或在 bash 方言里（任何一段），都标为不确定：Git Bash 把 `:` 当名字的一部分（磁盘上是 `U+F03A`），`work:s` 是另一个目录。文件工具和 PowerShell 的最后一段 `a.txt:s` 仍是同一个文件的流。git 的 pathspec 魔法（`:/src`、`:!x`、`:(top)x`）不算流名：这些词 git 自己解析，不当路径打开（实测）。
+> - §5.1：UNC 的主机名判断"是不是本机"时用 `windows_fold`，不用 `casefold`；非 ASCII 的主机名不经 IDNA 算成本机，目的地按未知算：Windows 不把 `localhoſt` 读成 `localhost`（实测）。
 
-> **当前进度（2026-11-04）**
+> **当前进度（2026-11-05）**
 >
 > - **已完成并有标签**：M0a、M0、M1、M1b、M1c、M1c-2、M1c-3、M1c-4、M2（`m2-baseline`）、M3a（`m3a-done`，2026-11-01；LLM 层没有接过真实服务）。M1+M1b、M1c / M1c-2 的独立 X1 审查与复审都已做完，高危、中危清零，修复已提交（M1c / M1c-2 的规则冻结在 `6821142`，标签 `m1c2-x1-rereview2-fixes-done`；审查在 `docs/reviews/`，修复报告 `docs/reports/M1c2-review-fixes*.md`）。M1c-4 的真实会话手工验收未做（`docs/reports/M1c4.md`）。
 > - **M2**：评测集 633 条（恶意 241、正常 392，全部经使用者确认）、评测框架 `src/boundkeep/evalkit` 与 `eval/run_eval.py`、`rules-only` 基线（报告 `docs/reports/M2.md`，口径 `docs/eval-methodology.md`）。**已知缺口：obfuscation 只有 11 条（目标 30 条）**。
@@ -64,6 +69,7 @@
 > - **Windows 设备路径不送审**（修订 10，已提交并推送，`2f0f009` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-device-paths.md`）：key 在 `//./` 之下的灰色调用不送审、直接问，确实的 `NUL` 除外；`\\.\C:` 是卷。规则、策略与评测数字没变；真实宿主里没有跑。
 > - **路径与闸门的审查修复**（修订 11，已提交并推送，`7f7ffe9` 代码，文档在其后一个提交，未打标签；审查 `docs/reviews/M3a-path-gate-review.md`，记录 `docs/reports/M3a-path-gate-fixes.md`）：审查的 G-1、G-3、G-4、G-5、G-9、G-13 已修，G-2 修了一半（见下一条）；判决数字没变，规则条目没变；其余低危与测试缺口留着；真实宿主里没有跑。
 > - **修订 11 的定向复审与修订 12**（已提交并推送，`bede21d` 代码，`ae99b20` 文档，未打标签；复审 `docs/reviews/M3a-path-gate-rereview.md`，不是独立的；记录 `docs/reports/M3a-dots-and-folding.md`）：复审发现 G-2 只修了一半（GR-1），还有一条更早就有的大小写折叠问题（GR-2），两条都不需要后端。已修：任何一段的尾随点和空格都不确定；Windows 的 key 按 NTFS 的比较方式折叠，`path_glob` 仍然 `casefold`。规则条目与评测数字没变。全量分六段跑，不是一个进程：27803 通过、169 跳过、0 失败。GR-3、GR-4、GR-5 没有修；这次修复没有复审，真实宿主里没有跑。
+> - **修订 12 的定向复审与修订 13**（已提交，未推送，`372bfa1` 代码，文档在其后一个提交，未打标签；复审 `docs/reviews/M3a-dots-and-folding-review.md`，不是独立的；记录 `docs/reports/M3a-readings-fixes.md`）：修订 12 的两个目标达到了，但带尾随点的路径不再查磁盘，经过链接时 deny 变成了问或送审（RV-1，中间一段始于修订 11）；另有两条更早就有的同类问题（RV-2 Git Bash 的冒号，RV-3 主机名的 `casefold`）。三条都已修，规则条目与策略文件没变。全量分六段跑，不是一个进程：28098 通过、169 跳过、0 失败。这之前的第一次全量有 10 个失败：9 个是修 RV-2 时把 git 的 pathspec 魔法也算成不确定（已修，见 §5.1），1 个是语料钉的旧值（`m2r-h1-010` 由灰色改成问）。RV-4、RV-6、RV-7、GR-3、GR-4、GR-5 没有修；这次修复没有复审，真实宿主里没有跑。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -285,6 +291,9 @@ Claude Code
 - **路径规范化**分两层，以便跨平台测试（设计原则 10）：
   - **词法层**（纯函数，不碰文件系统；显式使用 `ntpath` / `PureWindowsPath` / `posixpath`，不用当前平台默认的 `os.path`）：展开 `~`、`%VAR%`、`$env:VAR`、`$HOME` 等已知变量（无法解析的变量 → 灰色）；统一分隔符；去掉 `\\?\` 与 `\\.\` 前缀；去掉 NTFS 备用数据流后缀（`:stream`、`::$DATA`）与尾随的点和空格；折叠 `..`；识别驱动器相对路径、UNC 与设备名（`NUL`、`CON`、`COMn` 等，设备名不算项目内）；MSYS 路径（`/c/Users/...`、`/cygdrive/c/...`）与 WSL 的 `/mnt/<盘>/...` 翻译为 Windows 路径；Git Bash 的 `/`、`/usr`、`/tmp` 等无法可靠映射，一律按项目外处理。
     - **尾随的点和空格**（修订 11、12）：任何一段带都标为不确定，最后一段也一样，去掉流之后再看（`proj.:s` 也算），`inside_project` 不说 True。读法因程序而异（实测）：走 Win32 转换的程序（PowerShell 5.1、cmd、Python）去掉最后一段的全部和中间一段的一个点；Git Bash 和 Node 读文件时一个都不去（`cd ../proj.` 进的是 `proj.`，不是 `proj`）。key 仍然去掉它们，所以 deny 规则照常匹配。`\\?\` 与 `\??\` 下点和空格是字面字符，另加 `extended-path-dots`。
+    - **读法不确定只关 allow 侧**（修订 13）：只因尾随的点、空格或流名而不确定的路径（`reading_only`），照样查磁盘：链接解析、通配符展开、目录扫描、`cd` 之后的相对路径都不跳过，所以项目里的联接点 `guard` 通向 `~/.boundkeep` 时，`Set-Content guard\policy.yaml. x` 仍然是 deny（PowerShell 5.1 真的会写到那里，实测）。两种读法都解析：key 的（去掉，走 Win32 转换的程序）和保留的（`\\?\` 加原文，Git Bash 和 Node 读文件）。解析结果仍然不确定，allow 规则用不上。`cd` 进这样的目录之后，工作目录保留那个点，下面的相对路径也不确定。
+    - **流名**（修订 13）：流名不是最后一段，或在 bash 方言里（任何一段），都标为不确定（`stream-name-ambiguous`）。Git Bash 把 `:` 当名字的一部分（磁盘上是 `U+F03A`，实测）：`work:s` 是项目 `work` 旁边的另一个目录，`cat ../work:s/x` 读到项目外。其他程序里，中间带冒号的路径只有 `dir::$INDEX_ALLOCATION\x` 和 `dir:$I30:$INDEX_ALLOCATION\x` 打得开，读的就是 `dir\x`（实测），这种写法也标不确定，正常写路径用不到它。文件工具和 PowerShell 的最后一段 `a.txt:s` 确实是同一个文件的流，仍然确定。`:\x`、`1a:\x`、`C1:\x` 也因此不确定。**git 的 pathspec 魔法不算流名**：`:/src`、`:!x`、`:(top)x` 这些词 git 自己解析，不当路径打开，Git Bash 原样传给它，`mkdir ':x'` 写出来的 `U+F03A` 名字 git 也不认（实测，两种 shell 结果相同）。开头的魔法到第一个分隔符为止读作 `.`（`:/src` 是 `./src`，`:!x` 是 `.`），这是修订 13 之前的读法，这样 `git diff -- ':!x'` 仍可放行。只限 git 按 pathspec 读的操作数；`git diff --no-index`、`git apply`、`git hash-object`、`git update-index`、`git mv`、`git blame` 的操作数和 `-C`、`--git-dir`、`--work-tree`、`--pathspec-from-file` 的值是真路径，不例外。
+    - **UNC 主机名**（修订 13）：判断主机是不是本机（`localhost`、回环地址、`COMPUTERNAME`、WSL 的提供者）时用 `windows_fold`，不用 `casefold`。`\\localhoſt\c$\x` 不是 `C:\x`：Windows 解析不到这个名字，它走的是网络名字解析（实测），按远程的管理共享算，不确定。非 ASCII 的主机名不经 IDNA 算成本机或允许的域名，目的地按未知算。
     - **其他**（修订 11）：第一个字符不是英文字母的盘符（`1:\x`）标为不确定（`non-letter-drive`），因为 Win32 接受任何字符作盘符（公开资料的说法，没有实测 `subst`）。以未知内容开头的路径（`$FOO\..`）保留开头这一段，折叠不到它，否则第二遍规范化会读成当前目录。
   - **文件系统层**（仅本机）：`realpath`，展开符号链接、联接点与存在路径上的 8.3 短名。解析结果是设备时 key 写设备，§7 的闸门和规则看得到；解析结果不在本机固定盘上时不再 `stat` 它（修订 11）。`realpath` 自己沿着链接打开目标这一点没有改，也没有实测。
   - 比较不区分大小写。（M1 澄清：POSIX 风格的路径在 allow 侧区分大小写，见 §7。）
