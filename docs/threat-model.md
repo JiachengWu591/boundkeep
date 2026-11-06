@@ -45,7 +45,7 @@
 ## 4. LLM 审计层做不到什么
 
 - **不能识别"看起来和任务相符"的恶意动作**，如果规则也认不出来。规则层仍然是第一道、也是确定性的一道；模型只处理灰色地带，而它的判断质量 M3a 没有测过（M3b 的事）。
-- **间接运行 boundkeep 的状态命令**（`mode`、`uninstall`、`init`、`serve`、`trust`、`taint`）：`deny-boundkeep-state-commands` 认得出 `boundkeep`、`boundkeep.exe`、`python -m boundkeep` 及其模块（`boundkeep.cli`、`boundkeep.__main__`，X1 复审 R-4）、`uv run` / `uvx` / `pipx run` 这些启动方式；更间接的写法认不出，是灰色：`python -c "from boundkeep.cli import main; …"`、`python -m runpy boundkeep …`、按路径运行 `cli.py`、`cmd /c`、`Start-Process`、`bash -c`。没有 LLM 时它们问用户；配置了 LLM 时由模型判断（命令文字在请求里）。`trust add` 与 `taint clear` 另有运行时的两道检查，`mode` 与 `uninstall` 没有。
+- **间接运行 boundkeep 的状态命令**（`mode`、`uninstall`、`init`、`serve`、`trust`、`taint`）：`deny-boundkeep-state-commands` 认得出 `boundkeep`、`boundkeep.exe`、`python -m boundkeep` 及其模块（`boundkeep.cli`、`boundkeep.__main__`，X1 复审 R-4）、`uv run` / `uvx` / `pipx run` 这些启动方式，以及程序名或启动器名结尾带点或空格的路径（`& '…\boundkeep.exe.'`，PowerShell 5.1 照样运行它，实测；规格修订 16）；更间接的写法认不出，是灰色：`python -c "from boundkeep.cli import main; …"`、`python -m runpy boundkeep …`、按路径运行 `cli.py`、`cmd /c`、`Start-Process`、`bash -c`。没有 LLM 时它们问用户；配置了 LLM 时由模型判断（命令文字在请求里）。`trust add` 与 `taint clear` 另有运行时的两道检查，`mode` 与 `uninstall` 没有。
 - **任务意图本身可能被污染**：用户自己粘贴的文字不进任务意图（只留一个标记和长度），但用户亲手打的字如果是照着网页抄的，模型无从分辨。
 - **缓存**：同一个问题（同样的动作、意图、污染位、后端、模型、提示词版本）10 分钟内（`cache_ttl_s`）直接用上次的模型结论，代码仍然重新裁决一次。缓存只在内存里。
 - **同一用户的其他进程**能冒充守护进程、读写 `session.sqlite`、改环境变量里的密钥；这些都在规格 §3 的范围外。

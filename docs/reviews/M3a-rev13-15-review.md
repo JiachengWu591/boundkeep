@@ -2,6 +2,8 @@
 
 日期：2026-11-06。代码：`1a6078b`（与 `origin/main` 相同）。审查对象：`git diff d1729dd 8ddc6e2 -- src`（修订 13 的 `372bfa1`、修订 14 的 `fef9fe9`、修订 15 的 `8ddc6e2`），记录 `docs/reports/M3a-readings-fixes.md`、`M3a-program-fold.md`、`M3a-system-dirs.md`。
 
+**之后（2026-11-06）**：使用者说"修 RS-1、RS-2"，两条都已修，记录 `docs/reports/M3a-pathspec-and-dotted-names.md`（规格修订 16）。修的时候又查到两处同类的：`git archive` 在 tree-ish 之后的操作数被当成索引路径（`git archive HEAD '::.git/config'` 只是灰色，git 却把它打进了归档）；`python.exe.` 这样的启动器名字没被认出（`& '…\python.exe.' -m boundkeep mode audit-only` 只是灰色）。也一起修了。下面的判决是修之前的。
+
 **这不是独立复审。** 三次修复都是这个会话写的，复审也是。我尽量靠实测下结论，但可能和写修复时有同样的盲点。要独立的眼光，得另开一个不带这段对话的会话。
 
 这次复审只新增了这份报告，没有改代码、规格和策略。没有读 `.env`，没有 LLM 密钥，没有访问真实 LLM 服务，没有打开留出批次和攻击样本。判决都用假后端（总是放行）。实测用的 git 仓库、"密钥"和标记文件都是假的，放在 scratchpad 里，用完已删。全量没有跑。
