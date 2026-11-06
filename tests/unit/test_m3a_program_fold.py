@@ -137,16 +137,25 @@ def test_every_character_casefold_turns_into_ascii_stays_itself_in_the_windows_f
         "c:/windows/syswow64",
         "C:/Program Files/Git/usr/bin",
         "C:/Program Files (x86)/Git/usr/bin",
-        "C:/msys64/usr/bin",
-        "C:/cygwin64/bin",
-        # the prefix is what counts, as before: a name below it may hold any character
-        "C:/Program Files/Git/\u7528\u6237",
-        f"C:/Windows/System32/Wei{SHARP_S}",
-        f"C:/Windows/System32/{LONG_S}",
     ],
 )
 def test_the_system_directories_are_still_system_directories(directory: str) -> None:
     assert event._system_dir(directory, "windows")
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [
+        # revision 15: exact directories only, so a name below one is not the system's either
+        "C:/Program Files/Git/\u7528\u6237",
+        f"C:/Windows/System32/Wei{SHARP_S}",
+        f"C:/Windows/System32/{LONG_S}",
+        "C:/msys64/usr/bin",
+        "C:/cygwin64/bin",
+    ],
+)
+def test_a_name_below_a_system_directory_is_no_longer_one(directory: str) -> None:
+    assert not event._system_dir(directory, "windows")
 
 
 def _twins() -> list[str]:
@@ -234,10 +243,11 @@ def test_the_model_is_shown_the_twin_directory_as_written() -> None:
     assert QUALIFIED in verdict.sent[0]
 
 
-def test_a_directory_below_a_system_prefix_stays_where_it_is() -> None:
-    """Below ``C:\\Program Files\\Git`` every name is the installation's, however it is written."""
+def test_a_twin_below_the_git_directory_is_not_a_system_directory() -> None:
+    """Revision 14 kept it: every name below ``C:\\Program Files\\Git`` counted. 15 does not."""
     command = f'"C:\\Program Files\\Git\\u{LONG_S}r\\bin\\cat.exe" a.txt'
-    assert QUALIFIED not in actions(command)[0].gray_reasons
+    assert QUALIFIED in actions(command)[0].gray_reasons
+    assert not allowed_by_a_rule(decide("Bash", command))
 
 
 # --- the name -----------------------------------------------------------------------------------

@@ -34,6 +34,7 @@ What this layer adds on top of the pieces:
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import shlex
@@ -183,23 +184,26 @@ _BUILD_FILES: dict[str, frozenset[str]] = {
 # pytest also runs the test modules it discovers: one written earlier on the line counts
 _PYTEST_TEST_FILE = re.compile(r"^(test_.*|.*_test)\.py$", re.IGNORECASE)
 
-# Directories whose programs are the system's own (an allow rule may rely on the name there).
+# Directories whose programs are the system's own (an allow rule may rely on the name there). On a
+# Windows host these count only in the bash dialect and without a drive letter: Git Bash keeps them
+# under Git's own directory, where PATH finds ``cat`` too (measured).
 _POSIX_SYSTEM_DIRS = frozenset(
     {
         "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin",
         "/opt/homebrew/bin", "/opt/homebrew/sbin",
     }
 )  # fmt: skip
-_WINDOWS_SYSTEM_PREFIXES = (
-    "/program files/git/",
-    "/program files (x86)/git/",
-    "/msys64/",
-    "/msys32/",
-    "/cygwin64/",
-    "/cygwin/",
-    "/windows/system32",
-    "/windows/syswow64",
+# The Windows ones (spec revision 15): exactly these directories, with a drive letter, under a
+# variable of the daemon's own environment, or its Windows default when the variable is missing. No
+# subdirectory counts (users may write ``System32\Tasks``), nor does another drive, ``\msys64`` or
+# ``\cygwin`` (a folder made in ``C:\`` is writable by every authenticated user): measured ACLs.
+_GIT_PROGRAM_DIRS = ("Git/cmd", "Git/bin", "Git/usr/bin", "Git/mingw64/bin", "Git/mingw32/bin")
+_WINDOWS_SYSTEM_ROOTS: Final = (
+    ("SystemRoot", "C:\\Windows", ("System32", "SysWOW64")),
+    ("ProgramFiles", "C:\\Program Files", _GIT_PROGRAM_DIRS),
+    ("ProgramFiles(x86)", "C:\\Program Files (x86)", _GIT_PROGRAM_DIRS),
 )
+_DRIVE_ABSOLUTE = re.compile(r'[A-Za-z]:(/[^/:*?"<>|]+)+')
 
 
 class _BudgetExceeded(Exception):
@@ -1349,24 +1353,55 @@ def _domains_of(urls: Sequence[str]) -> tuple[tuple[str, ...], bool]:
     return tuple(dict.fromkeys(names)), unknown
 
 
-def _system_dir(directory: str, platform: Platform) -> bool:
+def _env_value(env: Mapping[str, str] | None, name: str) -> str | None:
+    """A variable of the environment, its name matched as Windows does for ASCII names."""
+    if not env:
+        return None
+    value = env.get(name)
+    if value is None:
+        upper = name.upper()
+        value = next((v for k, v in env.items() if k.isascii() and k.upper() == upper), None)
+    return value if isinstance(value, str) else None
+
+
+@functools.lru_cache(maxsize=16)
+def _windows_system_dirs(roots: tuple[str | None, ...]) -> frozenset[str]:
+    """The Windows system directories, folded, for these root variables (None: missing)."""
+    out: set[str] = set()
+    for (_name, default, subdirs), value in zip(_WINDOWS_SYSTEM_ROOTS, roots, strict=True):
+        base = (default if value is None else value).replace("\\", "/").rstrip("/")
+        segments = base.split("/")[1:]
+        # Not an absolute path on a drive, or one Win32 would read otherwise: no directory at all
+        if not _DRIVE_ABSOLUTE.fullmatch(base) or any(s != s.rstrip(". ") for s in segments):
+            continue
+        out.update(paths.windows_fold(f"{base}/{sub}") for sub in subdirs)
+    return frozenset(out)
+
+
+def _system_dir(
+    directory: str,
+    platform: Platform,
+    *,
+    shell: str = "bash",
+    env: Mapping[str, str] | None = None,
+) -> bool:
     text = directory.replace("\\", "/")
     segments = text.split("/")
     if any(s in (".", "..") for s in segments[1:]):
         return False
     text = text.rstrip("/") or "/"
-    if text in _POSIX_SYSTEM_DIRS:
-        return True
     if platform != "windows":
-        return False
+        return text in _POSIX_SYSTEM_DIRS
     # Not casefold: C:\Windows and the same with U+017F for its "s" are two directories on NTFS
     low = paths.windows_fold(text)
-    if len(low) >= 2 and low[1] == ":":
-        low = low[2:]
-    return low in _POSIX_SYSTEM_DIRS or low.startswith(_WINDOWS_SYSTEM_PREFIXES)
+    # Git Bash's own; in PowerShell ``/usr/bin`` is ``\usr\bin`` on the current drive (measured)
+    if shell == "bash" and low in _POSIX_SYSTEM_DIRS:
+        return True
+    roots = tuple(_env_value(env, name) for name, _default, _subdirs in _WINDOWS_SYSTEM_ROOTS)
+    return low in _windows_system_dirs(roots)
 
 
-def _canonical_program(ctx: _Ctx, word: Word) -> tuple[str, list[str]]:
+def _canonical_program(ctx: _Ctx, word: Word, shell: str = "bash") -> tuple[str, list[str]]:
     """(the canonical program name, gray reasons for how it was spelled).
 
     The basename of a path, ``.exe`` stripped, case-folded on Windows: ``/bin/rm``, ``rm.exe`` and
@@ -1389,7 +1424,7 @@ def _canonical_program(ctx: _Ctx, word: Word) -> tuple[str, list[str]]:
         if name.casefold() != paths.windows_fold(name):
             grays.append("program-fold-variant")
         name = name.casefold()
-    if cut >= 0 and not _system_dir(text[:cut] or "/", ctx.platform):
+    if cut >= 0 and not _system_dir(text[:cut] or "/", ctx.platform, shell=shell, env=ctx.env):
         grays.append("program-path-qualified")
     return name, grays
 
@@ -1550,7 +1585,7 @@ def _command_action(
         )
         gray_reasons = list(info.gray)
     else:
-        program, spelling = _canonical_program(ctx, cmd.argv[0])
+        program, spelling = _canonical_program(ctx, cmd.argv[0], st.shell)
         info = programs.classify(
             program,
             classify_args,
