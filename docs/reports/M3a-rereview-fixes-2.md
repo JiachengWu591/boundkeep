@@ -1,6 +1,6 @@
 # 规格修订 8 的实现：P-R2、P-R3、P-R5、P-R6、P-R7、P-R9 验收报告
 
-> 日期：2026-10-31。依据：M3a 修复的定向复审（`docs/reviews/M3a-rereview.md`）与上一轮的提案（`docs/reports/M3a-rereview-fixes.md` 第 7 节）。使用者先回复"好，按这个方案"（先做 hook 实测，再写规格修订 8），看过草案之后回复"Yes, as drafted"。使用者确认之后已提交到 `main`（2026-10-31，"Yes, commit now"）：`dc9b268` 规格、`4a6c07d` 代码与测试，本报告与其他文档在其后一个提交。**未推送、未打标签。**
+> 日期：2026-10-31。依据：M3a 修复的定向复审（`docs/reviews/M3a-rereview.md`）与上一轮的提案（`docs/reports/M3a-rereview-fixes.md` 第 7 节）。使用者先回复"好，按这个方案"（先做 hook 实测，再写规格修订 8），看过草案之后回复"Yes, as drafted"。使用者确认之后已提交到 `main`（2026-10-31，"Yes, commit now"）：`dc9b268` 规格、`4a6c07d` 代码与测试，本报告与其他文档在其后一个提交。**已推送，包含在标签 `m3a-done` 里**（2026-11-06 更正：这里原来写的是提交时的状态"未推送、未打标签"）。
 
 ## 1. 结论
 
