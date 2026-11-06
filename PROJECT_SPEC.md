@@ -88,13 +88,13 @@
 > - **系统目录与修订 15**（已提交并推送，`8ddc6e2` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-system-dirs.md`）：使用者说"修盘符问题"。Windows 主机上带路径的程序只有目录正好是 `%SystemRoot%\System32`、`SysWOW64` 或 `Program Files` 下 Git 的五个程序目录、并且带盘符，才算系统里的；bash 方言里不带盘符的 `/usr/bin` 等照旧算。别的盘、子目录、msys / cygwin、带盘符的 POSIX 目录、PowerShell 里的 `/usr/bin` 都不再由规则放行。规则条目与策略文件没变，差分没有变松，评测除日期和延迟外相同。全量分六段跑，不是一个进程：28318 通过、169 跳过、1 失败（M1 的计时测试，固定睡 0.3 秒，和这次修改无关，单跑 5 次都过）。代价：PowerShell 里的 `/usr/bin/git.exe status` 等要问。真实宿主里没有跑。
 > - **修订 13 到 15 的复审**（已提交并推送，未打标签；`docs/reviews/M3a-rev13-15-review.md`，不是独立的）：没有高危、中危，没有回退。两条低危早于修订 13，没有修：RS-1 长形式的 git pathspec 魔法丢了路径，RS-2 PowerShell 里带尾随点的程序路径让程序名的 deny 变成问。两条都没有带来新能力（已被放行或已知灰色的写法效果相同）。（修订 16 已修，见下一条。）
 > - **pathspec 魔法与带尾随点的程序名（修订 16）**（已提交并推送，`c69684c` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-pathspec-and-dotted-names.md`）：使用者说"修 RS-1、RS-2"。git 的 pathspec 魔法按 git 的语法拆开，`git diff -- ':(top).env'`、`git stash push -- ':(top).claude/settings.json'` 现在是 deny；有排除时读作 `.`；不认的词和没闭合的括号是灰色 `git-pathspec-magic`。同类的一处：`git archive` 只有第一个操作数按 `REV:PATH` 读。Windows 上程序名和启动器名先去掉结尾的点和空格（灰色 `program-name-trailing-dots`），`& '…\boundkeep.exe.' mode audit-only` 是 deny。规则条目与策略文件没变，原有差分级别相同，评测除日期和延迟外相同；新的扫描里程序名 0 条变松，pathspec 变松的 946 条都是按 git 的真实读法该放的。全量分六段跑，不是一个进程：28403 通过、169 跳过、0 失败。代价：`git diff -- ':!secrets/id_rsa'` 由 deny 变成规则放行（git 作用于其余整个仓库，和 `git diff` 相同）；`icase`、`glob`、`attr` 魔法要问。独立复审与真实冒烟见下一条。
-> - **修订 13 到 16 的独立复审与真实冒烟**（已提交，未推送，冒烟脚本 `2a460da`，文档在其后一个提交）：
+> - **修订 13 到 16 的独立复审与真实冒烟**（已提交并推送，冒烟脚本 `2a460da`，文档在其后一个提交，未打标签）：
 >   - 独立复审 `docs/reviews/M3a-rev13-16-independent-review.md`：高危 0、中危 1、低危 3、信息 4。
 >   - 中危 IR-1 是修订 13 的回退：PowerShell 里会话工作目录在子目录时，`git add :/`、`git add ':!x'` 由问变成规则放行，原因是 PowerShell 侧没有传 `pathspec_magic`。
 >   - 低危 IR-2 到 IR-4：`--` 之前的魔法、`REV:目录`、8.3 短名。信息 IR-5 到 IR-8，其中 IR-5 是修订 16 记录里一个不成立的例子。
 >   - 都没有修，等使用者决定。
 >   - 真实冒烟（`scripts/smoke_claude_m3a.py --only readings`，Claude Code 2.1.318）：修订 10 到 16 各一条代表写法，13 项 0 失败，记录在 `docs/hook-behavior.md`。
-> - **IR-1 已修**（已提交，未推送，`2778e56` 代码，文档在其后一个提交；记录 `docs/reports/M3a-ps-pathspec-magic.md`）：
+> - **IR-1 已修**（已提交并推送，`2778e56` 代码，`5654402` 文档，未打标签；记录 `docs/reports/M3a-ps-pathspec-magic.md`）：
 >   - 修法：PowerShell 一侧把 `pathspec_magic` 传下去，`git add` 的整个仓库检查在 PowerShell 的子目录里又起作用了。规格没有改：§5.1 本来就这样要求。
 >   - 真实目录树扫描 10320 条：PowerShell 的 `git add` 有 243 条由规则放行变成灰色，变松 0；修好之后 Bash 和 PowerShell 的 5160 对判决全部相同。
 >   - 全量分六段跑，不是一个进程：28446 通过、169 跳过、1 失败。失败的是 `test_redact.py` 的计时测试（2.21 秒，预算 2 秒），和这次修改无关，单跑 5 次都过。

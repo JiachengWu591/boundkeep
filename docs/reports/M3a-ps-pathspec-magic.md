@@ -1,6 +1,6 @@
 # PowerShell 里的 git pathspec 魔法（独立复审 IR-1）
 
-日期：2026-11-06。基线：`d44ae65`（`src` 与 `c69684c` 相同）。代码提交：`2778e56`（未推送，未打标签）。依据：独立复审 `docs/reviews/M3a-rev13-16-independent-review.md` 的 IR-1。使用者说"提交并修 IR-1"。
+日期：2026-11-06。基线：`d44ae65`（`src` 与 `c69684c` 相同）。代码提交：`2778e56`（已推送，未打标签）。依据：独立复审 `docs/reviews/M3a-rev13-16-independent-review.md` 的 IR-1。使用者说"提交并修 IR-1"。
 
 没有读 `.env`，没有用任何 LLM 密钥，没有访问真实 LLM 服务，没有打开留出批次和攻击样本。扫描用的目录树放在 scratchpad 里，文件内容是编的；命令只解析、不运行。
 
@@ -81,4 +81,4 @@ PowerShell 里不是 cmdlet 的外部程序走 `psprograms._external`。它先�
 ## 6. 没有做的
 
 - 这次修复没有复审。
-- 没有推送：`2a460da`、`d44ae65`、`2778e56` 和它之后的文档提交都只在本地。
+- 没有打标签。`2a460da`、`d44ae65`、`2778e56`、`5654402` 已推送到 `origin/main`。
