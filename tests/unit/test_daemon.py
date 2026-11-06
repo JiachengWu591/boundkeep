@@ -524,8 +524,15 @@ def test_a_worker_that_finishes_late_does_not_change_the_answer_or_the_count(
     first = harness.send("pre", shell("SLOW"), request_id="late")
     assert (first.decision, first.reason) == ("ask", SLOW_REASON)
     slow.release.set()
-    time.sleep(0.3)
-    assert "stuck=0" in harness.send("ping", {}, request_id="p").reason
+    # The released worker still runs the real review, which loads the policy (about 0.25 s, more on
+    # a loaded machine): wait for it to finish instead of sleeping a fixed time.
+    deadline = time.monotonic() + 5
+    while True:
+        ping = harness.send("ping", {}, request_id="p")
+        if "stuck=0" in ping.reason or time.monotonic() > deadline:
+            break
+        time.sleep(0.05)
+    assert "stuck=0" in ping.reason
     assert [r["decided_by"] for r in harness.records()] == ["timeout"]  # logged once
 
 
