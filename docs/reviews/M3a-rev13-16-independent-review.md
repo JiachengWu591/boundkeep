@@ -2,6 +2,8 @@
 
 日期：2026-11-06。代码：`7faa165`（`main`，与 `origin/main` 相同，工作区干净）。审查对象：`git diff d1729dd c69684c -- src`，即修订 13 `372bfa1`、修订 14 `fef9fe9`、修订 15 `8ddc6e2`、修订 16 `c69684c`；记录 `docs/reports/M3a-readings-fixes.md`、`M3a-program-fold.md`、`M3a-system-dirs.md`、`M3a-pathspec-and-dotted-names.md`；规格开头修订 13 到 16 的段落与 §5.1。重点是没有复审过的修订 16：`programs._pathspec`、`_git_operands`、`peel_runner`，`event._canonical_program`。
 
+**之后（2026-11-06）**：使用者说"提交并修 IR-1"。IR-1 已修，记录在 `docs/reports/M3a-ps-pathspec-magic.md`；IR-2 到 IR-8 没有处理。下面的判决都是修之前的。
+
 **这是独立复审。** 这个会话没有参与修订 13 到 16 的编写，也是在自己的结论定下之后才读的 `docs/reviews/M3a-rev13-15-review.md`（第 6 节对照）。作者的说法都当作待核实。
 
 只新增了这份报告，没有改代码、规格、策略和测试，没有提交。没有读 `.env`，没有 LLM 密钥，没有访问真实 LLM 服务，没有读 `eval/authoring/h1-*`、`h2-*` 和留出批次。没有碰 `scripts/`，没有切分支，没有改系统设置。全量测试没有跑，只跑了相关的五个测试文件（第 4 节）。
@@ -65,16 +67,37 @@ with tempfile.TemporaryDirectory() as d:
     (project / "src").mkdir()
     (project / "src" / "a.py").write_text("x\n", encoding="utf-8")
     (project / ".env").write_text("x\n", encoding="utf-8")
-    home = str(Path(d) / "home"); os.makedirs(home)
+    home = str(Path(d) / "home")
+    os.makedirs(home)
     env = {k: v for k, v in os.environ.items() if k.upper() in ("SYSTEMROOT", "PATH", "TEMP")}
     env["USERPROFILE"] = env["HOME"] = home
-    runtime, _ = pipeline.runtime_policy_checked(parse_policy_text(default_policy_text(), home=home), env, home)
+    runtime, _ = pipeline.runtime_policy_checked(
+        parse_policy_text(default_policy_text(), home=home), env, home
+    )
     for tool in ("Bash", "PowerShell"):
-        for cmd in ("git add -A", "git add :/", "git add ':(top)'", "git add ':!x'", "git add -- ':/'"):
-            payload = {"tool_name": tool, "tool_input": {"command": cmd}, "cwd": str(project / "src"),
-                       "project_dir": str(project), "session_id": "s"}
-            r = pipeline.review(payload, runtime, platform=pipeline.local_platform(), env=env, home=home)
-            print(tool, cmd, r.verdict.decision, [g for a in r.verdict.actions for g in a.gray_reasons])
+        for cmd in (
+            "git add -A",
+            "git add :/",
+            "git add ':(top)'",
+            "git add ':!x'",
+            "git add -- ':/'",
+        ):
+            payload = {
+                "tool_name": tool,
+                "tool_input": {"command": cmd},
+                "cwd": str(project / "src"),
+                "project_dir": str(project),
+                "session_id": "s",
+            }
+            r = pipeline.review(
+                payload, runtime, platform=pipeline.local_platform(), env=env, home=home
+            )
+            print(
+                tool,
+                cmd,
+                r.verdict.decision,
+                [g for a in r.verdict.actions for g in a.gray_reasons],
+            )
 ```
 
 当前代码的输出：Bash 五行都是 `gray ['git-add-may-stage-protected']`；PowerShell 除 `git add -A` 外四行是 `allow []`。也可以用 `boundkeep explain`：事件 `{"hook_event_name":"PreToolUse","tool_name":"PowerShell","tool_input":{"command":"git add -- ':/'"},"cwd":"<项目>\\sub","project_dir":"<项目>","session_id":"s"}`，项目根下放一个 `.env`，输出 `verdict: allow   rules: allow-git-add`；同一事件换成 `Bash` 是 `verdict: gray`。

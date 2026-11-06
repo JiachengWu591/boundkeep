@@ -104,6 +104,15 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - 这些都没有修，等使用者决定。
   - 真实冒烟：`scripts/smoke_claude_m3a.py` 加了 `readings` 一段，修订 10 到 16 各一条代表写法，用 PowerShell 工具；`--dry` 不调用 Claude。Claude Code 2.1.318 上 13 项 0 失败，约 0.158 美元，记录在 `docs/hook-behavior.md`。没有覆盖子目录里的工作目录、Bash 工具和 VS Code 扩展。
   - **PowerShell 里的外部程序是在 `psprograms` 里重新构造 `CmdInfo` 的：给 `CmdInfo` 加字段要同时改那里，测试要两种 shell 都测。**
+- **IR-1 已修**（2026-11-06，已提交，未推送，`2778e56` 代码，文档在其后一个提交；记录 `docs/reports/M3a-ps-pathspec-magic.md`）：使用者说"提交并修 IR-1"。
+  - 修法：`psprograms._external` 抄 `pathspec_magic`，`_finish` 传出去。规格没有改：§5.1 本来就这样要求。
+  - 测试：R5-1 的回归测试改成 Bash、PowerShell 都测；新文件 `tests/unit/test_m3a_ps_cmdinfo.py` 把两种 shell 算出的 `CmdInfo` 逐字段比较，以后新加的字段也会比到。
+  - 真实目录树扫描 10320 条（4 种目录树、14 种子命令 × 18 种写法、两种 shell、工作目录在根或子目录）：PowerShell 的 `git add` 有 243 条由规则放行变成灰色（`git-add-may-stage-protected`），15 条同级，变松 0；修好之后 Bash 和 PowerShell 的 5160 对判决全部相同。
+  - 其他：变异 5 个全部抓到，两个测试文件分开跑也各自抓到；`boundkeep test` 1142 / 0、334 / 0；评测除日期和延迟外相同。
+  - 全量分六段跑，不是一个进程：28446 通过、169 跳过、1 失败（2:22:46，合计与收集到的 28616 条相同）。失败的是 `test_redact.py::test_linear_time_on_hostile_input[assignment-doubled-quotes]`：2.21 秒，预算 2 秒；当时可用的提交内存只剩 644 MB。它和这次修改无关，单跑 5 次都过（1.00 到 1.24 秒），没有改。
+  - 代价：PowerShell 里 `git add ':/src'` 这类写法，项目里有没被忽略的受保护名字时要问，和 Bash 一样。
+  - IR-2 到 IR-8 没有处理；这次修复没有复审；真实宿主里没有跑子目录里的这类调用。
+  - 顺带：复审报告里的一段 Python 代码块用 `ruff format` 排了版，否则 `ruff format --check .` 不通过。
 - **下一步**：M3b（自备密钥、确认费用）或 M4（不依赖 M3b）；接真实后端之前，收尾记录第 5 节里还剩 `auto` 模式的实测。总览见 `PROJECT_SPEC.md` 开头的"当前进度"与 §14 的状态列。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
 - M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。
