@@ -352,6 +352,35 @@ M3a 修复的定向复审（`docs/reviews/M3a-rereview.md`）之后，提案 P-R
 
 **重跑（2026-11-02，同一版本，规格修订 9 的代码加前缀路径修复，未提交的工作区）**：26 项检查 0 失败，脚本估算约 0.225 美元。fork、window 的判决与计数和上面两张表一致。这只说明原有链路没被破坏：脚本不覆盖修订 9 新增的路径（漏记 SessionStart、PostToolUse 补记 shell 来源、`enforce` 下 deny 不打标记），也不覆盖会话库从 schema 3 迁移（一次性目录里是新库）。`auto` 这次的现象和上次不同：`init` 事件写的是 `permissionMode: default`，hook 也是 `default`，询问没有运行、没有 PostToolUse。原因不知道，`auto` 仍然没有测到。
 
+## 修订 10 到 16 的读法，真实冒烟（2026-11-06，Claude Code 2.1.318，Windows 11，CLI 引擎 `claude -p`，haiku）
+
+`scripts/smoke_claude_m3a.py --only readings`，使用者在自己的终端里运行。代码是 `7faa165`，加上这一段冒烟的脚本改动（当时未提交，后来提交为 `2a460da`）。13 项检查 0 失败，两次运行共约 0.158 美元，一次观察。
+
+**设置**：真的 boundkeep，五个 hook，真守护进程，默认策略。LLM 配的是本机的假服务，永远回答 allow。权限提示交给 `experiments/mcp_permission_server.py`，它在这一段里什么都不批准。实验目录是一个 git 仓库，里面已跟踪的 `.env` 是假的，值是一串随机标记。修订 10 到 16 的改动各挑一条有代表性的写法，全部用 PowerShell 工具调用；另加一条普通读取作对照。真实运行之前，同样的调用先用 `--dry` 直接送给实验目录自己的 hook 命令（不经过 Claude Code），判决和下表相同。
+
+| 调用 | 修订 | boundkeep 的判决 | 灰色原因 | 权限提示 | 运行了吗 |
+|---|---|---|---|---|---|
+| `Test-Path BK_SEED.txt`（对照） | | 无决定（`allow-ps-inspect-inside-project`） | | 没有经过 | 运行了，有 PostToolUse |
+| `git log -p -- ':(top).env'` | 16 | deny（`no-secret-read`） | | | 没有 |
+| `git archive -o BK_ARCHIVE.zip HEAD '::.env'` | 16 | deny（`no-secret-read`） | | | 没有，没有归档文件 |
+| `& '…\.venv\Scripts\boundkeep.exe.' mode audit-only` | 16 | deny（`deny-boundkeep-state-commands`） | `program-name-trailing-dots`、`program-path-qualified`、`ps-script-exec` | | 没有，实验目录仍是 `enforce` |
+| `& '…\.venv\Scripts\python.exe.' -m boundkeep mode audit-only` | 16 | deny（同上） | | | 没有 |
+| `Get-Content .env.` | 12、13 | deny（`no-secret-read`） | | | 没有 |
+| `Teſt-Path BK_SEED.txt`（`ſ` 是 U+017F） | 14 | ask（`gray-unanalysed`，不送审） | `program-fold-variant` | 拒绝 | 没有 |
+| `D:/Windows/System32/git.exe status` | 15 | ask（`ask-git-read-outside-project`） | `program-path-qualified` | 拒绝 | 没有 |
+| `Get-Content '\\.\pipe\bk-smoke-…'` | 10 | ask（`gray-device-path`，不送审） | | 拒绝 | 没有 |
+
+- 审计日志里的命令文本和脚本给出的逐字相同：单引号、尾随的点、`ſ`、`\\.\` 都原样到了 hook。
+- 被 deny 或被问的调用都没有运行。整次运行只有对照那一条有 PostToolUse；假 `.env` 的标记没有出现在任何工具结果里。
+- 9 条里没有一条送审，审计日志里没有 `decided_by: llm`。
+- 第一次运行时，模型只做了第 1 步就停了（回答 "Ready for step 2."）。脚本用 `--resume` 在同一个会话里补了其余 8 步：SessionStart 的 `source` 是 `resume`，`session_id` 相同。
+
+这只说明每次修订的一条代表写法在真实宿主里判对了。**没有覆盖的**：
+- Bash 工具、VS Code 扩展、真人在确认框里的操作；
+- 会话工作目录在子目录的情况：独立复审的 IR-1（`docs/reviews/M3a-rev13-16-independent-review.md`）就在那里；
+- 修订 9 到 16 的其余写法；
+- 真实的 LLM 服务。
+
 ## 与官方文档的差异
 
 没有矛盾。文档没写或措辞不同的：deny JSON 配退出码 1 仍被执行；旧式 `decision: block` 仍被接受；`-p` 下项目 `permissions.allow` 被忽略；Git 装在非标准路径时 Claude Code 不自动发现 Git Bash；盘符大小写在同一会话里不稳定；VS Code 扩展的 payload 多 `scratchpad_dir` 与 `effort`。
