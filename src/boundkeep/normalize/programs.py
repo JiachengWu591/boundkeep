@@ -1914,6 +1914,9 @@ def peel_runner(argv: Sequence[Word]) -> tuple[int, str, Word | None] | str | No
     if not argv or not _literal(argv[0]):
         return None
     head = argv[0].text.replace("\\", "/").rsplit("/", 1)[-1]
+    # PowerShell 5.1 runs C:\...\python.exe. as python.exe (measured, spec revision 16): a launcher
+    # so spelled launches all the same, and peeling one more name only shows the inner command
+    head = head.rstrip(". ") or head
     if head.lower().endswith(".exe"):
         head = head[:-4]
     head = head.lower()
@@ -2753,18 +2756,49 @@ def _git_config_entry(a: _Acc, w: Word, key_value: str) -> None:
         a.path(_sub(w, value), "read")
 
 
+_SHORT_MAGIC = "/!^"  # git's short pathspec magic: top, and exclude twice
+_LONG_MAGIC_READ = frozenset({"top", "exclude", "literal"})  # long-form words read below
+
+
 def _pathspec(a: _Acc, w: Word) -> Word:
     """What the rules look at for an operand git reads as a pathspec.
 
     ``:/src``, ``:!x`` and ``:(top)x`` are git's own magic: git parses the word and never opens it,
     Git Bash passes it unchanged, and a ``:x`` that Git Bash would write as a name of its own is not
-    what git reads (all measured, PROJECT_SPEC.md §5.1). So it is no path with a stream name: the
-    magic, up to the first separator, reads as ``.`` (``:/src`` is ``./src``, ``:!x`` is ``.``).
+    what git reads (all measured, PROJECT_SPEC.md §5.1). So it is no path with a stream name. The
+    magic is split off as git does (spec revision 16): ``:`` and any of ``/!^``, then an optional
+    ``:``; or ``:(word,...)``. What follows reads from the current directory (``:/src`` and
+    ``:(top)src`` are ``./src``, ``:(top).claude/settings.json`` keeps its ``.claude``). With an
+    exclusion git acts on the whole repository but that path (measured), so it reads as ``.``.
+    Long-form words other than these three (``icase``, ``glob``, ``attr:...``) or no closing ``)``
+    make the call gray: the path is still there for deny and ask rules.
     """
-    if not w.text.startswith(":"):
+    text = w.text
+    if not text.startswith(":"):
         return w
     a.pathspec_magic = True
-    return _sub(w, re.sub(r"^:[^/\\]*", ".", w.text))
+    exclude = False
+    if text.startswith(":("):
+        close = text.find(")")
+        if close < 0:  # git refuses it ("Missing ')'"), but say nothing it is not
+            a.gray.append("git-pathspec-magic")
+            return _sub(w, ".")
+        words = {m.strip() for m in text[2:close].split(",")}
+        exclude = "exclude" in words
+        if not words <= _LONG_MAGIC_READ:
+            a.gray.append("git-pathspec-magic")
+        pattern = text[close + 1 :]
+    else:
+        end = 1
+        while end < len(text) and text[end] in _SHORT_MAGIC:
+            exclude = exclude or text[end] != "/"
+            end += 1
+        if end < len(text) and text[end] == ":":
+            end += 1
+        pattern = text[end:]
+    if exclude or not pattern:
+        return _sub(w, ".")
+    return _sub(w, "./" + pattern)
 
 
 def _git_url_or_path(a: _Acc, w: Word, access: Access) -> None:
@@ -2821,7 +2855,9 @@ def _git_operands(
     if sub == "cat-file" and any(f.startswith("--batch") for f in seen):
         a.gray.append("git-cat-file-batch")  # the objects to print arrive on stdin
     if sub in _GIT_REVPATH_SUBS:
-        for w in before:
+        # ``git archive TREE-ISH PATH...``: only the tree-ish may be REV:PATH; the rest are
+        # pathspecs, read below (``::.git/config`` is no index path there; spec revision 16)
+        for w in before[:1] if sub == "archive" else before:
             rp = _rev_path(w.text)
             if rp is not None:
                 rev_paths += 1

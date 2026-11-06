@@ -1409,6 +1409,10 @@ def _canonical_program(ctx: _Ctx, word: Word, shell: str = "bash") -> tuple[str,
     same program name for deny and ask rules but gray, so that no allow rule trusts it. So is a name
     only casefold reads that way (``sudo`` with U+017F for its "s"): NTFS and PATH keep it apart
     from ``sudo`` and PowerShell does not resolve it to a cmdlet (measured), yet it may be meant so.
+    On Windows trailing dots and spaces go first (spec revision 16): PowerShell 5.1 runs
+    ``C:\\tools\\boundkeep.exe.`` as ``boundkeep.exe`` (measured), so that is the name the deny and
+    ask rules see; the call is gray, so that no allow rule relies on a spelling Git Bash would not
+    run.
     """
     text = word.text
     if _dynamic(word) or not text or "\x00" in text:
@@ -1417,9 +1421,14 @@ def _canonical_program(ctx: _Ctx, word: Word, shell: str = "bash") -> tuple[str,
     name = text[cut + 1 :] if cut >= 0 else text
     if not name:
         return text, []
+    grays: list[str] = []
+    if ctx.platform == "windows":
+        stripped = name.rstrip(". ")
+        if stripped and stripped != name:  # not "." or "..": those are no program names
+            grays.append("program-name-trailing-dots")
+            name = stripped
     if name.lower().endswith(".exe") and len(name) > 4:
         name = name[:-4]
-    grays: list[str] = []
     if ctx.platform == "windows":
         if name.casefold() != paths.windows_fold(name):
             grays.append("program-fold-variant")

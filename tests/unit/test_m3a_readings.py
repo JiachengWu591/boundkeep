@@ -654,9 +654,11 @@ def _path_refs(command: str) -> list[PathRef]:
         ("git diff -- ':!x'", {"c:/proj"}),
         ("git diff -- ':/'", {"c:/proj"}),
         ("git log -- ':/src'", {"c:/proj/src"}),
-        ("git log -- ':(top)src'", {"c:/proj"}),
-        ("git diff -- ':!a/b'", {"c:/proj/b"}),
-        ("git diff -- ':!a\\b'", {"c:/proj/b"}),
+        # revision 16: the long form keeps its path, and an exclusion is the whole repository (git
+        # acts on everything but that path, measured); revision 13 pinned ".", "./b" and "./b"
+        ("git log -- ':(top)src'", {"c:/proj/src"}),
+        ("git diff -- ':!a/b'", {"c:/proj"}),
+        ("git diff -- ':!a\\b'", {"c:/proj"}),
         ("git rm ':/a.py'", {"c:/proj/a.py"}),
         ("git restore ':/a.py'", {"c:/proj/a.py"}),
         ("git clean ':!x'", {"c:/proj"}),
@@ -665,7 +667,7 @@ def _path_refs(command: str) -> list[PathRef]:
         ("git -C sub checkout ':/x'", {"c:/proj/sub", "c:/proj/sub/x"}),
     ],
 )
-def test_the_magic_reads_as_the_directory_it_always_read_as(command: str, keys: set[str]) -> None:
+def test_the_magic_reads_as_git_reads_it(command: str, keys: set[str]) -> None:
     refs = _path_refs(command)
     assert {ref.key for ref in refs} == keys, command
     assert not any(ref.uncertain for ref in refs), command
@@ -711,7 +713,9 @@ def test_a_pathspec_that_climbs_out_is_not_allowed(command: str) -> None:
 
 @pytest.mark.parametrize(
     "command",
-    ["git diff -- ':/.env'", "git log -p -- ':/.env'", "git add ':/.env'", "git add ':^x/.env'"],
+    # (``git add ':^x/.env'`` was here: it excludes x/.env and adds the rest, revision 16; see
+    # test_m3a_pathspec_and_dotted_names.py for that and for the long forms)
+    ["git diff -- ':/.env'", "git log -p -- ':/.env'", "git add ':/.env'", "git add ':(top).env'"],
 )
 def test_a_protected_name_in_a_pathspec_is_still_seen(command: str) -> None:
     assert decide("Bash", {"command": command}).decision == protocol.DECISION_DENY, command
