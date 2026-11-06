@@ -18,6 +18,8 @@ from boundkeep.policy import Policy, default_policy_text, parse_policy_text
 
 PLATFORMS = ("windows", "posix")
 PLATFORM_IDS = [f"on-{p}" for p in PLATFORMS]  # conftest.py skips ids that are the bare words
+# The tool a real-tree review runs under; PowerShell needs the parser helper (Windows only)
+SHELL_TOOLS = ["Bash", pytest.param("PowerShell", marks=pytest.mark.windows)]
 
 
 @cache
@@ -366,7 +368,7 @@ def test_a_directory_that_is_not_a_repository_is_left_alone(tmp_path: Path) -> N
 
 
 def _tree_review(
-    tmp_path: Path, files: list[str], command: str, *, cwd: str = ""
+    tmp_path: Path, files: list[str], command: str, *, cwd: str = "", tool: str = "Bash"
 ) -> tuple[str, list[str]]:
     import os
 
@@ -385,7 +387,7 @@ def _tree_review(
     env["USERPROFILE"] = env["HOME"] = home
     runtime, _problem = pipeline.runtime_policy_checked(policy, env, home)
     payload = {
-        "tool_name": "Bash",
+        "tool_name": tool,
         "tool_input": {"command": command},
         "cwd": str(project / cwd) if cwd else str(project),
         "project_dir": str(project),
@@ -456,16 +458,22 @@ def test_a_named_file_or_another_directory_is_not_blocked_by_a_secret_elsewhere(
         "git add -vA",
     ],
 )
+@pytest.mark.parametrize("tool", SHELL_TOOLS)
 def test_the_whole_repository_forms_are_looked_at_from_a_sub_directory(
-    tmp_path: Path, command: str
+    tmp_path: Path, command: str, tool: str
 ) -> None:
-    # R5-1: from src/ these still stage the whole repository, so the project root is scanned too
+    # R5-1: from src/ these still stage the whole repository, so the project root is scanned too.
+    # PowerShell too: its CmdInfo for git dropped the magic, and these were allowed (review IR-1)
     files = ["src/a.py", ".env"]
-    decision, reasons = _tree_review(tmp_path, files, command, cwd="src")
+    decision, reasons = _tree_review(tmp_path, files, command, cwd="src", tool=tool)
     assert decision != "allow", (command, reasons)
     assert "git-add-may-stage-protected" in reasons
 
 
-def test_a_plain_dot_from_a_sub_directory_only_looks_at_that_directory(tmp_path: Path) -> None:
-    decision, reasons = _tree_review(tmp_path, ["src/a.py", ".env"], "git add .", cwd="src")
+@pytest.mark.parametrize("tool", SHELL_TOOLS)
+def test_a_plain_dot_from_a_sub_directory_only_looks_at_that_directory(
+    tmp_path: Path, tool: str
+) -> None:
+    files = ["src/a.py", ".env"]
+    decision, reasons = _tree_review(tmp_path, files, "git add .", cwd="src", tool=tool)
     assert decision == "allow", reasons
