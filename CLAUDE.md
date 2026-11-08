@@ -113,7 +113,7 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - 代价：PowerShell 里 `git add ':/src'` 这类写法，项目里有没被忽略的受保护名字时要问，和 Bash 一样。
   - IR-2 到 IR-8 当时没有处理（修订 17 处理了，见下一条）；这次修复没有复审；真实宿主里没有跑子目录里的这类调用。
   - 顺带：复审报告里的一段 Python 代码块用 `ruff format` 排了版，否则 `ruff format --check .` 不通过。
-- **git 的 `:` 操作数、`REV:目录` 与 8.3 短名，规格修订 17**（2026-11-07，已提交，`996fd6f` 代码，文档在其后一个提交，未推送，未打标签；记录 `docs/reports/M3a-git-operands-and-short-names.md`）：使用者说"按照你的建议去完成"，按独立复审第 7 节的顺序做。
+- **git 的 `:` 操作数、`REV:目录` 与 8.3 短名，规格修订 17**（2026-11-07，已提交并推送，`996fd6f` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-git-operands-and-short-names.md`）：使用者说"按照你的建议去完成"，按独立复审第 7 节的顺序做。
   - IR-2：`--` 之前的 `:!x`、`:^x`、`:(…)`、`::x`、`:/x` 同时按 `REV:PATH` 和 pathspec 读（`programs._colon_kind`）。打印内容的子命令里 pathspec 限定范围，`:/x` 可能是按提交说明找到的提交，不限定。`:x`、`:N:x` 是索引里的文件，只按 `REV:PATH` 读：第一版也当 pathspec 读，`git show :0:a.py` 由放行变成问，收窄了，规格也改了。
   - IR-3：`git archive` 的 tree-ish 是第一个操作数，写在 `--` 后面也是；`archive`、`grep` 的 `REV:目录` 递归读。
   - IR-4：Windows 上带路径、最后一段是 8.3 短名的程序，取磁盘层解析出来的长名给 deny / ask 规则，灰色 `program-short-name`（`event._short_name_program`）。实测 PowerShell 5.1 和 Git Bash 都运行短名路径。
