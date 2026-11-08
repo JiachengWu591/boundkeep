@@ -1438,6 +1438,38 @@ def _canonical_program(ctx: _Ctx, word: Word, shell: str = "bash") -> tuple[str,
     return name, grays
 
 
+def _short_name_program(ctx: _Ctx, notes: list[str], st: _Line, word: Word) -> str | None:
+    """The long name of a program run by a path whose last segment is an 8.3 short name
+    (``C:\\tools\\BOUNDK~1.EXE``), as the disk layer expands it; None when there is none.
+
+    PowerShell 5.1 runs such a path (measured; independent review IR-4), so the deny and ask rules
+    see the long name (spec revision 17). The path layer lists the lexical form (still marked
+    ``short-name-unresolved``) and, for a file that is there, the expanded one; the names of the
+    expanded forms must agree. A file that is not there gives None and the short name stays (gray
+    ``program-path-qualified``). Only the last segment is looked at.
+    """
+    text = word.text
+    if ctx.platform != "windows" or _dynamic(word) or not text or "\x00" in text:
+        return None
+    cut = max(text.rfind("/"), text.rfind("\\"))
+    if cut < 0 or not paths.is_short_name(text[cut + 1 :].rstrip(". ")):
+        return None
+    refs = _refs(ctx, notes, text, "read", cwds=st.cwds, dialect=st.shell, dynamic=False)
+    names = {
+        ref.key.rsplit("/", 1)[-1]
+        for ref in refs
+        if ref.flavor == "windows" and "short-name-unresolved" not in ref.reasons
+    }
+    if len(names) != 1:
+        return None
+    name = names.pop().rstrip(". ")
+    if name.lower().endswith(".exe") and len(name) > 4:
+        name = name[:-4]
+    if not name or paths.is_short_name(name):
+        return None
+    return name.casefold()
+
+
 def _scan_assignments(st: _Line, cmd: SimpleCmd, program: str | None) -> None:
     """Note reassignments of HOME, PWD, OLDPWD (and CDPATH): the ``~`` expansion would be wrong."""
     names = [name for name, _ in cmd.env]
@@ -1595,6 +1627,10 @@ def _command_action(
         gray_reasons = list(info.gray)
     else:
         program, spelling = _canonical_program(ctx, cmd.argv[0], st.shell)
+        long_name = _short_name_program(ctx, notes, st, cmd.argv[0])
+        if long_name is not None and long_name != program:
+            program = long_name
+            spelling.append("program-short-name")  # no allow rule relies on it (revision 17)
         info = programs.classify(
             program,
             classify_args,

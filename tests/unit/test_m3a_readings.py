@@ -664,7 +664,10 @@ def _path_refs(command: str) -> list[PathRef]:
         ("git clean ':!x'", {"c:/proj"}),
         ("git archive HEAD -- ':/a.py'", {"c:/proj/a.py"}),
         ("git -C sub diff -- ':!x'", {"c:/proj", "c:/proj/sub"}),
-        ("git -C sub checkout ':/x'", {"c:/proj/sub", "c:/proj/sub/x"}),
+        # Spec revision 17: a ``:`` word before ``--`` is read as a pathspec too, the same as after
+        # it (relative to the cwd and to the -C directory; listing one more only costs a check)
+        ("git -C sub checkout ':/x'", {"c:/proj/sub", "c:/proj/sub/x", "c:/proj/x"}),
+        ("git -C sub checkout -- ':/x'", {"c:/proj/sub", "c:/proj/sub/x", "c:/proj/x"}),
     ],
 )
 def test_the_magic_reads_as_git_reads_it(command: str, keys: set[str]) -> None:

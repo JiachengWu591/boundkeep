@@ -1044,6 +1044,11 @@ def _collapse(parts: list[str], *, rooted: bool) -> list[str]:
     return out
 
 
+def is_short_name(part: str) -> bool:
+    """Does the component look like an 8.3 short name (``PROGRA~1``, ``BOUNDK~1.EXE``)?"""
+    return _is_short_name(part)
+
+
 def _is_short_name(part: str) -> bool:
     """Does the component look like an 8.3 short name (``PROGRA~1``, ``PROJ~1.TXT``)?"""
     if "." in part:

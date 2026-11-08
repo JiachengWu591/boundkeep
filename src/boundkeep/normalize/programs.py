@@ -2836,6 +2836,31 @@ def _rev_path(text: str) -> str | None:
     return None
 
 
+def _colon_kind(text: str) -> str | None:
+    """How git may read an operand before ``--`` that begins with ``:`` (spec revision 17).
+
+    git first tries a revision; what is none it takes as a pathspec (the long form always, ``:/x``
+    and ``:!x`` when x exists; measured). ``"index"``: ``:x``, ``:N:x``, a file in the index, so a
+    revision naming one object. ``"search"``: ``:/text``, the youngest commit whose message matches
+    (a revision naming a whole commit) or else a pathspec from the top. ``"pathspec"``: ``:!x``,
+    ``:^x``, ``:(top)x``, ``::x``. None: the word does not begin with ``:``.
+    """
+    if not text.startswith(":"):
+        return None
+    second = text[1:2]
+    if second == "/":
+        return "search"
+    if second in ("!", "^", "(", ":"):
+        return "pathspec"
+    return "index"
+
+
+# Subcommands that take no pathspec before ``--``: ``cat-file`` names objects only, and the first
+# operand of ``archive`` is its tree-ish (the others are read in _git_operands)
+_GIT_NO_PATHSPEC_BEFORE_DD = _fs("cat-file archive")
+_COLON_PATHSPECS = ("pathspec", "search")  # the _colon_kind values git may take as a pathspec
+
+
 def _git_operands(
     a: _Acc,
     sub: str,
@@ -2849,20 +2874,26 @@ def _git_operands(
 
     Sets ``a.recursive`` for the commands that print the content of the whole tree or of every
     commit (``grep``, ``archive``, ``log -p``, ``show``, ``stash show -p``); with no pathspec the
-    root is ``.`` (listed read). A ``REV:PATH`` operand is a read of PATH and needs no recursion.
+    root is ``.`` (listed read). A ``REV:PATH`` operand is a read of PATH: ``show`` prints that one
+    object, while ``archive`` and ``grep`` read every file below a ``REV:dir`` (spec revision 17).
     """
     rev_paths = 0
     if sub == "cat-file" and any(f.startswith("--batch") for f in seen):
         a.gray.append("git-cat-file-batch")  # the objects to print arrive on stdin
     if sub in _GIT_REVPATH_SUBS:
-        # ``git archive TREE-ISH PATH...``: only the tree-ish may be REV:PATH; the rest are
-        # pathspecs, read below (``::.git/config`` is no index path there; spec revision 16)
-        for w in before[:1] if sub == "archive" else before:
+        # ``git archive TREE-ISH PATH...``: only the tree-ish may be REV:PATH, and it is the first
+        # operand even after a ``--`` (git's option parser takes that one; independent review
+        # IR-3). The rest are pathspecs, read below (spec revision 16).
+        for w in pos[:1] if sub == "archive" else before:
             rp = _rev_path(w.text)
-            if rp is not None:
+            if rp is None:
+                continue
+            a.path(_sub(w, rp), "read")
+            _scoped_path(a, chain, _sub(w, rp), "read")
+            # ``:/text`` may be a whole commit found by its message and ``:!x`` a pathspec: neither
+            # names one object, so neither keeps a content command from the tree (IR-2)
+            if sub == "archive" or _colon_kind(w.text) in (None, "index"):
                 rev_paths += 1
-                a.path(_sub(w, rp), "read")
-                _scoped_path(a, chain, _sub(w, rp), "read")
     sub2 = pos[0].text if pos else None
     content = False
     if sub in ("grep", "archive"):
@@ -2873,8 +2904,11 @@ def _git_operands(
         content = bool(seen & _GIT_PATCH_FLAGS) or not seen & _GIT_NOCONTENT_FLAGS
     elif sub == "stash" and sub2 == "show":
         content = bool(seen & (_GIT_PATCH_FLAGS | _fs("--include-untracked")))
-    if not content or rev_paths:
+    if not content:
         return
+    if rev_paths and sub not in ("archive", "grep"):
+        return  # ``git show HEAD:x`` prints one blob, or only the names in a tree
+    # ``git archive HEAD:dir`` and ``git grep -e x HEAD:dir`` read every file below dir (IR-3)
     a.recursive = True
     if sub == "archive":
         # ``git archive TREE-ISH [PATH...]``: every operand after the tree-ish is a path read
@@ -2882,8 +2916,13 @@ def _git_operands(
             spec = _pathspec(a, w)
             a.path(spec, "read")
             _scoped_path(a, chain, spec, "read")
-    restricted = bool(after) or (sub == "archive" and len(pos) > 1)
-    restricted = restricted or any(_outside_like(w.text) for w in before)
+        restricted = len(pos) > 1 or rev_paths > 0
+    else:
+        # A pathspec before ``--`` scopes the read like one after it (``git show ':(top)src'``);
+        # ``:x`` and ``:/text`` may be revisions and do not (spec revision 17). Nor does a
+        # REV:PATH of ``grep``: its first operand may be the pattern (``git grep 'key:value'``).
+        restricted = bool(after) or any(_outside_like(w.text) for w in before)
+        restricted = restricted or any(_colon_kind(w.text) == "pathspec" for w in before)
     if not restricted and chain is None:
         a.path(Word("."), "read")  # no pathspec: the whole work tree / history
 
@@ -3078,10 +3117,22 @@ def _h_git(a: _Acc, args: Sequence[Word]) -> None:
             _scoped_path(a, chain, spec, file_access)
         return
     tail_access: Access = "read" if sub in _GIT_READ_PATH_SUBS else operand_access
+    tree_ish = pos[0] if sub == "archive" and pos else None  # read in _git_operands
     for w in before:
+        if w is tree_ish:
+            continue
         if _outside_like(w.text) or w.expands or w.glob:
             a.path(w, tail_access)
+        elif _colon_kind(w.text) in _COLON_PATHSPECS and sub not in _GIT_NO_PATHSPEC_BEFORE_DD:
+            # git takes ``:(top)x``, ``:!x``, ``:/x`` before ``--`` as a pathspec when it is no
+            # revision: the rules see that reading too (independent review IR-2). ``:x`` and
+            # ``:N:x`` are index files: a pathspec only if a file is literally named ``:x``
+            spec = _pathspec(a, w)
+            a.path(spec, tail_access)
+            _scoped_path(a, chain, spec, tail_access)
     for w in after:
+        if w is tree_ish:
+            continue
         spec = _pathspec(a, w)
         a.path(spec, tail_access)
         _scoped_path(a, chain, spec, tail_access)
