@@ -2,7 +2,14 @@
 
 日期：2026-11-06。代码：`7faa165`（`main`，与 `origin/main` 相同，工作区干净）。审查对象：`git diff d1729dd c69684c -- src`，即修订 13 `372bfa1`、修订 14 `fef9fe9`、修订 15 `8ddc6e2`、修订 16 `c69684c`；记录 `docs/reports/M3a-readings-fixes.md`、`M3a-program-fold.md`、`M3a-system-dirs.md`、`M3a-pathspec-and-dotted-names.md`；规格开头修订 13 到 16 的段落与 §5.1。重点是没有复审过的修订 16：`programs._pathspec`、`_git_operands`、`peel_runner`，`event._canonical_program`。
 
-**之后（2026-11-06）**：使用者说"提交并修 IR-1"。IR-1 已修，记录在 `docs/reports/M3a-ps-pathspec-magic.md`；IR-2 到 IR-8 没有处理。下面的判决都是修之前的。
+**之后（2026-11-06）**：使用者说"提交并修 IR-1"。IR-1 已修，记录在 `docs/reports/M3a-ps-pathspec-magic.md`。
+
+**之后（2026-11-07）**：使用者说"按照你的建议去完成"。按第 7 节的顺序处理了其余几条：
+- IR-2、IR-3、IR-4 在规格修订 17 修了，记录在 `docs/reports/M3a-git-operands-and-short-names.md`；
+- IR-5、IR-6、IR-8 涉及的规格和记录文字已在原处更正；
+- IR-7 没有改，写进了 `docs/threat-model.md`，等使用者决定。
+
+下面的判决都是修之前的。
 
 **这是独立复审。** 这个会话没有参与修订 13 到 16 的编写，也是在自己的结论定下之后才读的 `docs/reviews/M3a-rev13-15-review.md`（第 6 节对照）。作者的说法都当作待核实。
 

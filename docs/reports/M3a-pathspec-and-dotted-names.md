@@ -7,7 +7,7 @@
 **两条都修了，另外修了同一类的一处：`git archive` 的操作数。**
 
 - **RS-1**：git 按 pathspec 读的操作数，魔法按 git 的语法拆开。`git diff -- ':(top).env'`、`git stash push -- ':(top).claude/settings.json'` 现在和不带魔法的写法一样是 deny。
-- **同类的一处**：`git archive TREE-ISH PATH...` 里，tree-ish 之后的操作数原来先被当成 `REV:PATH`（`:x` 是索引里的路径），`git archive HEAD '::.git/config'` 只是灰色。实测 git 把那个文件打进了归档。现在只有第一个操作数按 `REV:PATH` 读，其余的按 pathspec 读。
+- **同类的一处**：`git archive TREE-ISH PATH...` 里，tree-ish 之后的操作数原来先被当成 `REV:PATH`（`:x` 是索引里的路径），`git archive HEAD '::secrets/id_rsa'` 只是灰色。实测 git 把那个文件打进了归档（第 3 节）。（更正，2026-11-07，独立复审 IR-5：这里原来举的是 `'::.git/config'`，它打不进归档：树里没有 `.git` 这一段，git 报 pathspec 不匹配、退出码 128。第 2 节表里那一行是 boundkeep 的判决，仍然对。）现在只有第一个操作数按 `REV:PATH` 读，其余的按 pathspec 读。
 - **RS-2**：Windows 上取程序名之前先去掉结尾的点和空格。`& 'C:\tools\boundkeep.exe.' mode audit-only` 现在是 deny。启动器（`python -m`、`uv run` 等）的名字也一样处理：`& 'C:\Python312\python.exe.' -m boundkeep mode audit-only` 原来漏在这一层，修的时候才发现。
 
 规则条目和策略文件没有改，评测除日期和延迟外与记录相同。原有的六组差分级别全部相同。新做的专门扫描里，程序名部分 0 条变松；pathspec 部分有变松的，都是按 git 的真实读法该放的，逐类列在第 5 节。全量分六段跑：28403 通过、169 跳过、0 失败。
@@ -57,6 +57,8 @@
 | `& 'C:\Windows\System32\cmd.exe.'`，`cmd.exe..`，`'…\cmd.exe '`，`'…\System32.\cmd.exe'`，`Start-Process -FilePath '…\cmd.exe.'` | 运行了 |
 | `& 'C:\Windows\System32\cmd.'`，`cmd.exe::$DATA`，裸名字 `cmd.exe.`、`hostname.`、`hostname.exe.` | 找不到 |
 | Git Bash：`cmd.exe.`，`/c/Windows/System32/cmd.exe.`，`C:/…/cmd.exe.`，`/c/…/cmd.`，`/c/Windows/System32./cmd.exe` | 找不到（对照 `/c/Windows/System32/cmd.exe` 运行了） |
+
+（补充，2026-11-07，独立复审 IR-8：PowerShell 5.1 运行带尾随点的程序时，是交给 ShellExecute 另开窗口、异步运行的。`&` 写法的输出不回到调用方，`$LASTEXITCODE` 也不更新；但改状态的命令（如 `boundkeep mode audit-only`）照样生效。）
 
 ## 4. 修法
 
@@ -119,10 +121,10 @@
 1. **排除读作 `.`**：`git diff -- ':!secrets/id_rsa'`、`git add ':!/.env'`、`git stash push -- ':!x/.env'` 由 deny 变成规则放行。这是 git 的真实读法：被排除的路径恰好不碰，其余的都碰，和不带路径的 `git diff`、`git add -A`、`git stash` 一样。`git add` 在真实磁盘上另有 `git-add-may-stage-protected`：项目里有受保护的名字时问。
 2. **`icase`、`glob`、`attr` 魔法要问**：原来有一些被规则放行（`git diff -- ':(icase)'`）。没有后端时要问一次。
 3. **`top` 和 `/` 按当前目录读，不按仓库顶层**：在子目录里运行时 key 是子目录下的同名路径。名字规则（`.env`、`.claude/settings.json`）照样命中，按位置写的规则可能看不到。git 顶层在项目之上时另有 `git-root-above-project` 的检查，这次没有重新量。
-4. **只有排除时 git 作用于整个仓库，这里读作当前目录**：在子目录里会窄一些。效果和不带路径的同一条命令相同，而那些本来就放行。
+4. **只有排除时 git 作用于整个仓库，这里读作当前目录**：在子目录里会窄一些。效果和不带路径的同一条命令相同，而那些本来就放行。（更正，2026-11-07，独立复审 IR-6：后半句只在假机器上成立。真实磁盘上项目里有受保护的名字时，`git log -p`、`git show HEAD` 是 deny（扫描子树），`git add -A` 是问；一直放行的只有 `git diff`、`git stash`。结论仍然对，是因为 `git diff <空树> HEAD` 由规则放行、能打印全部已提交内容，见 IR-7。）
 5. **括号没有闭合由 deny 变成问**：git 报错退出，没有实际影响，但判决级别降了。
 6. **程序名去掉点之后多出来的 deny**：Bash 里的 `diskpart.`、`boundkeep. mode` 现在是 deny。Git Bash 不运行这些名字，PowerShell 只有带路径时才运行，所以碰不到能正常运行的命令。
-7. **uv 生成的启动器（`boundkeep.exe`、`python.exe` 的跳板）带尾随点时是否照常运行，没有量**，只量了 `cmd.exe`。启动器靠自己的文件名找脚本时，可能不运行；那样多出来的 deny 也不伤人。
+7. **uv 生成的启动器（`boundkeep.exe`、`python.exe` 的跳板）带尾随点时是否照常运行，没有量**，只量了 `cmd.exe`。启动器靠自己的文件名找脚本时，可能不运行；那样多出来的 deny 也不伤人。（补充，2026-11-07：独立复审 IR-8 量过了，`.venv\Scripts\boundkeep.exe.` 和 `python.exe.` 都照常运行，所以这条 deny 是有用的。）
 8. **没有修的**：复审的 RV-4、RV-6，RV-5 的正文更正；上一轮的 GR-3、GR-4、GR-5。
 
 ## 7. 没有做的

@@ -2,7 +2,7 @@
 
 日期：2026-11-06。代码：`1a6078b`（与 `origin/main` 相同）。审查对象：`git diff d1729dd 8ddc6e2 -- src`（修订 13 的 `372bfa1`、修订 14 的 `fef9fe9`、修订 15 的 `8ddc6e2`），记录 `docs/reports/M3a-readings-fixes.md`、`M3a-program-fold.md`、`M3a-system-dirs.md`。
 
-**之后（2026-11-06）**：使用者说"修 RS-1、RS-2"，两条都已修，记录 `docs/reports/M3a-pathspec-and-dotted-names.md`（规格修订 16）。修的时候又查到两处同类的：`git archive` 在 tree-ish 之后的操作数被当成索引路径（`git archive HEAD '::.git/config'` 只是灰色，git 却把它打进了归档）；`python.exe.` 这样的启动器名字没被认出（`& '…\python.exe.' -m boundkeep mode audit-only` 只是灰色）。也一起修了。下面的判决是修之前的。
+**之后（2026-11-06）**：使用者说"修 RS-1、RS-2"，两条都已修，记录 `docs/reports/M3a-pathspec-and-dotted-names.md`（规格修订 16）。修的时候又查到两处同类的：`git archive` 在 tree-ish 之后的操作数被当成索引路径（`git archive HEAD '::secrets/id_rsa'` 只是灰色，git 却把它打进了归档；这里原来写的是 `'::.git/config'`，它打不进归档，2026-11-07 按独立复审 IR-5 更正）；`python.exe.` 这样的启动器名字没被认出（`& '…\python.exe.' -m boundkeep mode audit-only` 只是灰色）。也一起修了。下面的判决是修之前的。
 
 **这不是独立复审。** 三次修复都是这个会话写的，复审也是。我尽量靠实测下结论，但可能和写修复时有同样的盲点。要独立的眼光，得另开一个不带这段对话的会话。
 
@@ -17,7 +17,7 @@
 | RS-1 | 低 | git 的长形式 pathspec 魔法丢了路径：`git diff -- ':(top).env'` 由规则放行，`git diff -- .env` 是 deny；`git stash push -- ':(top).claude/settings.json'` 由规则放行，不带魔法的写法是 deny | **不要** | 早就有。修订 13 改过这段（`programs._pathspec`），只处理了短形式 |
 | RS-2 | 低 | PowerShell 里 `& 'C:\tools\boundkeep.exe.' mode audit-only` 由 deny 变成问，配了后端时送审；PowerShell 5.1 真的运行这个程序 | 问不要，送审要 | 早就有。和修订 14 同一类（程序名的读法），修订 14 没有覆盖 |
 
-**为什么都是低。** RS-1 的这几条命令能做到的，不带路径的写法本来就由规则放行：`git log -p`、`git diff`、`git show HEAD` 显示所有已跟踪文件的内容，`git stash` 还原所有已跟踪文件的改动。已跟踪的 `.env` 被 `git diff` 显示，是 `docs/reports/M2-rules-1.md` 记下的 `allow-git-read-only` 原有缺口。RS-2 的效果和 `docs/threat-model.md` 第 4 节已经记下的间接写法相同（`Start-Process boundkeep -ArgumentList …`、`cmd /c` 都是灰色）。两条都没有带来新能力，问题在于规则自以为看得见这个目标，实际看不见。
+**为什么都是低。** RS-1 的这几条命令能做到的，不带路径的写法本来就由规则放行：`git log -p`、`git diff`、`git show HEAD` 显示所有已跟踪文件的内容，`git stash` 还原所有已跟踪文件的改动。已跟踪的 `.env` 被 `git diff` 显示，是 `docs/reports/M2-rules-1.md` 记下的 `allow-git-read-only` 原有缺口。RS-2 的效果和 `docs/threat-model.md` 第 4 节已经记下的间接写法相同（`Start-Process boundkeep -ArgumentList …`、`cmd /c` 都是灰色）。两条都没有带来新能力，问题在于规则自以为看得见这个目标，实际看不见。（更正，2026-11-07，独立复审 IR-6：上面的对照是假机器上的结果。真实磁盘上项目里有受保护的名字时，`git log -p`、`git show HEAD` 是 deny（扫描子树），`git add -A` 是问；一直放行的只有 `git diff`、`git stash`。"没有带来新能力"的结论仍然对，真正的依据是 `git diff <空树> HEAD` 由规则放行、能打印全部已提交内容，见独立复审的 IR-7。）
 
 ## 2. 发现
 
