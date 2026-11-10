@@ -1508,6 +1508,30 @@ def _bare_short_name(ctx: _Ctx, st: _Line, word: Word) -> bool:
     return paths.is_short_name(text.rstrip(". "))
 
 
+def _short_named_path(ctx: _Ctx, word: Word, shell: str = "bash") -> bool:
+    """A program run by a path whose last segment is, as written, an 8.3 short name.
+
+    When the disk layer gives no single long name for it (``_short_name_program`` is None) the
+    rules cannot tell which program runs: after ``cd`` into a short-named directory the working
+    directory is not known, yet Git Bash runs ``./BOUNDK~1`` and PowerShell ``.\\BOUNDK~1.EXE``
+    there (measured; spec revision 19, review R18-4). A last segment with a variable or a glob in
+    it is no short name as written. PowerShell's dynamic command name (``& "$d\\BOUNDK~1.EXE"``)
+    arrives wrapped as ``$(<text>)`` (``pscmd._dynamic_word``); the text inside is what was written.
+    """
+    text = word.text
+    if ctx.platform != "windows" or not text or "\x00" in text:
+        return False
+    if shell == "powershell" and text.startswith("$(") and text.endswith(")"):
+        text = text[2:-1]
+    cut = max(text.rfind("/"), text.rfind("\\"))
+    if cut < 0:
+        return False
+    last = text[cut + 1 :]
+    if any(c in last for c in "$`*?["):
+        return False
+    return paths.is_short_name(last.rstrip(". "))
+
+
 def _short_name_program(ctx: _Ctx, notes: list[str], st: _Line, word: Word) -> str | None:
     """The long name of a program run by a path whose last segment is an 8.3 short name
     (``C:\\tools\\BOUNDK~1.EXE``), as the disk layer expands it; None when there is none.
@@ -1516,7 +1540,7 @@ def _short_name_program(ctx: _Ctx, notes: list[str], st: _Line, word: Word) -> s
     see the long name (spec revision 17). The path layer lists the lexical form (still marked
     ``short-name-unresolved``) and, for a file that is there, the expanded one; the names of the
     expanded forms must agree. A file that is not there gives None and the short name stays (gray
-    ``program-path-qualified``). Only the last segment is looked at.
+    ``program-short-name-unresolved``, spec revision 19). Only the last segment is looked at.
     """
     text = word.text
     if ctx.platform != "windows" or _dynamic(word) or not text or "\x00" in text:
@@ -1699,8 +1723,12 @@ def _command_action(
         if long_name is not None and long_name != program:
             program = long_name
             spelling.append("program-short-name")  # no allow rule relies on it (revision 17)
-        elif _bare_short_name(ctx, st, cmd.argv[0]):
-            spelling.append("program-short-name-unresolved")  # not sent to the model (rev. 18)
+        elif _bare_short_name(ctx, st, cmd.argv[0]) or (
+            long_name is None and _short_named_path(ctx, cmd.argv[0], st.shell)
+        ):
+            # not sent to the model: a bare short name (revision 18) or one by a path the disk
+            # layer cannot expand (revision 19)
+            spelling.append("program-short-name-unresolved")
         info = programs.classify(
             program,
             classify_args,
