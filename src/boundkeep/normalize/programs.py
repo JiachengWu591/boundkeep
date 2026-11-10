@@ -530,6 +530,7 @@ class _Acc:
         "network",
         "paths",
         "pathspec_magic",
+        "posix_devices",
         "prog",
         "recursive",
         "secret_hint",
@@ -541,8 +542,12 @@ class _Acc:
         "write_hint",
     )
 
-    def __init__(self, prog: str) -> None:
+    def __init__(self, prog: str, *, posix_devices: bool) -> None:
         self.prog = prog
+        # ``/dev/null`` and the like are devices and ``/dev/tcp/H/P`` a socket: true of Bash only.
+        # PowerShell and the programs it starts read them as paths on the current drive (measured,
+        # spec revision 20), so the PowerShell side passes False.
+        self.posix_devices = posix_devices
         self.flags: list[str] = []
         self.paths: list[tuple[Word, Access]] = []
         self.urls: list[str] = []
@@ -573,10 +578,15 @@ class _Acc:
         if t.startswith(_NET_DEVICES):
             # Bash opens a socket for /dev/tcp/HOST/PORT and /dev/udp/HOST/PORT: that is network
             # egress, not a file (the host goes to the domain check; the port is not needed).
+            # In PowerShell it is a file; the network target is kept beside the path so that no
+            # verdict gets looser (spec revision 20).
             kind, _, rest = t[5:].partition("/")
             self.url(f"{kind}://{rest.partition('/')[0]}")
-            return
-        if not (w.expands or w.glob) and (t == "-" or t in _BENIGN_DEVICES):
+            if self.posix_devices:
+                return
+        elif not (w.expands or w.glob) and (
+            t == "-" or (self.posix_devices and t in _BENIGN_DEVICES)
+        ):
             return
         self.paths.append((w, access))
 
@@ -2153,7 +2163,7 @@ def _h_interp(a: _Acc, args: Sequence[Word], family: str) -> None:
         else:
             _apply(a, opt, role, w)
     if module is not None and module.text == "pip":
-        sub = _Acc("pip")
+        sub = _Acc("pip", posix_devices=a.posix_devices)
         _h_pkg(sub, sc.pos, _PKG["pip"])
         a.flags.extend(sub.flags)
         a.paths.extend(sub.paths)
@@ -4652,6 +4662,7 @@ def _classify(
     shell: Shell,
     redirects: Sequence[Redirect],
     env: Sequence[tuple[str, Word]],
+    posix_devices: bool,
 ) -> CmdInfo:
     if shell == "powershell":
         # Local import: psprograms imports this module (it delegates external programs to it).
@@ -4659,7 +4670,7 @@ def _classify(
 
         return classify_ps(program, args, redirects=redirects, env=env)
     name, status = _resolve_program(program)
-    a = _Acc(name)
+    a = _Acc(name, posix_devices=posix_devices)
     if shell != "bash":
         a.known = False
         a.gray.append("shell-not-classified")
@@ -4736,6 +4747,7 @@ def classify(
     shell: Shell,
     redirects: Sequence[Redirect] = (),
     env: Sequence[tuple[str, Word]] = (),
+    posix_devices: bool = True,
 ) -> CmdInfo:
     """Classify ONE simple command (program name plus its argument words).
 
@@ -4747,13 +4759,17 @@ def classify(
     command gray. ``shell="powershell"`` is ``psprograms.classify_ps`` (cmdlet tables; canonical
     cmdlet names and parameters as ``pscmd`` produces them).
 
+    ``posix_devices=False`` is for an external program started from PowerShell: its ``/dev/null``,
+    ``/dev/zero``, ... are paths on the current drive and are listed, and ``/dev/tcp/H/P`` is
+    listed as a path beside its network target (spec revision 20).
+
     Never raises: an internal error yields ``known=False``, every risk tag and a gray reason.
     Unknown programs get ``known=False``; path-looking, expanding or globbing arguments become
     ``(word, "unknown")`` paths and URL-looking ones go to ``urls``. See ``derive_risk_tags`` for
     the tag rules.
     """
     try:
-        return _classify(program, args, shell, redirects, env)
+        return _classify(program, args, shell, redirects, env, posix_devices)
     except Exception:  # noqa: BLE001 - a classifier that raises would fail the gate open
         return CmdInfo(
             known=False,

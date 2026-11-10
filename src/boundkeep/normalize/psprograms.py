@@ -827,7 +827,7 @@ class _Ctx:
     __slots__ = ("a", "config", "name")
 
     def __init__(self, name: str) -> None:
-        self.a = _Acc(name)
+        self.a = _Acc(name, posix_devices=False)  # /dev/null is a path here (spec revision 20)
         self.config = False
         self.name = name
 
@@ -1321,7 +1321,10 @@ def _external(
         else:
             _h_wintool(ctx, base, args)
     else:
-        info = programs.classify(name, list(args), shell="bash")  # noqa: S604 - a dialect
+        # the Bash tables, but not Bash's devices: the program gets "/dev/null" as written
+        info = programs.classify(  # noqa: S604 - a dialect
+            name, list(args), shell="bash", posix_devices=False
+        )
         ctx = _Ctx(name)
         a = ctx.a
         a.known = info.known
