@@ -96,6 +96,13 @@
 >   - 最后一段本身带变量或通配符时不算。
 > - §7：带路径而展开不了的短名，也算"请求装不下的输入"，不送审。
 > - 代价：路径写错、根本运行不了的短名程序也会直接问，不再送审。
+>
+> **修订 20（2026-11-10，使用者说"修 /dev 这条"；范围选"整个 PowerShell 工具"，`/dev/tcp` 选"记路径，网络标记也留着"）**：修订 19 的全量里一条随机生成测试查到的问题，记录在 `docs/reports/M3a-ps-dev-paths.md`。
+> - §5.1 命令方言：`/dev/null`、`/dev/stdin`、`/dev/stdout`、`/dev/stderr`、`/dev/tty`、`/dev/zero` 只在 bash 方言里是无害设备、不记路径。PowerShell 方言里它们是普通路径，照常记：PowerShell 5.1 把 `/dev/zero` 解析成当前盘根下的 `\dev\zero`，`Remove-Item`、`Set-Content` 和重定向 `>` 都真的作用在那个文件上（实测）。原来 PowerShell 一侧照搬了 bash 的读法，路径被丢掉。
+>   - 整个 PowerShell 工具都这样：cmdlet 的路径参数、PowerShell 的重定向、外部程序的参数。外部程序拿到的是原样的文字，python、`curl.exe`、cmd 都按当前盘的路径读（实测）；只有 git 自己把 `/dev/null` 当空文件，这里不为它开例外。
+>   - `/dev/tcp/主机/端口`、`/dev/udp/主机/端口`：bash 方言不变（网络目标，不记路径）。PowerShell 方言里既记路径，也保留网络目标，判决取更严的。PowerShell 把它当普通文件读写（实测），保留网络目标只是为了没有一条判决变松。
+>   - bash 方言一条不变。
+> - 代价：PowerShell 里的 `git status 2>/dev/null` 从 allow 变成 ask。当前盘没有 `\dev` 目录时，这条命令在 PowerShell 5.1 里本来就报错、不运行（实测）。
 
 > **当前进度（2026-11-10）**
 >
@@ -147,8 +154,15 @@
 > - **R18-4 的修复（修订 19）**（已提交并推送，`30813d0` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-short-name-unresolved.md`）：使用者说"修 R18-4"，范围选"凡是展开不了都标"。
 >   - 带路径、最后一段是短名而展开不出长名的程序，是灰色 `program-short-name-unresolved`，不送审，两种 shell 都这样。
 >   - 规则条目与策略文件没变，判决级别没变。专门扫描 160 行中，49 行改为不送审；原有差分全部相同；评测除日期和延迟外相同。
->   - 全量分六段跑，不是一个进程：28654 通过、169 跳过、1 失败（合计与收集到的 28824 条相同）。失败的 hypothesis 测试查到一个早已存在的问题，`e208c74` 上同样失败：PowerShell 里 `/dev/null`、`/dev/zero` 等六个名字被当成 Bash 的无害设备，不记路径，而 PowerShell 把它们读成当前盘根下的普通路径。没有修，等使用者决定。
+>   - 全量分六段跑，不是一个进程：28654 通过、169 跳过、1 失败（合计与收集到的 28824 条相同）。失败的 hypothesis 测试查到一个早已存在的问题，`e208c74` 上同样失败：PowerShell 里 `/dev/null`、`/dev/zero` 等六个名字被当成 Bash 的无害设备，不记路径，而 PowerShell 把它们读成当前盘根下的普通路径。（修订 20 已修，见下一条。）
 >   - 这次修复没有复审，真实宿主里没有跑。
+> - **PowerShell 里的 `/dev/null`、`/dev/zero` 是普通路径（修订 20）**（已提交，`92a5e56` 代码，文档在其后一个提交，未推送，未打标签；记录 `docs/reports/M3a-ps-dev-paths.md`）：使用者说"修 /dev 这条"，范围选"整个 PowerShell 工具"，`/dev/tcp` 选"记路径，网络标记也留着"。
+>   - 六个设备名只在 bash 方言里不记路径；PowerShell 方言里照常记，cmdlet、重定向、外部程序的参数都一样。`/dev/tcp/…` 在 PowerShell 里既记路径，也保留网络目标。
+>   - 规则条目与策略文件没变，bash 方言没变。专门扫描 2482 行：0 行变松，PowerShell 有 120 行收紧。
+>   - 原有差分全部相同；评测除日期和延迟外相同；变异 13 个全部抓到。
+>   - 全量分六段跑，不是一个进程：28739 通过、169 跳过、0 失败（合计与收集到的 28908 条相同）。
+>   - 这次修复没有复审，真实宿主里没有跑。
+>   - 代价：PowerShell 里的 `git status 2>/dev/null` 从 allow 变成 ask。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -395,6 +409,10 @@ Claude Code
   - `protect-guard-config` 的路径集要包含实际生效的配置目录（设置了 `CLAUDE_CONFIG_DIR` 时）。
 - **命令方言**：`Action.shell` 取 `bash` 或 `powershell`，由 `tool_name`（`Bash` / `PowerShell`）决定。
   - Bash（含 Git Bash）：沿用 §7 的 bashlex，按 Bash 语义（反斜杠是转义）解析，不"修复" Windows 路径。
+  - **`/dev/` 下的名字因方言而异**（修订 20）：
+    - bash 方言：`/dev/null`、`/dev/stdin`、`/dev/stdout`、`/dev/stderr`、`/dev/tty`、`/dev/zero` 是无害设备，不记路径；`/dev/tcp/主机/端口`、`/dev/udp/主机/端口` 是网络目标，不记路径。
+    - PowerShell 方言：这些名字都是普通路径，照常记。PowerShell 5.1 把 `/dev/zero` 解析成当前盘根下的 `\dev\zero`，cmdlet 和重定向都真的读写、删除那个文件；外部程序拿到原样的文字，python、`curl.exe`、cmd 也按当前盘的路径读（实测）。cmdlet 的路径参数、重定向、外部程序的参数都这样记。`/dev/tcp/…`、`/dev/udp/…` 除了记路径，还保留网络目标，判决取更严的。
+    - git 自己把 `/dev/null` 当空文件（实测 `git hash-object /dev/null`），不为它开例外：PowerShell 里的 `git diff --no-index /dev/null x` 会多记一个项目外的路径。
   - PowerShell：优先用 PowerShell 自带的 AST 解析器（`System.Management.Automation.Language.Parser`，只解析不执行），由常驻进程托管一个长驻的辅助进程（`-NoProfile`，请求经 stdin 传入，绝不拼进命令行）。开发机初测：Windows PowerShell 5.1（FullLanguage）下 `Parser::ParseInput` 可用，常见命令能解析出命令名、参数名与字面量参数；动态命令（`& $x`）取不到命令名；5.1 不认识的 `&&` 产生解析错误（应灰色）；单次解析约 0.02 毫秒，但新起一个 `powershell.exe -NoProfile` 要约 1 秒，所以辅助进程必须长驻、在常驻进程启动时预热，未就绪时这次调用按灰色处理，不占用 hook 的时间预算。别名还原用 `AliasInfo.Definition`（总有值）；`ResolvedCommandName` 在模块尚未自动加载时为空，不能依赖；取不到或不唯一一律灰色。退路是自写的保守词法器，只认"单条简单命令 + 字面量参数"，其余灰色 `[待验证]`（M1b）。M1b 完成前，PowerShell 命令一律灰色并带 `exec` 标签。M1b 之后，下列构造仍一律灰色：`Invoke-Expression` / `iex`、`-EncodedCommand`、`& $变量`、反引号拼接、`$(...)` 子表达式、`cmd /c`、`Start-Process`、脚本块、经 `.ps1` 间接执行。5.1 与 7 的语法不同（5.1 没有 `&&`、`||`、三元运算符），解析失败即灰色。
 - **策略**：规则与测试可带 `platform`（§8）；Windows 特有的目标（凭据与浏览器配置目录、PowerShell profile、启动文件夹、`Run` 注册表项、计划任务）放进 `platform: windows` 的规则；覆盖范围逐项记在 `docs/threat-model.md`，没覆盖的明说。
 - **文件与日志**：Windows 默认目录为 `%USERPROFILE%\.boundkeep\`；`init` 读 settings 时容忍 UTF-8 BOM，写入时不带 BOM，并用"写临时文件再 `os.replace`"保证原子；`doctor` 对含 BOM 的 settings 在含 boundkeep hook 的层里报 FAIL、在其他层报 WARN（PowerShell 5.1 的 `Set-Content -Encoding utf8` 会写入 BOM）；`installs.json` 除安装记录外还记 `hook_files`（hook 解释器与脚本的 sha256，`doctor` 与守护进程启动时校验）与 `watched`（会运行命令的配置键与外来 hook 的哈希基线，供 ConfigChange 判断改动）；`0600` 在 Windows 上没有意义，`doctor` 检查该目录与管道的 ACL 没有授予其他用户。

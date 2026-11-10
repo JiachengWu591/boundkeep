@@ -114,5 +114,5 @@ PowerShell 不运行不带 `.EXE` 的短名路径，这一条是修订 17 复审
   - `programs.py` 把 `/dev/null`、`/dev/stdin`、`/dev/stdout`、`/dev/stderr`、`/dev/tty`、`/dev/zero` 当作无害设备，不记路径。这是 Bash 的读法，PowerShell 一侧也照用了。
   - PowerShell 5.1 把它们解析成当前盘根下的普通路径：`/dev/zero` 是 `E:\dev\zero`（实测路径解析，没有动文件）。
   - 结果（PowerShell，没有后端）：`Remove-Item -Recurse /dev/null` 是灰色、送审，而 `/dev/nullx` 是 deny（`rm-outside-project`）；`Remove-Item /dev/zero` 是灰色，而 `/dev/zerox` 是 ask（`ask-delete-outside-project`）。
-  - 只牵涉这六个名字。规格里没有写到这一点，要修就先改规格，等使用者决定。
+  - 只牵涉这六个名字。规格里没有写到这一点，要修就先改规格，等使用者决定。（规格修订 20 已修，记录 `docs/reports/M3a-ps-dev-paths.md`。）
   - 失败的用例已经存进 `.hypothesis/`（不进 git），修好之前，这条测试在本机每次都会失败。

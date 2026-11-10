@@ -162,10 +162,21 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - 测试：新测试 29 条，在修改前的代码上 8 条行为测试失败。变异 9 个全部抓到（补了一条测试输入）。受影响的 18 个测试文件 6085 通过。
   - 全量分六段跑，不是一个进程：28654 通过、169 跳过、1 失败，用时 4:39:20，合计与收集到的 28824 条相同（05:40 左右电源换成了最佳性能）。
     - 失败的是 `test_norm_psprograms.py` 的 hypothesis 测试，这次随机生成到 `Remove-Item /dev/zero`。`e208c74` 上同样失败，和这次修改无关，没有修。
-    - 它查到一个早已存在的问题：`programs.py` 把 `/dev/null`、`/dev/zero` 等六个名字当无害设备、不记路径。这是 Bash 的读法；PowerShell 5.1 把它们解析成当前盘根下的普通路径（`/dev/zero` 是 `E:\dev\zero`）。所以 PowerShell 里 `Remove-Item -Recurse /dev/null` 是灰色、送审，`/dev/nullx` 是 deny。规格里没有写到，要修先改规格，等使用者决定。
+    - 它查到一个早已存在的问题：`programs.py` 把 `/dev/null`、`/dev/zero` 等六个名字当无害设备、不记路径。这是 Bash 的读法；PowerShell 5.1 把它们解析成当前盘根下的普通路径（`/dev/zero` 是 `E:\dev\zero`）。所以 PowerShell 里 `Remove-Item -Recurse /dev/null` 是灰色、送审，`/dev/nullx` 是 deny。规格里没有写到，要修先改规格。（修订 20 已修，见下一条。）
     - 失败用例存在 `.hypothesis/` 里，修好之前本机每次都会失败。
   - 这次修复没有复审，真实宿主里没有跑。
   - 代价：路径写错、文件不存在的短名程序也直接问，不再送审。
+- **PowerShell 里的 `/dev/null`、`/dev/zero` 是普通路径，规格修订 20**（2026-11-10，已提交，`92a5e56` 代码，文档在其后一个提交，未推送，未打标签；记录 `docs/reports/M3a-ps-dev-paths.md`）：使用者说"修 /dev 这条"，范围选"整个 PowerShell 工具"，`/dev/tcp` 选"记路径，网络标记也留着"。
+  - 改了什么：`/dev/null`、`/dev/stdin`、`/dev/stdout`、`/dev/stderr`、`/dev/tty`、`/dev/zero` 只在 bash 方言里是无害设备。PowerShell 方言里照常记路径：cmdlet 的路径参数、重定向、外部程序的参数（`programs._Acc` 的 `posix_devices`，建的时候必须给，`psprograms` 一侧给 False）。`/dev/tcp/…`、`/dev/udp/…` 在 PowerShell 里既记路径，也保留网络目标。
+  - 实测（PowerShell 5.1，临时目录挂成 PSDrive）：`Remove-Item /dev/zero`、`Remove-Item -Recurse /dev/null`、`Set-Content`、`>` 都真的作用在当前盘根下的 `\dev\…` 上；`'x' > /dev/tcp/example.com/80` 写的是文件。python、`curl.exe`、cmd 也按当前盘的路径读，只有 git 自己把 `/dev/null` 当空文件。
+  - 规则条目与策略文件没变，bash 方言一条没变。专门扫描 2482 行：0 行变松，PowerShell 有 120 行收紧（`Remove-Item -Recurse -Force /dev/null` 从灰色到 deny），672 行级别相同、多记了路径。
+  - 测试：新测试 84 条，在修改前的代码上 72 条失败。原来失败的那条随机生成测试通过了。
+  - 原有差分全部相同；`boundkeep test` 1142 / 0、334 / 0；评测除日期和延迟外相同。变异 13 个全部抓到（第一轮有一个等价的存活，所以把 `posix_devices` 改成了必填的构造参数）。受影响的 26 个测试文件 8795 通过，1 条失败和这次修改无关（`test_norm_bash.py` 里和真实 bash 对比的一个样本，只在从 Git Bash 启动 pytest 时才跑，旧代码上同样失败）。
+  - 全量分六段跑，不是一个进程：28739 通过、169 跳过、0 失败，用时 2:32:27，六段都一次跑完，合计与收集到的 28908 条相同（从头到尾电源都是最佳性能）。
+  - 这次修复没有复审，真实宿主里没有跑。
+  - 代价：PowerShell 里的 `git status 2>/dev/null` 从 allow 变成 ask（当前盘没有 `\dev` 时这条命令本来就报错、不运行，实测）；丢弃输出要写 `$null`。
+  - 没有改：单独的 `-` 在 PowerShell 的 cmdlet 里是当前目录下名叫 `-` 的文件（实测 `Remove-Item -` 删掉它），两种方言里仍然不记路径。
+  - **随机生成测试（hypothesis）的失败不是偶发：它会把失败用例存进 `.hypothesis/`，以后每次重放。先在旧代码上单跑，旧代码也失败就是早已存在的问题。**
 - **下一步**：M3b（自备密钥、确认费用）或 M4（不依赖 M3b）；接真实后端之前，收尾记录第 5 节里还剩 `auto` 模式的实测。总览见 `PROJECT_SPEC.md` 开头的"当前进度"与 §14 的状态列。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
 - M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。
