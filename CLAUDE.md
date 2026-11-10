@@ -149,11 +149,23 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
     - R18-3：`git log -p --full-diff -- sub` 只读 `sub`，规则放行；实测打印碰过 `sub` 的提交的全部补丁。
     - R18-1 到 R18-3 能打印的，IR-7 的 `git diff <空树> HEAD` 都能打印（规则放行，实测）。
     - 2026-11-10 使用者决定：IR-7 记为接受的残余，R18-1 到 R18-3 作为同类记在 `docs/threat-model.md` 第 4 节 IR-7 那一条下面，不修。以后查到打印已提交内容、又不超出 `git diff <空树> HEAD` 的 git 写法，也记在那里，不单独修。
-    - R18-4：`cd` 进路径带短名的目录之后，`./BOUNDK~1`、`.\BOUNDK~1.EXE` 是灰色、照常送审，两种 shell 实测都运行。它和 IR-7 无关，可以单独修，要先定设计。
+    - R18-4：`cd` 进路径带短名的目录之后，`./BOUNDK~1`、`.\BOUNDK~1.EXE` 是灰色、照常送审，两种 shell 实测都运行。它和 IR-7 无关，可以单独修，要先定设计。（修订 19 已修，见下一条。）
     - I-1：同一条命令里先 `cd sub` 再 `git log -p`，修订 18 之前就是 deny；子目录修复只在 hook 收到的工作目录本身在子目录时起作用，这一点要在真实宿主里量。
   - 代价：子目录里不带 `--` 的 `git log -p b.txt` 现在是 deny，和在根运行一致。
   - **给 `CmdInfo` 加字段时，先搜测试里逐个抄字段的替身。受影响文件按改动的函数挑，挑不到它们；它们出错时守卫给灰色，断言"不是 deny"的测试仍会通过。**
   - **复审不能只看"改了的地方对不对"：同一类读法在别的子命令、别的工作目录里也要过一遍。修订 17 的复审漏掉了 `git show HEAD HEAD:src` 和子目录，都是修 R17-1 时顺着同一类找到的。**
+- **R18-4 的修复，规格修订 19**（2026-11-10，已提交，`30813d0` 代码，文档在其后一个提交，未推送，未打标签；记录 `docs/reports/M3a-short-name-unresolved.md`）：使用者说"修 R18-4"，范围选"凡是展开不了都标"。
+  - 改了什么：Windows 上，程序带路径、最后一段是字面上的 8.3 短名，而磁盘层展开不出唯一的长名时，标灰色 `program-short-name-unresolved`，不送审（`event._short_named_path`）。展开不出的情况包括：工作目录未知（`cd` 进短名目录之后）、目录写成变量或通配符、文件不存在、展开出的名字不唯一。两种 shell 都这样。PowerShell 读不出的命令名包成 `$(…)`，先拆开再看。
+  - 规则条目与策略文件没变，判决级别一条没变。
+    - 专门扫描 160 行：49 行多了这个灰色原因、改为不送审，其余完全相同。
+    - 原有差分全部相同；`boundkeep test` 1142 / 0、334 / 0；评测除日期和延迟外相同。
+  - 测试：新测试 29 条，在修改前的代码上 8 条行为测试失败。变异 9 个全部抓到（补了一条测试输入）。受影响的 18 个测试文件 6085 通过。
+  - 全量分六段跑，不是一个进程：28654 通过、169 跳过、1 失败，用时 4:39:20，合计与收集到的 28824 条相同（05:40 左右电源换成了最佳性能）。
+    - 失败的是 `test_norm_psprograms.py` 的 hypothesis 测试，这次随机生成到 `Remove-Item /dev/zero`。`e208c74` 上同样失败，和这次修改无关，没有修。
+    - 它查到一个早已存在的问题：`programs.py` 把 `/dev/null`、`/dev/zero` 等六个名字当无害设备、不记路径。这是 Bash 的读法；PowerShell 5.1 把它们解析成当前盘根下的普通路径（`/dev/zero` 是 `E:\dev\zero`）。所以 PowerShell 里 `Remove-Item -Recurse /dev/null` 是灰色、送审，`/dev/nullx` 是 deny。规格里没有写到，要修先改规格，等使用者决定。
+    - 失败用例存在 `.hypothesis/` 里，修好之前本机每次都会失败。
+  - 这次修复没有复审，真实宿主里没有跑。
+  - 代价：路径写错、文件不存在的短名程序也直接问，不再送审。
 - **下一步**：M3b（自备密钥、确认费用）或 M4（不依赖 M3b）；接真实后端之前，收尾记录第 5 节里还剩 `auto` 模式的实测。总览见 `PROJECT_SPEC.md` 开头的"当前进度"与 §14 的状态列。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
 - M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。

@@ -84,6 +84,19 @@
 > - §7：带 `program-short-name-unresolved` 的调用不送审，和 `program-fold-variant` 一样：发给模型的是 `BOUNDK~1`，模型看不出它是什么程序。
 > - §5.1 的文字（R17-5）：`--` 之前的 `::x` 只在有一个字面上叫 `::x` 的文件时才是 pathspec，NTFS 上不会有这样的文件（实测 `git show '::src'` 退出码 128）；规则仍按 pathspec 读，比 git 读得多。
 
+> **修订 19（2026-11-10，使用者说"修 R18-4"，范围选"凡是展开不了都标"）**：复审 `docs/reviews/M3a-rev18-review.md` 的 R18-4，记录在 `docs/reports/M3a-short-name-unresolved.md`。
+> - §5.1：Windows 上，带路径的程序最后一段是字面上的 8.3 短名，而磁盘层展开不出唯一的长名时，是灰色 `program-short-name-unresolved`，和修订 18 的裸短名一样；原来是灰色 `program-path-qualified`，有后端时送审。
+>   - 展开不出长名的情况包括：
+>     - 工作目录未知，例如 `cd` 进了路径里带短名的目录之后，`./BOUNDK~1`（Git Bash）和 `.\BOUNDK~1.EXE`（PowerShell）照样运行（实测，R18-4）；
+>     - 目录写成变量或通配符；
+>     - 文件不存在；
+>     - 在几个可能的工作目录下解析出不同的名字；
+>     - 展开出的名字仍像短名。
+>   - 两种 shell 都这样。
+>   - 最后一段本身带变量或通配符时不算。
+> - §7：带路径而展开不了的短名，也算"请求装不下的输入"，不送审。
+> - 代价：路径写错、根本运行不了的短名程序也会直接问，不再送审。
+
 > **当前进度（2026-11-10）**
 >
 > - **已完成并有标签**：M0a、M0、M1、M1b、M1c、M1c-2、M1c-3、M1c-4、M2（`m2-baseline`）、M3a（`m3a-done`，2026-11-01；LLM 层没有接过真实服务）。M1+M1b、M1c / M1c-2 的独立 X1 审查与复审都已做完，高危、中危清零，修复已提交（M1c / M1c-2 的规则冻结在 `6821142`，标签 `m1c2-x1-rereview2-fixes-done`；审查在 `docs/reviews/`，修复报告 `docs/reports/M1c2-review-fixes*.md`）。M1c-4 的真实会话手工验收未做（`docs/reports/M1c4.md`）。
@@ -130,7 +143,12 @@
 >   - 复审（2026-11-10，`docs/reviews/M3a-rev18-review.md`，不是独立的，同一个会话做的）：目标达到了，没有回退；高危、中危 0，低危 R18-1 到 R18-4，信息 I-1，都没有修。
 >     - R18-1 到 R18-3 由规则放行，实测都打印受保护文件：子目录里比较两棵子树；花括号里带冒号的修订号；`--full-diff`。它们能打印的内容，IR-7 的写法都能打印。
 >     - 2026-11-10 使用者决定：IR-7 记为接受的残余，R18-1 到 R18-3 作为同类记在 `docs/threat-model.md` 第 4 节，不修。
->     - R18-4：`cd` 进短名目录之后运行的短名程序是灰色、照常送审，和 IR-7 无关。
+>     - R18-4：`cd` 进短名目录之后运行的短名程序是灰色、照常送审，和 IR-7 无关。（修订 19 已修，见下一条。）
+> - **R18-4 的修复（修订 19）**（已提交，`30813d0` 代码，文档在其后一个提交，未推送，未打标签；记录 `docs/reports/M3a-short-name-unresolved.md`）：使用者说"修 R18-4"，范围选"凡是展开不了都标"。
+>   - 带路径、最后一段是短名而展开不出长名的程序，是灰色 `program-short-name-unresolved`，不送审，两种 shell 都这样。
+>   - 规则条目与策略文件没变，判决级别没变。专门扫描 160 行中，49 行改为不送审；原有差分全部相同；评测除日期和延迟外相同。
+>   - 全量分六段跑，不是一个进程：28654 通过、169 跳过、1 失败（合计与收集到的 28824 条相同）。失败的 hypothesis 测试查到一个早已存在的问题，`e208c74` 上同样失败：PowerShell 里 `/dev/null`、`/dev/zero` 等六个名字被当成 Bash 的无害设备，不记路径，而 PowerShell 把它们读成当前盘根下的普通路径。没有修，等使用者决定。
+>   - 这次修复没有复审，真实宿主里没有跑。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -362,7 +380,16 @@ Claude Code
     - **程序名和系统目录也一样**（修订 14）：判断带路径的程序在不在系统目录时用 `windows_fold`，`C:\Windowſ\System32\git.exe` 不是系统里的 `git`，是灰色 `program-path-qualified`。程序名仍按 `casefold` 认，`ſudo` 仍然命中 `sudo` 的规则；但 `windows_fold` 和 `casefold` 读出来不一样的写法（`lſ`、`ﬁnd`、`Teſt-Path`）是灰色 `program-fold-variant`，allow 规则用不上，也不送审（§7）。真实 Git Bash 里 `lſ` 经 PATH 跑的是另一个文件，真实 PowerShell 5.1 找不到 `Teſt-Path`（实测）。
     - **系统目录只认确切的几个**（修订 15）：Windows 上带路径的程序，目录正好是 `%SystemRoot%\System32`、`%SystemRoot%\SysWOW64`，或 `%ProgramFiles%`、`%ProgramFiles(x86)%` 下 Git 的 `cmd`、`bin`、`usr\bin`、`mingw64\bin`、`mingw32\bin`，并且带盘符，才算系统里的程序。bash 方言里不带盘符的 `/usr/bin`、`/bin` 等也算：那是 Git Bash 自己的目录，PATH 找到的也是那里。子目录、别的盘、不带盘符的 Windows 目录、带盘符的 POSIX 目录、msys / cygwin、PowerShell 里不带盘符的 `/usr/bin`（当前盘的根下）都不算：`System32\Tasks` 和 `C:\` 下新建的文件夹普通账户都能写，`D:\`、`E:\` 的根也能（实测 ACL）。变量取守护进程的环境，没有时按 Windows 的默认值。
     - **程序名结尾的点和空格**（修订 16）：Windows 上取程序名之前先去掉它们，再去掉 `.exe`。PowerShell 5.1 按路径运行 `C:\Windows\System32\cmd.exe.`、`cmd.exe..`、`cmd.exe `（带空格）时运行的就是 `cmd.exe`，`Start-Process` 也一样（实测），所以 deny / ask 规则看去掉之后的名字：`& '…\boundkeep.exe.' mode audit-only` 命中 `deny-boundkeep-state-commands`，`& '…\diskpart.exe.'` 命中 `deny-disk-tools`。名字因此变了的是灰色 `program-name-trailing-dots`，allow 规则用不上。启动器（`python -m boundkeep`、`uv run`、`uvx`、`pipx run`、`poetry run`）的名字也这样去掉，任何平台上都是：多认出一个启动器只会让里面的命令被判，带启动器的调用本来就不放行。裸名字（`cmd.exe.`）和 Git Bash 里的这种写法找不到程序（实测），所以多出来的 deny 碰不到能运行的命令。
-    - **程序名的 8.3 短名**（修订 17，独立复审 IR-4）：PowerShell 5.1 按路径运行 `C:\…\BOUNDK~1.EXE` 这样的短名（实测）。Windows 上，带路径的程序最后一段像 8.3 短名时，到磁盘上解析出它的长名（与路径的磁盘层同一次查找），deny / ask 规则看长名：`& 'C:\tools\BOUNDK~1.EXE' mode audit-only` 命中 `deny-boundkeep-state-commands`。名字因此变了的是灰色 `program-short-name`，allow 规则用不上。文件不存在、或者在几个可能的工作目录下解析出不同的名字时，名字不变，照旧是灰色 `program-path-qualified`。只看最后一段；目录里的短名（`C:\PROGRA~1\Git\cmd\git.exe`）不展开，那样的写法本来就不被当成系统目录里的程序。bash 方言里（修订 18，复审 R17-2）：Git Bash 找不到 `…/BOUNDK~1` 时自己补上 `.exe`（实测），所以按原样找不到时补上 `.exe` 再找一次；裸名字本身像短名（`BOUNDK~1`）时，Git Bash 经 PATH 运行它（实测），规则层不知道 PATH，是灰色 `program-short-name-unresolved`，不送审。PowerShell 5.1 不运行这两种写法（实测）。
+    - **程序名的 8.3 短名**（修订 17，独立复审 IR-4）：PowerShell 5.1 按路径运行 `C:\…\BOUNDK~1.EXE` 这样的短名（实测）。Windows 上，带路径的程序最后一段像 8.3 短名时，到磁盘上解析出它的长名（与路径的磁盘层同一次查找），deny / ask 规则看长名：`& 'C:\tools\BOUNDK~1.EXE' mode audit-only` 命中 `deny-boundkeep-state-commands`。名字因此变了的是灰色 `program-short-name`，allow 规则用不上。
+
+      展开不出唯一的长名时，名字不变，是灰色 `program-short-name-unresolved`，不送审（修订 19，复审 R18-4；原来是灰色 `program-path-qualified`）。展开不出长名的情况包括：
+      - 文件不存在；
+      - 在几个可能的工作目录下解析出不同的名字；
+      - 工作目录未知，例如 `cd` 进了路径里带短名的目录之后；
+      - 目录写成变量或通配符；
+      - 展开出的名字仍像短名。
+
+      最后一段本身带变量或通配符时不算。只看最后一段；目录里的短名（`C:\PROGRA~1\Git\cmd\git.exe`）不展开，那样的写法本来就不被当成系统目录里的程序。bash 方言里（修订 18，复审 R17-2）：Git Bash 找不到 `…/BOUNDK~1` 时自己补上 `.exe`（实测），所以按原样找不到时补上 `.exe` 再找一次；裸名字本身像短名（`BOUNDK~1`）时，Git Bash 经 PATH 运行它（实测），规则层不知道 PATH，是灰色 `program-short-name-unresolved`，不送审。PowerShell 5.1 不运行这两种写法（实测）。
   - **方向规则**：deny / ask 侧"可能匹配即匹配"；allow 侧（`inside_project`）"确定在内才算在内"；无法确定（不存在且含短名的路径、含未解析变量、驱动器相对路径）不算在内，进灰色。
   - 输入既可能是反斜杠形式（hook 的 `file_path`），也可能是 POSIX 形式（Bash 命令里的路径）；规则里的 `path_glob` 一律用正斜杠书写，匹配前双方转成同一规范形式。
   - `protect-guard-config` 的路径集要包含实际生效的配置目录（设置了 `CLAUDE_CONFIG_DIR` 时）。
@@ -497,7 +524,7 @@ event(pre) ─> normalize ─> Action
   - 子树扫描超限；
   - MCP 参数没看全，或参数里带命令；
   - 什么都没认出来（没有程序名、路径、主机，也没有 MCP 工具名）；
-  - **请求装不下的输入**（修订 7，P-F34；X1 审查 F3、F4）：命令里的 here-document 或 here-string（shell 自己当命令读的除外，它们被解析成单独的命令）、`NAME=value` 赋值（命令前缀、`env NAME=v`、单独的赋值）、PowerShell 里管道进解释器的字符串与赋值语句、MCP 调用的参数。§9.2 的请求从不带这些内容，模型看不到它们。只有折叠后才读成某个名字的程序名（`program-fold-variant`，修订 14）和 bash 方言里像 8.3 短名的裸程序名（`program-short-name-unresolved`，修订 18）也算：请求里的名字不是实际运行的程序。
+  - **请求装不下的输入**（修订 7，P-F34；X1 审查 F3、F4）：命令里的 here-document 或 here-string（shell 自己当命令读的除外，它们被解析成单独的命令）、`NAME=value` 赋值（命令前缀、`env NAME=v`、单独的赋值）、PowerShell 里管道进解释器的字符串与赋值语句、MCP 调用的参数。§9.2 的请求从不带这些内容，模型看不到它们。只有折叠后才读成某个名字的程序名（`program-fold-variant`，修订 14）和 bash 方言里像 8.3 短名的裸程序名（`program-short-name-unresolved`，修订 18）也算：请求里的名字不是实际运行的程序。带路径、最后一段是短名而展开不出长名的程序名（同一个灰色原因，修订 19）也一样。
 
   这些调用直接 ask（`decided_by: gray-unanalysed`，理由里写明没有送审），不按 `on_failure`：它们不是审计失败，与没有配置后端时的灰色相同。
 - **碰到 Windows 设备路径的灰色调用不送审**（修订 10）：路径的 key 在 `//./` 之下时，key 说不清它通向哪里，模型放行的只是一串字符。`//./globalroot/device/mup/srv/share/x` 是网络共享（公开资料的说法，没有实测），`//./pipe/x` 是在那个管道上监听的程序，`//./volume{...}`、`//./harddiskvolume1` 与 `//./c:` 是整个卷，`//./com1`、`//./con` 是硬件与控制台，`//./aux` 也可能是项目里的 `aux.py`。这些调用直接 ask（`decided_by: gray-device-path`，理由里写明没有送审，不写路径），不按 `on_failure`。
