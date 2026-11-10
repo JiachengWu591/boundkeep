@@ -45,7 +45,7 @@
 ## 4. LLM 审计层做不到什么
 
 - **不能识别"看起来和任务相符"的恶意动作**，如果规则也认不出来。规则层仍然是第一道、也是确定性的一道；模型只处理灰色地带，而它的判断质量 M3a 没有测过（M3b 的事）。
-- **间接运行 boundkeep 的状态命令**（`mode`、`uninstall`、`init`、`serve`、`trust`、`taint`）：`deny-boundkeep-state-commands` 认得出 `boundkeep`、`boundkeep.exe`、`python -m boundkeep` 及其模块（`boundkeep.cli`、`boundkeep.__main__`，X1 复审 R-4）、`uv run` / `uvx` / `pipx run` 这些启动方式，以及程序名或启动器名结尾带点或空格的路径（`& '…\boundkeep.exe.'`，PowerShell 5.1 照样运行它，实测；规格修订 16）、最后一段是 8.3 短名且磁盘上解析得出长名的路径（`& '…\BOUNDK~1.EXE'`；规格修订 17）；更间接的写法认不出，是灰色：`python -c "from boundkeep.cli import main; …"`、`python -m runpy boundkeep …`、按路径运行 `cli.py`、`cmd /c`、`Start-Process`、`bash -c`。没有 LLM 时它们问用户；配置了 LLM 时由模型判断（命令文字在请求里）。`trust add` 与 `taint clear` 另有运行时的两道检查，`mode` 与 `uninstall` 没有。
+- **间接运行 boundkeep 的状态命令**（`mode`、`uninstall`、`init`、`serve`、`trust`、`taint`）：`deny-boundkeep-state-commands` 认得出 `boundkeep`、`boundkeep.exe`、`python -m boundkeep` 及其模块（`boundkeep.cli`、`boundkeep.__main__`，X1 复审 R-4）、`uv run` / `uvx` / `pipx run` 这些启动方式，以及程序名或启动器名结尾带点或空格的路径（`& '…\boundkeep.exe.'`，PowerShell 5.1 照样运行它，实测；规格修订 16）、最后一段是 8.3 短名且磁盘上解析得出长名的路径（`& '…\BOUNDK~1.EXE'`；规格修订 17；Git Bash 里不带 `.EXE` 的 `'…/BOUNDK~1'` 也认得，修订 18）；经 PATH 运行的裸短名（Git Bash 里的 `BOUNDK~1 mode audit-only`）认不出是哪个程序，是灰色，不送审，总是问（修订 18）；更间接的写法认不出，是灰色：`python -c "from boundkeep.cli import main; …"`、`python -m runpy boundkeep …`、按路径运行 `cli.py`、`cmd /c`、`Start-Process`、`bash -c`。没有 LLM 时它们问用户；配置了 LLM 时由模型判断（命令文字在请求里）。`trust add` 与 `taint clear` 另有运行时的两道检查，`mode` 与 `uninstall` 没有。
 - **任务意图本身可能被污染**：用户自己粘贴的文字不进任务意图（只留一个标记和长度），但用户亲手打的字如果是照着网页抄的，模型无从分辨。
 - **缓存**：同一个问题（同样的动作、意图、污染位、后端、模型、提示词版本）10 分钟内（`cache_ttl_s`）直接用上次的模型结论，代码仍然重新裁决一次。缓存只在内存里。
 - **同一用户的其他进程**能冒充守护进程、读写 `session.sqlite`、改环境变量里的密钥；这些都在规格 §3 的范围外。
@@ -54,3 +54,4 @@
   - 同样的内容，`git show HEAD`、`git log -p`、`git show HEAD:.env` 在项目里有受保护名字时是 deny。
   - `docs/reports/M2-rules-1.md` 原来只写了"已跟踪的 `.env` 被改过之后会被 `git diff` 显示"，实际范围更宽：任何已提交的内容、包括历史里的，都能这样打印。
   - 收紧它（带修订号的 `diff` 也扫描工作区）会让 `git diff HEAD~1` 在任何有受保护文件的项目里被拒绝，所以要由使用者决定。在那之前，`--` 之前的 pathspec 魔法（修订 17 已修）这类写法即使修了，也不减少 agent 实际能读到的内容。
+  - 同类而写法普通的 `git diff HEAD:src`（把子树当仓库根比较，打印每个已跟踪文件）在修订 18 收紧了（复审 R17-1）：它按整个仓库读，不牵连 `git diff HEAD~1`。空树那一种仍然放行。

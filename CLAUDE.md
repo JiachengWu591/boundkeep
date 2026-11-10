@@ -126,8 +126,26 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
     - R17-3：`git archive ':/text'` 打包按提交说明找到的提交，判决是灰色。
     - R17-4：`git archive --mtime 值 HEAD`、`--add-virtual-file 值 HEAD` 的值被当成 tree-ish，判决是灰色。
     - R17-5、R17-6 是文字：`--` 之前的 `::x` git 不接受（退出码 128）；两种 shell 的判决在带冒号的操作数上有 584 对不同，都是 PowerShell 更松，实测的 14 条 git 都不打印内容。
+    - （R17-1 到 R17-6 修订 18 已修，见下一条。）
 
   - **改 git 操作数的读法时，要把同一个操作数写在 `--` 前后各算一次对照：`--` 之前的读法不应比之后松，除非那个词在 `--` 之前是修订号。**
+- **修订 17 复审的修复，规格修订 18**（2026-11-09，已提交，`2534c31` 代码，文档在其后一个提交，未推送，未打标签；记录 `docs/reports/M3a-rev17-review-fixes.md`）：使用者说"开始执行修复"。R17-1 选"按树的读法收紧"，R17-2 选"补 .exe，裸短名不送审"，修复时查到的子目录问题选"一起修"。
+  - R17-1：`git diff` 里 `--` 之前不以 `:` 开头的 `REV:PATH` 按整个仓库读（`programs._git_diff_trees`）；正好两个 `REV:PATH`、`--` 之后有 pathspec、只列名字时不这样。`git diff HEAD~1` 不变，IR-7（空树）不变。
+  - 复审漏掉、修时查到的两处，都由规则放行、实测打印 `.env`：
+    - `git show HEAD HEAD:src`：`REV:PATH` 现在只在每个操作数都是它时才免于扫描；
+    - 工作目录在项目子目录时的 `git log -p`、`git show HEAD`：新字段 `CmdInfo.top_paths`，`show`、`log -p`、`stash show -p` 和 `diff` 的子树比较另读项目根，带 `top` 或只有排除的 pathspec 另按项目根读（`grep`、`archive` 只作用于当前目录，实测，只有排除时不另读）。只在工作目录位于项目根之下时加（`event._top_words`）。
+  - R17-3、R17-4：`archive` 的 tree-ish 是 `:/text` 时不缩小范围；选项表加 `--mtime`、`--add-virtual-file`；有不认识的长选项时不缩小范围。
+  - R17-2：bash 方言里带路径的短名找不到时补 `.exe` 再找；像短名的裸程序名是灰色 `program-short-name-unresolved`，不送审（`pipeline._UNSHOWN_REASONS`）。PowerShell 不变（实测不运行这两种）。
+  - R17-5、R17-6 的文字在规格 §5.1、`_colon_kind` 的文档字符串、修订 17 记录第 6 节原处更正。
+  - 规则条目与策略文件没变。专门扫描 5100 条：644 条收紧，0 条变松。原有差分全部相同或只有收紧；`boundkeep test` 1142 / 0、334 / 0；评测除日期和延迟外相同。变异 21 个全部抓到。受影响的 11 个测试文件 8250 通过。
+  - 全量分六段跑，不是一个进程。结果是 28619 通过、169 跳过、7 失败，用时 3:47:19，合计与收集到的 28795 条相同。
+    - 5 条在 `test_review2_core_search.py`：它的 `classify` 替身把 `CmdInfo` 的字段逐个抄过去，没有 `top_paths`，守卫报内部错误。替身改成了 `dataclasses.replace`，改后这个文件 49 通过。
+    - 另外 2 条是 `test_daemon.py` 和 `test_lifecycle.py` 的计时、锁文件测试，单跑各 5 次都过。整个 `test_daemon.py` 一起跑时有 3 条计时测试失败，`7b65ad8` 上也一样失败（电源计划 Silent，最佳能效），所以和这次修改无关，没有改。
+    - 全量没有重跑。
+  - 这次修复没有复审，真实宿主里没有跑。
+  - 代价：子目录里不带 `--` 的 `git log -p b.txt` 现在是 deny，和在根运行一致。
+  - **给 `CmdInfo` 加字段时，先搜测试里逐个抄字段的替身。受影响文件按改动的函数挑，挑不到它们；它们出错时守卫给灰色，断言"不是 deny"的测试仍会通过。**
+  - **复审不能只看"改了的地方对不对"：同一类读法在别的子命令、别的工作目录里也要过一遍。修订 17 的复审漏掉了 `git show HEAD HEAD:src` 和子目录，都是修 R17-1 时顺着同一类找到的。**
 - **下一步**：M3b（自备密钥、确认费用）或 M4（不依赖 M3b）；接真实后端之前，收尾记录第 5 节里还剩 `auto` 模式的实测。总览见 `PROJECT_SPEC.md` 开头的"当前进度"与 §14 的状态列。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
 - M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。

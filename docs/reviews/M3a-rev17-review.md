@@ -2,6 +2,12 @@
 
 日期：2026-11-09。代码：`69fd10d`（`main`，与 `origin/main` 相同，工作区干净）。审查对象：`git diff 4009976 996fd6f -- src`，即 `programs._colon_kind`、`_git_operands`、`_h_git` 末尾，`event._short_name_program`，`paths.is_short_name`；规格开头修订 17 的段落与 §5.1 里 git 的 `:` 操作数、程序名的 8.3 短名两处；记录 `docs/reports/M3a-git-operands-and-short-names.md`。
 
+**之后（2026-11-09）**：使用者说"开始执行修复"。R17-1 到 R17-6 在规格修订 18 处理了，记录在 `docs/reports/M3a-rev17-review-fixes.md`。修的时候又查到两处这份复审漏掉的放行，也一起修了：
+- `git show HEAD HEAD:src` 打印整个提交；
+- 工作目录在子目录时，`git log -p`、`git show HEAD` 打印整个仓库。
+
+第一处在第 3 节"`--` 之前比之后松的 384 行"里其实看得到，这份复审只把其中的 `git diff` 当成了问题；第二处这份复审没有看子目录里的整仓库读。下面的判决都是修之前的。
+
 **这不是独立复审。** 修订 17 是这个会话写的。本来提议另开一个不带上下文的会话来审，使用者选择在这里做。下面的结论都重新量过，没有直接照搬作者的说法。不过作者的盲点，这次复审可能同样看不到。
 
 只新增了这份报告，没有改代码、规格、策略和测试，也没有提交。没有读 `.env`，没有用 LLM 密钥，没有访问真实 LLM 服务。没有读 `eval/authoring/h1-*`、`h2-*` 和留出批次，没有改系统设置。

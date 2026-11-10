@@ -178,13 +178,13 @@
 ## 6. 代价和残余
 
 1. **`git show ':/fix'` 这类写法在有受保护名字的项目里由问变成 deny**：`:/text` 可能是按提交说明找到的提交，git 会打印那个提交的全部改动（实测 `:/seed` 打出了假 `.env` 和私钥），所以按整个工作区看。
-2. **`git show '::src'` 比 `git show -- '::src'` 严**：它还按索引路径 `:src` 读，在 Windows 上这个词读成项目目录的流名，于是整个项目被扫描。这种写法不常见，方向是收紧。
+2. **`git show '::src'` 比 `git show -- '::src'` 严**：它还按索引路径 `:src` 读，在 Windows 上这个词读成项目目录的流名，于是整个项目被扫描。这种写法不常见，方向是收紧。（更正，2026-11-09，复审 R17-5：git 根本不执行 `git show '::src'`，报 `ambiguous argument`，退出码 128。`--` 之前的 `::x` 只在有一个字面上叫 `::x` 的文件时才是 pathspec，NTFS 上不会有，所以这条代价落在一条不会运行的命令上。）
 3. **`git rev-parse '::.env'`、`':(top).env'` 现在是 deny**：`rev-parse` 只打印对象名，不打印内容，但带 `--` 的写法本来就是 deny，这次只是一致了。索引写法 `git rev-parse ':.env'` 仍然放行（它是修订号）。
 4. **`--` 之前的 `:(icase)`、`:(glob)`、`:(attr:…)`、没闭合的括号现在要问**，和 `--` 之后相同（修订 16）。
 5. **`git grep -e x HEAD:src` 在项目里任何地方有受保护名字时是 deny**：`grep` 的 `REV:PATH` 不限定扫描范围，因为它的第一个操作数可能是模式。`git grep` 没有 allow 规则，原来就是问，现在是 deny。
 6. **变松的 28 条**（第 5 节）和带 `--` 的写法一致。`top` 仍按当前目录读（修订 16 第 6 节第 3 条）。
 7. **短名只看最后一段**：目录里的短名不展开（`C:\PROGRA~1\Git\cmd\git.exe status` 仍是灰色 `program-path-qualified`，不被当成系统目录里的程序）。文件不存在时名字不变。只在 C: 卷上量过，E: 卷不生成短名。
-8. **扫描里看到、但不是这次引入的**：PowerShell 和 Bash 对 `git rev-parse -- ':0:.env'`、`git rev-parse -- 'HEAD:.env'` 的判决不同（PowerShell 放行，Bash deny），修改前就这样。`rev-parse` 不打印内容。
+8. **扫描里看到、但不是这次引入的**：PowerShell 和 Bash 对 `git rev-parse -- ':0:.env'`、`git rev-parse -- 'HEAD:.env'` 的判决不同（PowerShell 放行，Bash deny），修改前就这样。`rev-parse` 不打印内容。（补充，2026-11-09，复审 R17-6：范围比这里写的宽。这次扫描的 5046 对里有 584 对判决不同（修改前 633 对），都是 PowerShell 更松，都是操作数中间带冒号的写法：`--` 之后的 `:0:.env`、`HEAD:.env`、`HEAD:src`，`git blame` 的带冒号操作数，`--` 之前的 `::src`。实测其中 14 条，git 都报错或什么都不打印。原因是 Git Bash 把 `:` 当名字的一部分，Bash 那边读得更保守。）
 9. **没有处理的**：IR-7（要使用者决定）；复审"没有查的"那一节里顺带看到的 `*` 跨目录匹配（`git show HEAD -- '*id_rsa'` 是问）和 PowerShell 里经 `env.exe` 运行 `boundkeep`。
 
 ## 7. 没有做的
