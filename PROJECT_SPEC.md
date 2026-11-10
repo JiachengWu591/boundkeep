@@ -73,7 +73,7 @@
 > - §5.1：`--` 之前以 `:` 开头的 git 操作数，规则同时按 `REV:PATH` 和 pathspec 两种读法看（IR-2）。原来 `git show ':!README.md'`、`git show ':(top)secrets'` 只按索引路径读，不扫描工作区，由规则放行；实测 git 把它们当 pathspec，打印出 `.env` 和私钥。`git checkout ':(top).claude/settings.json'` 原来看不到路径，实测 git 还原了那个文件。
 > - §5.1：`git archive` 的 tree-ish 是第一个操作数，写在 `--` 后面也是；`archive`、`grep` 里的 `REV:目录` 递归读（IR-3）。原来 `git archive HEAD:secrets`、`git grep -e x HEAD:secrets` 只是问或送审，实测打出了私钥。
 > - §5.1：Windows 上带路径的程序最后一段是 8.3 短名时，deny / ask 规则看磁盘上的长名，灰色 `program-short-name`（IR-4）。原来 `& '…\BOUNDK~1.EXE' mode audit-only` 只是问或送审，实测 PowerShell 5.1 运行它。
-> - 没有改的：IR-7（带修订号的 `git diff` 能打印全部已提交内容，由 `allow-git-read-only` 放行）。收紧它会让 `git diff HEAD~1` 在任何有受保护文件的项目里被拒绝，要由使用者决定；这次只写进 `docs/threat-model.md`。
+> - 没有改的：IR-7（带修订号的 `git diff` 能打印全部已提交内容，由 `allow-git-read-only` 放行）。收紧它会让 `git diff HEAD~1` 在任何有受保护文件的项目里被拒绝，要由使用者决定；这次只写进 `docs/threat-model.md`。（2026-11-10：使用者决定记为接受的残余，不修。）
 
 > **修订 18（2026-11-09，使用者说"开始执行修复"；R17-1 选"按树的读法收紧"，R17-2 选"补 .exe，裸短名不送审"，修复时查到的子目录问题选"一起修"）**：复审 `docs/reviews/M3a-rev17-review.md` 的 R17-1 到 R17-6，以及修复时查到的两处，记录在 `docs/reports/M3a-rev17-review-fixes.md`。
 > - §5.1：`git diff`（不带 `--no-index`）`--` 之前不以 `:` 开头的 `REV:PATH`（`HEAD:src`）可能是一棵子树。它单独出现、或和别的修订号放在一起时，git 把这棵子树当作仓库根去比较，每个已跟踪文件都成了新增或删除，全文打印出来（实测，R17-1），所以规则按递归读整个仓库。正好两个操作数、都是 `REV:PATH`（含 `:x`）时，比较的是两棵子树或两个 blob，只递归读这两个路径。`--` 之后有 pathspec 时，递归读这些 pathspec 和 `REV:PATH` 的路径，不读整个仓库。只列名字、没有 `-p` 的（`--stat`、`--name-only` 等）不递归。`git diff HEAD~1` 和操作数写在 `--` 之后的不受影响；IR-7（空树）不变。
@@ -84,7 +84,7 @@
 > - §7：带 `program-short-name-unresolved` 的调用不送审，和 `program-fold-variant` 一样：发给模型的是 `BOUNDK~1`，模型看不出它是什么程序。
 > - §5.1 的文字（R17-5）：`--` 之前的 `::x` 只在有一个字面上叫 `::x` 的文件时才是 pathspec，NTFS 上不会有这样的文件（实测 `git show '::src'` 退出码 128）；规则仍按 pathspec 读，比 git 读得多。
 
-> **当前进度（2026-11-09）**
+> **当前进度（2026-11-10）**
 >
 > - **已完成并有标签**：M0a、M0、M1、M1b、M1c、M1c-2、M1c-3、M1c-4、M2（`m2-baseline`）、M3a（`m3a-done`，2026-11-01；LLM 层没有接过真实服务）。M1+M1b、M1c / M1c-2 的独立 X1 审查与复审都已做完，高危、中危清零，修复已提交（M1c / M1c-2 的规则冻结在 `6821142`，标签 `m1c2-x1-rereview2-fixes-done`；审查在 `docs/reviews/`，修复报告 `docs/reports/M1c2-review-fixes*.md`）。M1c-4 的真实会话手工验收未做（`docs/reports/M1c4.md`）。
 > - **M2**：评测集 633 条（恶意 241、正常 392，全部经使用者确认）、评测框架 `src/boundkeep/evalkit` 与 `eval/run_eval.py`、`rules-only` 基线（报告 `docs/reports/M2.md`，口径 `docs/eval-methodology.md`）。**已知缺口：obfuscation 只有 11 条（目标 30 条）**。
@@ -116,7 +116,7 @@
 >   - IR-2 到 IR-8 当时没有处理，见下一条。
 > - **git 的 `:` 操作数、`REV:目录` 与 8.3 短名（修订 17）**（已提交并推送，`996fd6f` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-git-operands-and-short-names.md`）：使用者说"按照你的建议去完成"，按独立复审第 7 节的顺序做。
 >   - IR-2、IR-3、IR-4 已修：`--` 之前的 pathspec 魔法两种读法都看；`archive`、`grep` 的 `REV:目录` 递归读，`archive` 的 tree-ish 写在 `--` 后面也认得；带路径的 8.3 短名程序按磁盘上的长名判（灰色 `program-short-name`）。
->   - IR-5、IR-6、IR-8 的文字在原处更正；IR-7 没有改，写进 `docs/threat-model.md`，等使用者决定。
+>   - IR-5、IR-6、IR-8 的文字在原处更正；IR-7 没有改，写进 `docs/threat-model.md`，等使用者决定（2026-11-10 决定记为接受的残余）。
 >   - 规则条目与策略文件没变。真实目录树扫描里 `--` 之前的写法 28 条变松，都和同一个操作数写在 `--` 之后的判决相同；带 `--` 的写法一条没变；短名和长名判决全部相同；原有差分没有牵连。
 >   - 全量分六段跑，不是一个进程：28525 通过、169 跳过、0 失败（合计与收集到的 28694 条相同）。真实宿主里没有跑。
 >   - 复审（2026-11-09，`docs/reviews/M3a-rev17-review.md`，不是独立的，同一个会话做的）：三个目标达到了，没有回退；高危、中危 0，低危 R17-1 到 R17-4，信息 R17-5、R17-6，都早于修订 17，没有修。R17-1：`git diff HEAD:src` 由规则放行，实测打印所有已跟踪文件，和 IR-7 同类，但收紧它不牵连 `git diff HEAD~1`，要和 IR-7 一起由使用者决定。R17-2 到 R17-4 是 deny 变成灰色：Git Bash 里不带 `.EXE` 的短名和经 PATH 的裸短名、`git archive ':/text'`、`git archive --mtime 值 HEAD`。（修订 18 已修，见下一条。）
@@ -128,7 +128,8 @@
 >     - 2 条是计时、锁文件测试，单跑都过。`7b65ad8` 在同样的电源设置下也失败，和这次修改无关。
 >   - 真实宿主里没有跑。
 >   - 复审（2026-11-10，`docs/reviews/M3a-rev18-review.md`，不是独立的，同一个会话做的）：目标达到了，没有回退；高危、中危 0，低危 R18-1 到 R18-4，信息 I-1，都没有修。
->     - R18-1 到 R18-3 由规则放行，实测都打印受保护文件：子目录里比较两棵子树；花括号里带冒号的修订号；`--full-diff`。它们能打印的内容，IR-7 的写法都能打印，所以要和 IR-7 一起由使用者决定。
+>     - R18-1 到 R18-3 由规则放行，实测都打印受保护文件：子目录里比较两棵子树；花括号里带冒号的修订号；`--full-diff`。它们能打印的内容，IR-7 的写法都能打印。
+>     - 2026-11-10 使用者决定：IR-7 记为接受的残余，R18-1 到 R18-3 作为同类记在 `docs/threat-model.md` 第 4 节，不修。
 >     - R18-4：`cd` 进短名目录之后运行的短名程序是灰色、照常送审，和 IR-7 无关。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。

@@ -117,7 +117,7 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - IR-2：`--` 之前的 `:!x`、`:^x`、`:(…)`、`::x`、`:/x` 同时按 `REV:PATH` 和 pathspec 读（`programs._colon_kind`）。打印内容的子命令里 pathspec 限定范围，`:/x` 可能是按提交说明找到的提交，不限定。`:x`、`:N:x` 是索引里的文件，只按 `REV:PATH` 读：第一版也当 pathspec 读，`git show :0:a.py` 由放行变成问，收窄了，规格也改了。
   - IR-3：`git archive` 的 tree-ish 是第一个操作数，写在 `--` 后面也是；`archive`、`grep` 的 `REV:目录` 递归读。
   - IR-4：Windows 上带路径、最后一段是 8.3 短名的程序，取磁盘层解析出来的长名给 deny / ask 规则，灰色 `program-short-name`（`event._short_name_program`）。实测 PowerShell 5.1 和 Git Bash 都运行短名路径。
-  - IR-5、IR-6、IR-8 的文字在原处标了"更正"或"补充"；IR-7 没有改，写进 `docs/threat-model.md` 第 4 节：收紧它会让 `git diff HEAD~1` 在任何有受保护文件的项目里被拒绝，要使用者决定。
+  - IR-5、IR-6、IR-8 的文字在原处标了"更正"或"补充"；IR-7 没有改，写进 `docs/threat-model.md` 第 4 节：收紧它会让 `git diff HEAD~1` 在任何有受保护文件的项目里被拒绝，要使用者决定。（2026-11-10 使用者决定记为接受的残余，见修订 18 复审那一条。）
   - 规则条目与策略文件没变。真实目录树扫描 10092 条：`--` 之前的写法 826 条收紧、28 条变松，28 条都和同一个操作数写在 `--` 之后的判决相同（`git log -p ':(top)src'` 只读 `src`，实测）；带 `--` 的写法 4968 条一条没变；短名和长名判决全部相同。原有差分全部相同或级别相同，含 git 的语料 1164 次判决 0 条不同，`boundkeep test` 1142 / 0、334 / 0，评测除日期和延迟外相同。
   - 全量分六段跑，不是一个进程：28525 通过、169 跳过、0 失败（2:09:59，六段都一次跑完，合计与收集到的 28694 条相同）。真实宿主里没有跑。
   - 复审（2026-11-09，`docs/reviews/M3a-rev17-review.md`，不是独立的，同一个会话做的；使用者选择在这里做）：三个目标达到了，没有回退；高危、中危 0，低危 4，信息 2，都早于修订 17，没有修。
@@ -147,7 +147,8 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
     - R18-1：子目录里的 `git diff HEAD~1:secrets HEAD:secrets` 由规则放行。两棵子树的扫描按当前目录算，git 从仓库顶层读。这是修订 18 自己的修法留下的。
     - R18-2：花括号里带冒号的修订号（`git show 'HEAD@{10:00}'`、`'HEAD^{/fix: typo}'`）被当成 `REV:PATH`，规则放行，实测打印整个提交。
     - R18-3：`git log -p --full-diff -- sub` 只读 `sub`，规则放行；实测打印碰过 `sub` 的提交的全部补丁。
-    - R18-1 到 R18-3 能打印的，IR-7 的 `git diff <空树> HEAD` 都能打印（规则放行，实测）。所以要先由使用者决定 IR-7：记为接受的残余，就把这三条一起记进去；要收紧 IR-7，就得一起修。
+    - R18-1 到 R18-3 能打印的，IR-7 的 `git diff <空树> HEAD` 都能打印（规则放行，实测）。
+    - 2026-11-10 使用者决定：IR-7 记为接受的残余，R18-1 到 R18-3 作为同类记在 `docs/threat-model.md` 第 4 节 IR-7 那一条下面，不修。以后查到打印已提交内容、又不超出 `git diff <空树> HEAD` 的 git 写法，也记在那里，不单独修。
     - R18-4：`cd` 进路径带短名的目录之后，`./BOUNDK~1`、`.\BOUNDK~1.EXE` 是灰色、照常送审，两种 shell 实测都运行。它和 IR-7 无关，可以单独修，要先定设计。
     - I-1：同一条命令里先 `cd sub` 再 `git log -p`，修订 18 之前就是 deny；子目录修复只在 hook 收到的工作目录本身在子目录时起作用，这一点要在真实宿主里量。
   - 代价：子目录里不带 `--` 的 `git log -p b.txt` 现在是 deny，和在根运行一致。
