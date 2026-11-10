@@ -1297,6 +1297,7 @@ def _finish(
         gray=tuple(dict.fromkeys(a.gray)),
         recursive=a.recursive,
         pathspec_magic=a.pathspec_magic,
+        top_paths=tuple(dict.fromkeys(a.top_paths)),
     )
 
 
@@ -1334,6 +1335,7 @@ def _external(
         # without it `git add :/` from a sub directory no longer scanned the project root here
         # (independent review IR-1); a test compares every CmdInfo field with the Bash side
         a.pathspec_magic = info.pathspec_magic
+        a.top_paths.extend(info.top_paths)  # spec revision 18; compared by the same test
         extra.extend(info.tags)
         if base in _BUILD_TOOLS and _runs_build_code(ctx, base, args):
             a.known = True

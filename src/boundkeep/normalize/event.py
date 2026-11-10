@@ -393,6 +393,52 @@ def _add_may_stage_protected(
     return False
 
 
+def _cwds_below_project(ctx: _Ctx, st: _Line) -> bool:
+    """Is every possible working directory inside the project, and one of them below its root?
+
+    Lexical, so it holds on the fake machines too. A working directory that is not known, or one
+    outside the project (another repository, perhaps), is a no.
+    """
+    if ctx.root is None:
+        return False
+    starts = list(st.cwds) if st.cwds else [ctx.cwd]
+    known = [c for c in starts if c]
+    if not known or len(known) != len(starts):
+        return False
+    roots = {ctx.root.key.rstrip("/")}
+    if ctx.root_resolved is not None:
+        roots.add(ctx.root_resolved.key.rstrip("/"))
+    below = False
+    for start in known:
+        key = paths.normalize_path(
+            start, cwd=None, home=ctx.home, env=ctx.env, dialect="tool", literal=True
+        ).key.rstrip("/")
+        if key in roots:
+            continue
+        if not any(key.startswith(root + "/") for root in roots):
+            return False
+        below = True
+    return below
+
+
+def _top_words(ctx: _Ctx, st: _Line, info: programs.CmdInfo) -> list[tuple[Word, Access]]:
+    """``info.top_paths`` as paths below the project root (spec revision 18).
+
+    git reads them from the top of the repository whatever the working directory: ``git log -p``
+    from a sub-directory prints the top-level ``.env`` (measured). Like the whole-repository check
+    of ``git add`` (X1 review R5-1) the project root stands for that top; nothing is added unless
+    the working directory is below the root (at the root they are the paths already listed).
+    """
+    if not info.top_paths or ctx.root is None or not _cwds_below_project(ctx, st):
+        return []
+    root = ctx.root.raw.rstrip("/\\")
+    out: list[tuple[Word, Access]] = []
+    for word, access in info.top_paths:
+        text = root if word.text in ("", ".") else f"{root}/{word.text}"
+        out.append((Word(text, word.expands, word.glob, word.quoted), access))
+    return out
+
+
 def _git_root_above_project(ctx: _Ctx, st: _Line) -> bool:
     """X1 review R3-5: is the repository root a strict ancestor of the project directory?
 
@@ -1438,6 +1484,30 @@ def _canonical_program(ctx: _Ctx, word: Word, shell: str = "bash") -> tuple[str,
     return name, grays
 
 
+def _expanded_names(ctx: _Ctx, notes: list[str], st: _Line, text: str) -> set[str]:
+    """The last segments of ``text`` as the disk layer expands it (its 8.3 short names gone)."""
+    refs = _refs(ctx, notes, text, "read", cwds=st.cwds, dialect=st.shell, dynamic=False)
+    return {
+        ref.key.rsplit("/", 1)[-1]
+        for ref in refs
+        if ref.flavor == "windows" and "short-name-unresolved" not in ref.reasons
+    }
+
+
+def _bare_short_name(ctx: _Ctx, st: _Line, word: Word) -> bool:
+    """A bare program name that looks like an 8.3 short name, in Git Bash on Windows.
+
+    Git Bash finds ``BOUNDK~1`` by PATH and runs ``boundkeep.exe`` (measured; revision 18, R17-2);
+    the rules cannot tell which program that is. PowerShell 5.1 does not run it (measured).
+    """
+    text = word.text
+    if ctx.platform != "windows" or st.shell != "bash" or _dynamic(word) or not text:
+        return False
+    if "/" in text or "\\" in text or "\x00" in text:
+        return False
+    return paths.is_short_name(text.rstrip(". "))
+
+
 def _short_name_program(ctx: _Ctx, notes: list[str], st: _Line, word: Word) -> str | None:
     """The long name of a program run by a path whose last segment is an 8.3 short name
     (``C:\\tools\\BOUNDK~1.EXE``), as the disk layer expands it; None when there is none.
@@ -1454,12 +1524,10 @@ def _short_name_program(ctx: _Ctx, notes: list[str], st: _Line, word: Word) -> s
     cut = max(text.rfind("/"), text.rfind("\\"))
     if cut < 0 or not paths.is_short_name(text[cut + 1 :].rstrip(". ")):
         return None
-    refs = _refs(ctx, notes, text, "read", cwds=st.cwds, dialect=st.shell, dynamic=False)
-    names = {
-        ref.key.rsplit("/", 1)[-1]
-        for ref in refs
-        if ref.flavor == "windows" and "short-name-unresolved" not in ref.reasons
-    }
+    names = _expanded_names(ctx, notes, st, text)
+    if not names and st.shell == "bash" and not text.lower().endswith(".exe"):
+        # Git Bash runs ``…/BOUNDK~1`` as ``…/BOUNDK~1.exe`` (measured; revision 18, R17-2)
+        names = _expanded_names(ctx, notes, st, text + ".exe")
     if len(names) != 1:
         return None
     name = names.pop().rstrip(". ")
@@ -1631,6 +1699,8 @@ def _command_action(
         if long_name is not None and long_name != program:
             program = long_name
             spelling.append("program-short-name")  # no allow rule relies on it (revision 17)
+        elif _bare_short_name(ctx, st, cmd.argv[0]):
+            spelling.append("program-short-name-unresolved")  # not sent to the model (rev. 18)
         info = programs.classify(
             program,
             classify_args,
@@ -1656,7 +1726,7 @@ def _command_action(
             ctx, notes, cmd.argv[0].text, "read", cwds=st.cwds, dialect=st.shell, dynamic=False
         )
     recursive = bool(getattr(info, "recursive", False))  # reads the whole subtree of a directory
-    for word, access in info.paths:
+    for word, access in (*info.paths, *_top_words(ctx, st, info)):
         if exec_child and "{}" in word.text:
             refs += _placeholder_refs(ctx, notes, st, cmd, word, access)
         else:

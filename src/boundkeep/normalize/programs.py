@@ -77,6 +77,12 @@ class CmdInfo:
     # True: a git operand begins with pathspec magic (``:/``, ``:(top)``, ``:!x``). ``paths`` holds
     # what the rules look at (see ``_pathspec``), so the magic itself is no longer visible there.
     pathspec_magic: bool = False
+    # Paths git reads from the top of the repository, whatever the working directory (spec
+    # revision 18): ``git log -p`` and ``git show`` print the whole repository, ``:/secrets`` is
+    # the top's ``secrets``. Relative to the PROJECT ROOT, where the normalizer reads them (and
+    # only when the working directory is inside the project); ``""`` is the root itself. They are
+    # read on top of ``paths``, with the same ``recursive``.
+    top_paths: tuple[tuple[Word, Access], ...] = ()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -528,6 +534,9 @@ class _Acc:
         "recursive",
         "secret_hint",
         "sub",
+        "top_of",
+        "top_off",
+        "top_paths",
         "urls",
         "write_hint",
     )
@@ -546,8 +555,20 @@ class _Acc:
         self.secret_hint = False
         self.recursive = False
         self.pathspec_magic = False
+        self.top_paths: list[tuple[Word, Access]] = []
+        # what _pathspec turned a top-relative pathspec into -> its path from the top
+        self.top_of: dict[Word, Word] = {}
+        self.top_off = False  # ``git -C``, ``--git-dir``, ``--work-tree``: another repository
+
+    def top_path(self, w: Word, access: Access) -> None:
+        """A path git reads from the top of the repository (see ``CmdInfo.top_paths``)."""
+        if not self.top_off:
+            self.top_paths.append((w, access))
 
     def path(self, w: Word, access: Access) -> None:
+        top = self.top_of.get(w)
+        if top is not None:
+            self.top_path(top, access)
         t = w.text
         if t.startswith(_NET_DEVICES):
             # Bash opens a socket for /dev/tcp/HOST/PORT and /dev/udp/HOST/PORT: that is network
@@ -2646,7 +2667,11 @@ _GIT_SUB_OPTS: dict[str, Opts] = {
     "diff": _opts(long="output=w", short="O=r"),
     "show": _opts(long="output=w format=x pretty=x", short="O=r"),
     "format-patch": _opts(short="o=w n=x", long="output-directory=w from=x subject-prefix=x"),
-    "archive": _opts(short="o=w", long="output=w remote=url exec=cmd prefix=x format=x add-file=r"),
+    "archive": _opts(
+        short="o=w",
+        long="output=w remote=url exec=cmd prefix=x format=x add-file=r mtime=x add-virtual-file=x",
+        flags="list verbose worktree-attributes",
+    ),
     "config": _opts(short="f=w", long="file=w blob=x default=x type=x"),
     "apply": _opts(short="p=x C=x", long="directory=w include=x exclude=x whitespace=x"),
     "am": _opts(short="p=x", long="directory=w whitespace=x"),
@@ -2777,14 +2802,15 @@ def _pathspec(a: _Acc, w: Word) -> Word:
     if not text.startswith(":"):
         return w
     a.pathspec_magic = True
-    exclude = False
+    exclude = top = False
     if text.startswith(":("):
         close = text.find(")")
         if close < 0:  # git refuses it ("Missing ')'"), but say nothing it is not
             a.gray.append("git-pathspec-magic")
-            return _sub(w, ".")
+            return _top_spec(a, _sub(w, "."), _sub(w, ""))
         words = {m.strip() for m in text[2:close].split(",")}
         exclude = "exclude" in words
+        top = "top" in words
         if not words <= _LONG_MAGIC_READ:
             a.gray.append("git-pathspec-magic")
         pattern = text[close + 1 :]
@@ -2792,13 +2818,27 @@ def _pathspec(a: _Acc, w: Word) -> Word:
         end = 1
         while end < len(text) and text[end] in _SHORT_MAGIC:
             exclude = exclude or text[end] != "/"
+            top = top or text[end] == "/"
             end += 1
         if end < len(text) and text[end] == ":":
             end += 1
         pattern = text[end:]
+    # From a sub-directory ``top`` and ``/`` start at the top of the repository, and an exclusion
+    # alone acts on the whole repository, but for ``grep`` and ``archive``, which stay in the
+    # current directory (all measured): read from the project root too (revision 18)
     if exclude or not pattern:
-        return _sub(w, ".")
-    return _sub(w, "./" + pattern)
+        spec = _sub(w, ".")
+        whole = top or (exclude and a.sub not in ("grep", "archive"))
+        return _top_spec(a, spec, _sub(w, "")) if whole else spec
+    spec = _sub(w, "./" + pattern)
+    return _top_spec(a, spec, _sub(w, pattern)) if top else spec
+
+
+def _top_spec(a: _Acc, spec: Word, from_top: Word) -> Word:
+    """``spec``, remembering that git reads it as ``from_top`` from the top of the repository:
+    ``_Acc.path`` lists that too, with the access the caller gives."""
+    a.top_of[spec] = from_top
+    return spec
 
 
 def _git_url_or_path(a: _Acc, w: Word, access: Access) -> None:
@@ -2840,10 +2880,13 @@ def _colon_kind(text: str) -> str | None:
     """How git may read an operand before ``--`` that begins with ``:`` (spec revision 17).
 
     git first tries a revision; what is none it takes as a pathspec (the long form always, ``:/x``
-    and ``:!x`` when x exists; measured). ``"index"``: ``:x``, ``:N:x``, a file in the index, so a
-    revision naming one object. ``"search"``: ``:/text``, the youngest commit whose message matches
-    (a revision naming a whole commit) or else a pathspec from the top. ``"pathspec"``: ``:!x``,
-    ``:^x``, ``:(top)x``, ``::x``. None: the word does not begin with ``:``.
+    and ``:!x`` when x exists; anything else only when a file has that very name; measured).
+    ``"index"``: ``:x``, ``:N:x``, a file in the index, so a revision naming one object.
+    ``"search"``: ``:/text``, the youngest commit whose message matches (a revision naming a whole
+    commit) or else a pathspec from the top. ``"pathspec"``: ``:!x``, ``:^x``, ``:(top)x``, and
+    ``::x``, which git takes only if a file is named ``::x`` (never on NTFS: ``git show '::src'``
+    exits 128; review R17-5), so reading it as one reads more than git. None: the word does not
+    begin with ``:``.
     """
     if not text.startswith(":"):
         return None
@@ -2891,9 +2934,13 @@ def _git_operands(
             a.path(_sub(w, rp), "read")
             _scoped_path(a, chain, _sub(w, rp), "read")
             # ``:/text`` may be a whole commit found by its message and ``:!x`` a pathspec: neither
-            # names one object, so neither keeps a content command from the tree (IR-2)
-            if sub == "archive" or _colon_kind(w.text) in (None, "index"):
+            # names one object, so neither keeps a content command from the tree (IR-2), nor the
+            # tree-ish of ``archive`` (revision 18, review R17-3)
+            if _colon_kind(w.text) in (None, "index"):
                 rev_paths += 1
+    if sub == "diff":
+        _git_diff_trees(a, before, after, seen, chain)
+        return
     sub2 = pos[0].text if pos else None
     content = False
     if sub in ("grep", "archive"):
@@ -2906,8 +2953,10 @@ def _git_operands(
         content = bool(seen & (_GIT_PATCH_FLAGS | _fs("--include-untracked")))
     if not content:
         return
-    if rev_paths and sub not in ("archive", "grep"):
-        return  # ``git show HEAD:x`` prints one blob, or only the names in a tree
+    if rev_paths and rev_paths == len(before) and sub not in ("archive", "grep"):
+        # ``git show HEAD:x`` prints one blob, or only the names in a tree. Not with a commit
+        # beside it: ``git show HEAD HEAD:src`` prints all of HEAD (measured; revision 18)
+        return
     # ``git archive HEAD:dir`` and ``git grep -e x HEAD:dir`` read every file below dir (IR-3)
     a.recursive = True
     if sub == "archive":
@@ -2917,6 +2966,9 @@ def _git_operands(
             a.path(spec, "read")
             _scoped_path(a, chain, spec, "read")
         restricted = len(pos) > 1 or rev_paths > 0
+        # An option the table does not know may take the next word as its value, so the operands
+        # may not be what they look like (``--mtime 2020-01-01 HEAD``; review R17-4)
+        restricted = restricted and not _unknown_long_option(seen, _GIT_SUB_OPTS["archive"])
     else:
         # A pathspec before ``--`` scopes the read like one after it (``git show ':(top)src'``);
         # ``:x`` and ``:/text`` may be revisions and do not (spec revision 17). Nor does a
@@ -2925,6 +2977,49 @@ def _git_operands(
         restricted = restricted or any(_colon_kind(w.text) == "pathspec" for w in before)
     if not restricted and chain is None:
         a.path(Word("."), "read")  # no pathspec: the whole work tree / history
+        if sub not in ("archive", "grep"):
+            # ``show``, ``log -p``, ``stash show -p`` print the whole repository from any
+            # directory; ``grep`` and ``archive`` act on the current one (measured; revision 18)
+            a.top_path(Word(""), "read")
+
+
+def _unknown_long_option(seen: set[str], opts: Opts) -> bool:
+    """Is one of ``seen`` a long option ``opts`` does not know (not even as a prefix)?"""
+    known = (*opts.long, *opts.long_flags)
+    return any(
+        f.startswith("--") and len(f) > 2 and not any(k.startswith(f) for k in known) for f in seen
+    )
+
+
+def _git_diff_trees(
+    a: _Acc,
+    before: Sequence[Word],
+    after: Sequence[Word],
+    seen: set[str],
+    chain: Word | None,
+) -> None:
+    """``git diff`` with a ``REV:PATH`` that may be a sub-tree (spec revision 18, review R17-1).
+
+    git compares the sub-tree as if it were the root: every tracked file is added or deleted and
+    printed whole (``git diff HEAD:src``, measured). A ``REV:PATH`` of a blob alone is a usage
+    error (exit 129). So with such an operand the whole repository is read, unless the operands
+    are exactly two ``REV:PATH`` (two sub-trees or two blobs: those two paths, listed already) or a
+    pathspec after ``--`` limits the files (it and the ``REV:PATH``). ``:x`` is an index file,
+    never a tree, and ``:/text`` a commit (IR-7: a revision only, not changed here).
+    """
+    trees = [w for w in before if _colon_kind(w.text) is None and _rev_path(w.text) is not None]
+    if not trees:
+        return
+    if seen & _GIT_NOCONTENT_FLAGS and not seen & _GIT_PATCH_FLAGS:
+        return  # names and counts only
+    a.recursive = True
+    objects = [w for w in before if _colon_kind(w.text) in (None, "index") and _rev_path(w.text)]
+    if len(before) == 2 and len(objects) == 2:
+        return
+    if after or chain is not None:
+        return
+    a.path(Word("."), "read")
+    a.top_path(Word(""), "read")
 
 
 def _h_git(a: _Acc, args: Sequence[Word]) -> None:
@@ -2972,6 +3067,8 @@ def _h_git(a: _Acc, args: Sequence[Word]) -> None:
         for w in scope_paths:
             a.path(w, "read")
         return
+    # ``-C``, ``--git-dir``, ``--work-tree``: another repository, whose top is not the project root
+    a.top_off = bool(scope_paths)
     sub_word = args[i]
     sub = sub_word.text
     i += 1
@@ -4628,6 +4725,7 @@ def _classify(
         gray=tuple(dict.fromkeys(a.gray)),
         recursive=a.recursive,
         pathspec_magic=a.pathspec_magic,
+        top_paths=tuple(dict.fromkeys(a.top_paths)),
     )
 
 

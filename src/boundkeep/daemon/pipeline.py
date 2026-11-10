@@ -643,11 +643,13 @@ def incomplete_analysis(actions: Sequence[Action]) -> str | None:
 
 # Gray reasons for text the request cannot show: a string piped into PowerShell's interpreter is its
 # code, an assignment (``$env:NODE_OPTIONS = ...``) is not an action with words of its own, and the
-# request names a program as folded, so ``sed`` with U+017F for its "s" would read as plain ``sed``.
+# request names a program as folded, so ``sed`` with U+017F for its "s" would read as plain ``sed``,
+# and ``BOUNDK~1`` found by Git Bash's PATH says nothing of the program it is (spec revision 18).
 _UNSHOWN_REASONS: Final = (
     "ps-pipe-to-interpreter",
     "ps-compound:AssignmentStatementAst",
     "program-fold-variant",
+    "program-short-name-unresolved",
 )
 
 

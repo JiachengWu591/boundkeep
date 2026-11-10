@@ -9,10 +9,10 @@ under ``tmp_path``; no command is executed.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -364,18 +364,10 @@ def _recursive(real: Any) -> Any:
     programs layer is to add as ``CmdInfo.recursive``)."""
 
     def classify(*args: Any, **kwargs: Any) -> Any:
-        info = real(*args, **kwargs)
-        return SimpleNamespace(
-            known=info.known,
-            subcommand=info.subcommand,
-            flags=info.flags,
-            paths=info.paths,
-            urls=info.urls,
-            network=info.network,
-            tags=info.tags,
-            gray=info.gray,
-            recursive=True,
-        )
+        # Every other field is kept as it is: a copy that names the fields one by one lost
+        # ``top_paths`` (spec revision 18), and the guard's internal error made the "not denied"
+        # tests below pass for the wrong reason.
+        return dataclasses.replace(real(*args, **kwargs), recursive=True)
 
     return classify
 
@@ -395,7 +387,9 @@ def test_a_recursive_command_on_a_clean_directory_is_not_denied(
     w: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(ev.programs, "classify", _recursive(ev.programs.classify))
-    assert w.verdict("Bash", {"command": "grep -r x src"}) != "deny"
+    review = w.review("Bash", {"command": "grep -r x src"})
+    assert review.verdict.decision != "deny"
+    assert not any(r.startswith("internal-error") for r in reasons_of(review))
 
 
 def test_only_the_read_operands_of_a_recursive_command_are_scanned(
@@ -405,6 +399,7 @@ def test_only_the_read_operands_of_a_recursive_command_are_scanned(
     monkeypatch.setattr(ev.programs, "classify", _recursive(ev.programs.classify))
     review = w.review("Bash", {"command": "cp -r src dest"})
     assert review.verdict.decision != "deny"
+    assert not any(r.startswith("internal-error") for r in reasons_of(review))
     assert not any("recursive-scan" in r.reasons for a in review.actions for r in a.paths)
 
 
