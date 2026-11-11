@@ -176,7 +176,7 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - 真实宿主里没有跑。
   - 代价：PowerShell 里的 `git status 2>/dev/null` 从 allow 变成 ask（当前盘没有 `\dev` 时这条命令本来就报错、不运行，实测）；丢弃输出要写 `$null`。
   - 没有改：单独的 `-` 在 PowerShell 的 cmdlet 里是当前目录下名叫 `-` 的文件（实测 `Remove-Item -` 删掉它），两种方言里仍然不记路径。
-  - 复审（2026-11-10，`docs/reviews/M3a-rev19-20-review.md`，修订 19 和 20 一起审；不是独立的，同一个会话做的；已提交，没有推送）：两次修订的目标都达到了，没有回退。范围之内高危、中危 0，低危 3，信息 1，都早于这两次修订，没有修。
+  - 复审（2026-11-10，`docs/reviews/M3a-rev19-20-review.md`，修订 19 和 20 一起审；不是独立的，同一个会话做的；`b15e064`，已推送）：两次修订的目标都达到了，没有回退。范围之内高危、中危 0，低危 3，信息 1，都早于这两次修订，没有修。
     - R19-1（信息）：Bash 里 `./BOUNDK~1.EXE.`（`.EXE` 后面再带点或空格）展开不了时标成了 `program-short-name`，照常送审。Git Bash 实测不运行它。
     - R19-2、R19-3（低）：和 R18-4 同一个原因，`cd` 进短名目录之后工作目录算未知。交给 `Start-Process`、`cmd /c` 的短名程序照常送审；按短名读受保护的文件（`cat ./ENV~1.PRO`，它是 `.env.production`）是灰色，长名目录里是 deny，两种 shell 实测都读出内容。
     - R20-1（低）：Windows 上 Git Bash 启动的原生程序拿到的不是设备（`/dev/tty` 是 `C:\dev\tty`，`/dev/zero` 变成 `/Device/Null`，实测）。受信任项目里 `pytest /dev/tty` 由规则放行，`pytest /dev/ttx` 是问。那个位置有内容时的效果没有实测。
