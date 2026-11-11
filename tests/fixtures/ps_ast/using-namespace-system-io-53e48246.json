@@ -6,5 +6,6 @@
   "UsingStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

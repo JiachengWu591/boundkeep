@@ -33,7 +33,24 @@ from boundkeep.normalize import programs, psaliases, psprograms
 from boundkeep.normalize.model import BashResult, Redirect, SimpleCmd, Word
 from boundkeep.normalize.programs import peel_runner
 
-__all__ = ["MAX_COMMANDS", "MAX_ELEMENTS", "build"]
+__all__ = [
+    "MAX_COMMANDS",
+    "MAX_ELEMENTS",
+    "OUTSIDE_COMMAND_GRAY",
+    "RUNNER_VALUE_GRAY",
+    "SWITCH_VALUE_GRAY",
+    "build",
+]
+
+# The gray reason (with ``:<AST type>``) for an expression or statement that is in no command's
+# arguments and is not known to do nothing: ``git status; [IO.File]::ReadAllText('.env')``. Such a
+# call is not sent to the LLM audit (``pipeline.unshown_input``, spec revision 21).
+OUTSIDE_COMMAND_GRAY = "ps-outside-command"
+# Text that is in a command and still in no action's words: the computed value of a switch
+# (``-Force:(...)``, dropped because a switch takes none) and of an option of ``uv run`` and the
+# other runners (dropped with the runner). Not sent either.
+SWITCH_VALUE_GRAY = "ps-switch-value"
+RUNNER_VALUE_GRAY = "ps-runner-value"
 
 MAX_COMMANDS = 4000
 MAX_ELEMENTS = 20000
@@ -398,7 +415,7 @@ def _elements(c: Mapping[str, Any], st: _State, cmdlet: str | None) -> list[Word
                 # X1 re-review R-2: `-Stream:$env:TOKEN` is dropped as "a switch's boolean", but a
                 # value that is not a boolean makes PowerShell fail to bind it and ECHO it in the
                 # error; the simple variable forms leave no other trace, so this is the trace
-                st.add_gray("ps-switch-value")
+                st.add_gray(SWITCH_VALUE_GRAY)
         elif literal and takes is not False:
             literal_next = True
     return out
@@ -438,6 +455,10 @@ def _peel_runners(
         rest = ([synthetic] if synthetic is not None else []) + words[n_drop:]
         if not rest:
             break
+        if any(w.expands for w in words[1:n_drop]):
+            # the runner's own options go with the runner: a value that is computed
+            # (``uv run --with ([IO.File]::Delete('x')) pytest``) would be in no action's words
+            st.add_gray(RUNNER_VALUE_GRAY)
         wrappers.append(marker)
         program = Word(_strip_exe(rest[0].text), rest[0].expands, rest[0].glob, rest[0].quoted)
         args = rest[1:]
@@ -519,11 +540,38 @@ def _with_pipeline_head(
     return args if param is None else [*args, Word(param), *words]
 
 
+# name kinds of a drive-qualified variable -> the cmdlet it is judged as
+_FILE_VARIABLE = {"file-read": "Get-Content", "file-write": "Set-Content"}
+
+
+def _file_variable(c: Mapping[str, Any], name: Mapping[str, Any], st: _State) -> SimpleCmd | None:
+    """``${C:\\x\\.env}`` is the content of that file: reading it reads the file, assigning to it
+    writes the file, and a wildcard in the name is expanded (measured, PowerShell 5.1; spec
+    revision 21). It is in no command, so the helper reports each one as a command of its own and
+    it is judged as ``Get-Content -Path`` / ``Set-Content -Path`` of that path."""
+    path = _str(name.get("v"), st)
+    cmdlet = _FILE_VARIABLE[str(name.get("kind"))]
+    if not path:
+        st.add_gray("ps-internal-error")
+        return None
+    target = Word(path, glob=_glob(path), quoted=True)
+    _note_mentions(st, [target], [])
+    return SimpleCmd(
+        argv=(Word(cmdlet), Word("-Path"), target),
+        origin="subexpr",
+        raw=_raw(st, c.get("pos")),
+    )
+
+
 def _command(c: object, st: _State) -> SimpleCmd | None:
     if not isinstance(c, Mapping):
         st.add_gray("ps-internal-error")
         return None
     st.tick()
+    name = c.get("name")
+    kind = name.get("kind") if isinstance(name, Mapping) else None
+    if isinstance(name, Mapping) and isinstance(kind, str) and kind in _FILE_VARIABLE:
+        return _file_variable(c, name, st)
     invoke = c.get("invoke", "")
     if invoke not in ("", "&", "."):
         st.add_gray("ps-internal-error")
@@ -634,6 +682,9 @@ def _run(reply: object, st: _State) -> None:
     st.dynamic_kinds = frozenset(dynamic)
     for name in dynamic:
         st.add_exec(f"ps-dynamic:{name}")
+    # what is in no command's arguments: the request to the LLM audit carries none of its text
+    for name in _type_names(reply, "loose", st):
+        st.add_gray(f"{OUTSIDE_COMMAND_GRAY}:{name}")
     commands = reply.get("commands")
     if not isinstance(commands, list):
         st.add_gray("ps-internal-error")
@@ -656,10 +707,15 @@ def build(reply: Mapping[str, Any], *, source: str) -> BashResult:
     ``exec_reasons`` for what runs code we cannot see (Invoke-Expression, Start-Process,
     ``.`` dot-sourcing, ``-EncodedCommand``, scripts, nested shells, ``| iex``).
 
+    A drive-qualified variable (``${C:\\x\\y}``) comes as a command with the name kind
+    ``file-read`` or ``file-write`` and becomes ``Get-Content -Path`` / ``Set-Content -Path`` of
+    that path; what ``reply["loose"]`` names is gray ``ps-outside-command:<type>``.
+
     Never raises. A reply that is not a mapping, lacks ``commands`` / ``compound`` / ``dynamic`` /
-    ``parse_errors`` or has them in the wrong type is gray (``ps-internal-error``); a reply with
-    more than ``MAX_COMMANDS`` commands, ``MAX_ELEMENTS`` elements or a string over ``MAX_STRING``
-    characters is gray (``ps-too-large``); the commands built before the limit are kept.
+    ``loose`` / ``parse_errors`` or has them in the wrong type is gray (``ps-internal-error``); one
+    with more than ``MAX_COMMANDS`` commands, ``MAX_ELEMENTS`` elements or a string over
+    ``MAX_STRING`` characters is gray (``ps-too-large``); the commands built before the limit are
+    kept.
     """
     st = _State(source if isinstance(source, str) else "")
     try:

@@ -86,6 +86,7 @@ def rep(
     *cmds: Any,
     compound: tuple[str, ...] = (),
     dynamic: tuple[str, ...] = (),
+    loose: tuple[str, ...] = (),
     errors: int = 0,
     **extra: Any,
 ) -> dict[str, Any]:
@@ -95,6 +96,7 @@ def rep(
         "commands": list(cmds),
         "compound": list(compound),
         "dynamic": list(dynamic),
+        "loose": list(loose),
         "mode": "FullLanguage",
     }
     out.update(extra)
@@ -993,6 +995,16 @@ REPLY_CASES = [
         gray_has=["ps-internal-error"],
     ),
     case(
+        "reply-missing-loose",
+        {k: v for k, v in rep(cmd("ls")).items() if k != "loose"},
+        gray_has=["ps-internal-error"],
+    ),
+    case(
+        "reply-loose-wrong-type",
+        {**rep(cmd("ls")), "loose": "InvokeMemberExpressionAst"},
+        gray_has=["ps-internal-error"],
+    ),
+    case(
         "reply-missing-parse-errors",
         {k: v for k, v in rep(cmd("ls")).items() if k != "parse_errors"},
         gray_has=["ps-internal-error"],
@@ -1606,6 +1618,7 @@ JSONISH = st.recursive(
                     "commands",
                     "compound",
                     "dynamic",
+                    "loose",
                     "parse_errors",
                     "ok",
                     "mode",
@@ -1687,6 +1700,7 @@ def _conforms(reply: Any) -> bool:
         and isinstance(reply.get("commands"), list)
         and isinstance(reply.get("compound"), list)
         and isinstance(reply.get("dynamic"), list)
+        and isinstance(reply.get("loose"), list)
         and isinstance(reply.get("parse_errors"), list)
         and all(command(c) for c in reply["commands"])
     )

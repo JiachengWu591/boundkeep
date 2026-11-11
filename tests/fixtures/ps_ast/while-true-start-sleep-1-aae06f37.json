@@ -30,5 +30,6 @@
   "WhileStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

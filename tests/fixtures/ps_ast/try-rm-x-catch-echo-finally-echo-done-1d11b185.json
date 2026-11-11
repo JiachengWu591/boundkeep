@@ -79,5 +79,6 @@
   "TryStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

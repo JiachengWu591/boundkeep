@@ -31,5 +31,6 @@
   "AssignmentStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

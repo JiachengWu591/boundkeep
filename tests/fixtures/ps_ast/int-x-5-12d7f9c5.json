@@ -8,5 +8,8 @@
  "dynamic": [
   "ConvertExpressionAst"
  ],
+ "loose": [
+  "ConvertExpressionAst"
+ ],
  "mode": "FullLanguage"
 }

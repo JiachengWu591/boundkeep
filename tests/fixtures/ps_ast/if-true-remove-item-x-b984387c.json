@@ -31,5 +31,6 @@
   "IfStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

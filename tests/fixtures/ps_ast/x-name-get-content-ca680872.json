@@ -30,5 +30,8 @@
  "dynamic": [
   "MemberExpressionAst"
  ],
+ "loose": [
+  "MemberExpressionAst"
+ ],
  "mode": "FullLanguage"
 }

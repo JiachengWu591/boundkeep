@@ -42,5 +42,6 @@
   "MemberExpressionAst",
   "IndexExpressionAst"
  ],
+ "loose": [],
  "mode": "FullLanguage"
 }

@@ -6,5 +6,6 @@
   "ExitStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

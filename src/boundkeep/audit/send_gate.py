@@ -15,8 +15,9 @@ Refused (nothing is sent; the audit fails to ``on_failure``):
 
 * too much to show whole: more than ``MAX_ACTIONS`` actions, an action with more than
   ``MAX_WORDS`` words, ``MAX_PATHS`` paths or ``MAX_DOMAINS`` hosts, a word longer than
-  ``MAX_WORD_CHARS``, a payload above ``MAX_CONTENT_CHARS``. A cut view could hide the part that
-  matters behind padding, and a model can only allow what it was shown;
+  ``MAX_WORD_CHARS``, a program name longer than ``MAX_NAME_CHARS`` (in PowerShell the name can
+  be an expression: ``& $(...; 'Get-Date')``), a payload above ``MAX_CONTENT_CHARS``. A cut view
+  could hide the part that matters behind padding, and a model can only allow what it was shown;
 * a word or path with a control or format character other than tab, CR and LF (bidi overrides,
   zero-width characters, terminal escapes): such text reads differently from what runs;
 * a secret that only shows across words (``--password X``, ``-Password 'X'``, ``curl -u u:pw``):
@@ -152,6 +153,8 @@ def _action(action: Action, places: _Places) -> dict[str, Any]:
         raise _Refused(f"a command names more than {MAX_DOMAINS} hosts")
     if len(action.flags) > MAX_FLAGS:
         raise _Refused(f"a command has more than {MAX_FLAGS} flags")
+    if action.program and len(action.program) > MAX_NAME_CHARS:
+        raise _Refused(f"a program name is longer than {MAX_NAME_CHARS} characters")
     out: dict[str, Any] = {}
     program = _clean_name(action.program)
     if program:

@@ -122,6 +122,7 @@ def ok_reply(request: dict[str, Any], **changes: Any) -> dict[str, Any]:
         ],
         "compound": [],
         "dynamic": [],
+        "loose": [],
         "mode": "FullLanguage",
     }
     reply.update(changes)
@@ -530,9 +531,19 @@ def test_protocol_violations_are_crashes(made: Any, handler: Any) -> None:
         {"parse_errors": None},
         {"compound": [1]},
         {"dynamic": "x"},
+        {"loose": [None]},
         {"mode": 5},
     ],
-    ids=["ok", "commands-str", "commands-items", "parse-errors", "compound", "dynamic", "mode"],
+    ids=[
+        "ok",
+        "commands-str",
+        "commands-items",
+        "parse-errors",
+        "compound",
+        "dynamic",
+        "loose",
+        "mode",
+    ],
 )
 def test_badly_shaped_replies_are_crashes(made: Any, changes: dict[str, Any]) -> None:
     helper = ready_helper(made, Spawner(Script(on_request=answer(**changes))))
@@ -1179,7 +1190,15 @@ def test_fixture_index_is_complete_and_consistent() -> None:
         assert "id" not in reply
         assert isinstance(reply["commands"], list)
         assert isinstance(reply["parse_errors"], list)
-        assert set(reply) == {"ok", "parse_errors", "commands", "compound", "dynamic", "mode"}
+        assert set(reply) == {
+            "ok",
+            "parse_errors",
+            "commands",
+            "compound",
+            "dynamic",
+            "loose",
+            "mode",
+        }
         for item in reply["commands"]:
             assert set(item) == {
                 "pos",
@@ -1463,7 +1482,7 @@ class TestRealHelper:
         for command, name in index.items():
             stored = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
             live = _parse(real, command)
-            for key in ("commands", "compound", "dynamic"):
+            for key in ("commands", "compound", "dynamic", "loose"):
                 assert live[key] == stored[key], (command, key)
             assert [(e["line"], e["col"]) for e in live["parse_errors"]] == [
                 (e["line"], e["col"]) for e in stored["parse_errors"]

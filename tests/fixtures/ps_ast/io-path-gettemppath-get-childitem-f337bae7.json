@@ -31,5 +31,9 @@
   "InvokeMemberExpressionAst",
   "TypeExpressionAst"
  ],
+ "loose": [
+  "InvokeMemberExpressionAst",
+  "TypeExpressionAst"
+ ],
  "mode": "FullLanguage"
 }

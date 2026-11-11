@@ -41,5 +41,6 @@
  "dynamic": [
   "UsingExpressionAst"
  ],
+ "loose": [],
  "mode": "FullLanguage"
 }

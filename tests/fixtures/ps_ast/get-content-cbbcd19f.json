@@ -42,5 +42,6 @@
   "ErrorStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

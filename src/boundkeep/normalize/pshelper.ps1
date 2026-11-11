@@ -13,7 +13,11 @@
 #   ready   {"ready":true,"mode":"FullLanguage","version":"5.1.26100.9444"}
 #   request {"id":"<hex>","b64":"<base64 of the UTF-8 command text>"}
 #   reply   {"id":"..","ok":true,"parse_errors":[..],"commands":[..],"compound":[..],
-#            "dynamic":[..],"mode":".."}   or   {"id":"..","ok":false,"error":"too-large|internal"}
+#            "dynamic":[..],"loose":[..],"mode":".."}
+#           or   {"id":"..","ok":false,"error":"too-large|internal"}
+# "loose" names what is in no command's arguments and is not known to do nothing (the tables
+# below). A drive-qualified variable (${C:\x\y}) is a command of its own, with the name kind
+# "file-read" or "file-write" and the path as the name's value.
 #
 # Speed note: a PowerShell function call costs ~20 microseconds and a StringBuilder call ~1, so the
 # serializer builds whole JSON fragments per call instead of one call per token.
@@ -87,6 +91,44 @@ foreach ($n in @(
         'BaseCtorInvokeMemberExpressionAst')) {
     $script:DynamicTypes[$n] = $true
 }
+# What does nothing by itself (spec revision 21). The request to the LLM audit lists commands with
+# their arguments, so an expression or statement that is in no command's arguments is not in it.
+# Everything of that kind is reported in "loose" unless it is listed here. Constants, variables,
+# strings and array literals never reach the check. The containers are listed because what is
+# inside them is looked at on its own.
+$script:InertExpr = @{}
+foreach ($n in @(
+        'ParenExpressionAst', 'SubExpressionAst', 'ArrayExpressionAst', 'ScriptBlockExpressionAst',
+        'HashtableAst')) {
+    $script:InertExpr[$n] = $true
+}
+# Comparison and logic (TokenKind names): `if ($LASTEXITCODE -ne 0)`, `-not $?`. Not -as (a type
+# conversion runs a constructor), not -f, -replace, -split, -join, arithmetic or the range operator.
+$script:InertOperator = @{}
+foreach ($n in @(
+        'Ieq', 'Ine', 'Ige', 'Igt', 'Ilt', 'Ile', 'Ilike', 'Inotlike', 'Imatch', 'Inotmatch',
+        'Icontains', 'Inotcontains', 'Iin', 'Inotin',
+        'Ceq', 'Cne', 'Cge', 'Cgt', 'Clt', 'Cle', 'Clike', 'Cnotlike', 'Cmatch', 'Cnotmatch',
+        'Ccontains', 'Cnotcontains', 'Cin', 'Cnotin',
+        'And', 'Or', 'Xor', 'Not', 'Exclaim')) {
+    $script:InertOperator[$n] = $true
+}
+# Statements that are structure only. `using module` / `using assembly` (load code) and
+# `switch -File` (reads a file) are taken out again where the list is used.
+$script:PlainStatement = @{}
+foreach ($n in @(
+        'IfStatementAst', 'WhileStatementAst', 'DoWhileStatementAst', 'DoUntilStatementAst',
+        'ForStatementAst', 'ForEachStatementAst', 'SwitchStatementAst', 'TryStatementAst',
+        'TrapStatementAst', 'FunctionDefinitionAst', 'ReturnStatementAst', 'ThrowStatementAst',
+        'ExitStatementAst', 'BreakStatementAst', 'ContinueStatementAst', 'AssignmentStatementAst',
+        'BlockStatementAst', 'DataStatementAst', 'TypeDefinitionAst', 'UsingStatementAst',
+        'PipelineChainAst')) {
+    $script:PlainStatement[$n] = $true
+}
+# ${C:\x\y} is the content of that file. These drives are not files.
+$script:NoFileDrive = @{ 'env' = $true; 'function' = $true; 'alias' = $true; 'variable' = $true }
+$script:MaxSteps = 1000000          # parent links followed for one request
+$script:Steps = 0
 
 # ---- JSON writing (no ConvertTo-Json: exact control over shape, escaping and size) -----------
 $script:Sb = [System.Text.StringBuilder]::new(4096)
@@ -260,6 +302,54 @@ function Add-Command($c, $root) {
     [void]$sb.Append(',"nested":' + $nested + '}')
 }
 
+# Is the node in no command's arguments? A redirection target is not an argument either.
+function Test-Loose($n) {
+    $p = $n.Parent
+    while ($null -ne $p) {
+        $script:Steps++
+        if ($script:Steps -gt $script:MaxSteps) { throw 'too-large' }
+        if ($p -is [RedirectionAst]) { return $true }
+        if ($p -is [CommandAst]) { return $false }
+        $p = $p.Parent
+    }
+    return $true
+}
+
+# What a drive-qualified variable does to its file: an assignment writes it (also through a type
+# or `a, b = ...`), `+=` and `++` read and write it, everything else reads it.
+function Get-VarAccess($v) {
+    $p = $v.Parent
+    $direct = $true
+    while ($p -is [ExpressionAst]) {
+        $script:Steps++
+        if ($script:Steps -gt $script:MaxSteps) { throw 'too-large' }
+        if ($p -is [UnaryExpressionAst]) {
+            $k = $p.TokenKind.ToString()
+            if (($k -eq 'PlusPlus') -or ($k -eq 'MinusMinus') -or ($k -eq 'PostfixPlusPlus') -or ($k -eq 'PostfixMinusMinus')) {
+                return @('read', 'write')
+            }
+        }
+        if (-not (($p -is [AttributedExpressionAst]) -or ($p -is [ArrayLiteralAst]))) { $direct = $false }
+        $p = $p.Parent
+    }
+    # The right side of an assignment is a statement, so only the left side gets here
+    if ($p -is [AssignmentStatementAst]) {
+        if ($direct -and ($p.Operator.ToString() -eq 'Equals')) { return @('write') }
+        return @('read', 'write')
+    }
+    return @('read')
+}
+
+# A drive-qualified variable as a command of its own: the consumer reads it as Get-Content /
+# Set-Content of that path.
+function Add-FileVariable($v, [string]$access) {
+    $sb = $script:Sb
+    if ($sb.Length -gt $script:MaxOutChars) { throw 'too-large' }
+    $path = $v.VariablePath.UserPath
+    if ($path.Length -gt $script:MaxString) { throw 'too-large' }
+    [void]$sb.Append('{"pos":[' + $v.Extent.StartOffset + ',' + $v.Extent.EndOffset + '],"invoke":"","name":{"kind":"file-' + $access + '","v":' + (J $path) + '},"elements":[],"redirects":[],"stage":null,"nested":true}')
+}
+
 function Add-StrList($list) {
     $parts = [System.Collections.Generic.List[string]]::new()
     foreach ($s in $list) { $parts.Add((J $s)) }
@@ -287,6 +377,13 @@ function New-Reply([string]$b64) {
         if ($a -is [CommandBaseAst]) { return ($a -is [CommandAst]) }
         if ($a -is [PipelineAst]) { return $false }
         if ($a -is [StatementAst]) { return $true }
+        # ${C:\x\y} reads or writes that file wherever it stands
+        if ($a -is [VariableExpressionAst]) {
+            $vp = $a.VariablePath
+            return ($vp.IsDriveQualified -and -not $script:NoFileDrive.ContainsKey($vp.DriveName))
+        }
+        # a parameter with a type or an attribute converts or validates what it is given
+        if ($a -is [ParameterAst]) { return ($a.Attributes.Count -gt 0) }
         if ($a -is [ExpressionAst]) {
             return -not (($a -is [ConstantExpressionAst]) -or ($a -is [VariableExpressionAst]) -or
                 ($a -is [ExpandableStringExpressionAst]) -or ($a -is [ArrayLiteralAst]))
@@ -299,16 +396,35 @@ function New-Reply([string]$b64) {
     $cmds = [System.Collections.Generic.List[object]]::new()
     $compound = [System.Collections.Generic.List[string]]::new()
     $dynamic = [System.Collections.Generic.List[string]]::new()
+    $loose = [System.Collections.Generic.List[string]]::new()
+    $script:Steps = 0
     foreach ($n in $nodes) {
-        if (($n -is [CommandAst]) -or ($n -is [CommandExpressionAst])) {
+        if (($n -is [CommandAst]) -or ($n -is [CommandExpressionAst]) -or ($n -is [VariableExpressionAst])) {
             $cmds.Add($n)
         } else {
             $short = TypeShort $n
             if ($n -is [ExpressionAst]) {
                 if ($script:DynamicTypes.ContainsKey($short) -and -not $dynamic.Contains($short)) { $dynamic.Add($short) }
-            } elseif (-not $compound.Contains($short)) {
-                $compound.Add($short)
+                $inert = $script:InertExpr.ContainsKey($short)
+                if (-not $inert) {
+                    if ($n -is [BinaryExpressionAst]) {
+                        $inert = $script:InertOperator.ContainsKey($n.Operator.ToString())
+                    } elseif ($n -is [UnaryExpressionAst]) {
+                        $inert = $script:InertOperator.ContainsKey($n.TokenKind.ToString())
+                    }
+                }
+            } elseif ($n -is [ParameterAst]) {
+                $inert = $false
+            } else {
+                if (-not $compound.Contains($short)) { $compound.Add($short) }
+                $inert = $script:PlainStatement.ContainsKey($short)
+                if ($inert -and ($short -eq 'UsingStatementAst')) {
+                    $inert = ($n.UsingStatementKind.ToString() -eq 'Namespace')
+                } elseif ($inert -and ($short -eq 'SwitchStatementAst')) {
+                    $inert = (($n.Flags -band [SwitchFlags]::File) -eq 0)
+                }
             }
+            if ((-not $inert) -and (-not $loose.Contains($short)) -and (Test-Loose $n)) { $loose.Add($short) }
         }
     }
     if ($cmds.Count -gt $script:MaxCommands) { throw 'too-large' }
@@ -327,6 +443,14 @@ function New-Reply([string]$b64) {
     [void]$sb.Append('],"commands":[')
     $first = $true
     foreach ($c in $cmds) {
+        if ($c -is [VariableExpressionAst]) {
+            foreach ($access in @(Get-VarAccess $c)) {
+                if (-not $first) { [void]$sb.Append(',') }
+                $first = $false
+                Add-FileVariable $c $access
+            }
+            continue
+        }
         if (-not $first) { [void]$sb.Append(',') }
         $first = $false
         Add-Command $c $root
@@ -335,6 +459,8 @@ function New-Reply([string]$b64) {
     Add-StrList $compound
     [void]$sb.Append(',"dynamic":')
     Add-StrList $dynamic
+    [void]$sb.Append(',"loose":')
+    Add-StrList $loose
     [void]$sb.Append(',"mode":' + (J $script:Mode) + '}')
 }
 
@@ -371,7 +497,7 @@ if ($script:Mode -eq 'FullLanguage') {
 # Run the whole pipeline once on fixed samples (JIT and type loading cost ~0.3 s on the first
 # request otherwise). The samples are constants of this file, never user input.
 foreach ($sample in @(
-        'Get-ChildItem -Path "$env:TEMP\x$(1)" -Recurse:$true 1,2 @a 5 ''q'' | ForEach-Object { $_.Name; [IO.Path]::GetTempPath() } > out.txt 2>&1; $x = if ($a) { "b" }',
+        'Get-ChildItem -Path "$env:TEMP\x$(1)" -Recurse:$true 1,2 @a 5 ''q'' | ForEach-Object { $_.Name; [IO.Path]::GetTempPath() } > out.txt 2>&1; $x = if ($a) { "b" }; ${C:\a} = "${C:\b}"; [IO.Path]::GetTempPath()',
         'a && b ; rm -rf x < y')) {
     try {
         $null = Get-LineReply ('{"id":"00","b64":"' + [System.Convert]::ToBase64String($script:Utf8.GetBytes($sample)) + '"}')

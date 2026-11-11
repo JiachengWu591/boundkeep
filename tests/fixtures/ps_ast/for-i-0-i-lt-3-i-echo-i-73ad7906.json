@@ -35,5 +35,8 @@
   "BinaryExpressionAst",
   "UnaryExpressionAst"
  ],
+ "loose": [
+  "UnaryExpressionAst"
+ ],
  "mode": "FullLanguage"
 }

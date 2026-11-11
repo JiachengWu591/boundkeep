@@ -73,5 +73,6 @@
  "dynamic": [
   "ScriptBlockExpressionAst"
  ],
+ "loose": [],
  "mode": "FullLanguage"
 }

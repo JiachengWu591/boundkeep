@@ -547,7 +547,7 @@ def _check_reply(reply: dict[str, Any], rid: str) -> None:
         items = reply.get(key)
         if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
             raise _ProtocolError(f"bad {key}")
-    for key in ("compound", "dynamic"):
+    for key in ("compound", "dynamic", "loose"):
         items = reply.get(key)
         if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
             raise _ProtocolError(f"bad {key}")

@@ -55,5 +55,6 @@
  "dynamic": [
   "InvokeMemberExpressionAst"
  ],
+ "loose": [],
  "mode": "FullLanguage"
 }

@@ -49,5 +49,6 @@
   "ForEachStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

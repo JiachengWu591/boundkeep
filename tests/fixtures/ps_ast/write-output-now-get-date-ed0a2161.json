@@ -50,5 +50,6 @@
  "dynamic": [
   "SubExpressionAst"
  ],
+ "loose": [],
  "mode": "FullLanguage"
 }

@@ -49,5 +49,6 @@
   "FunctionDefinitionAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

@@ -85,5 +85,6 @@
   "BinaryExpressionAst",
   "MemberExpressionAst"
  ],
+ "loose": [],
  "mode": "FullLanguage"
 }

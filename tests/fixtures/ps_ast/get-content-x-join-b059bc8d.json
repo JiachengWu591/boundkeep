@@ -31,5 +31,8 @@
  "dynamic": [
   "BinaryExpressionAst"
  ],
+ "loose": [
+  "BinaryExpressionAst"
+ ],
  "mode": "FullLanguage"
 }

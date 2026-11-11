@@ -36,5 +36,6 @@
  "dynamic": [
   "ArrayExpressionAst"
  ],
+ "loose": [],
  "mode": "FullLanguage"
 }

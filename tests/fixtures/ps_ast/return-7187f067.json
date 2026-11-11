@@ -6,5 +6,6 @@
   "ReturnStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

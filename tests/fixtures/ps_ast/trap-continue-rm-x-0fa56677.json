@@ -32,5 +32,6 @@
   "ContinueStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

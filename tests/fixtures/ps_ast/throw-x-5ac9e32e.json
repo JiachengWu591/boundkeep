@@ -6,5 +6,6 @@
   "ThrowStatementAst"
  ],
  "dynamic": [],
+ "loose": [],
  "mode": "FullLanguage"
 }

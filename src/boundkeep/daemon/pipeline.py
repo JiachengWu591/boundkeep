@@ -645,10 +645,17 @@ def incomplete_analysis(actions: Sequence[Action]) -> str | None:
 # code, an assignment (``$env:NODE_OPTIONS = ...``) is not an action with words of its own, and the
 # request names a program as folded, so ``sed`` with U+017F for its "s" would read as plain ``sed``,
 # and ``BOUNDK~1`` found by Git Bash's PATH, or by a path the disk layer cannot expand, says
-# nothing of the program it is (spec revisions 18 and 19).
+# nothing of the program it is (spec revisions 18 and 19). The request lists commands with their
+# arguments, so a PowerShell expression or statement that is in no command's arguments is not in
+# it: ``git status; [IO.File]::ReadAllText('.env')`` (``pscmd.OUTSIDE_COMMAND_GRAY``, revision 21).
+# Nor is the computed value of a switch (``-Force:(...)``) or of an option of ``uv run``: the
+# normalizer drops those words.
 _UNSHOWN_REASONS: Final = (
     "ps-pipe-to-interpreter",
     "ps-compound:AssignmentStatementAst",
+    "ps-outside-command",
+    "ps-switch-value",
+    "ps-runner-value",
     "program-fold-variant",
     "program-short-name-unresolved",
 )
