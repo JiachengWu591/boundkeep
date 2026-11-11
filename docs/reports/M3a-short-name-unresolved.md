@@ -108,7 +108,7 @@ PowerShell 不运行不带 `.EXE` 的短名路径，这一条是修订 17 复审
 
 ## 7. 没有做的
 
-- 这次修复没有复审，真实宿主里没有跑。
+- 真实宿主里没有跑。复审在 `docs/reviews/M3a-rev19-20-review.md`（2026-11-10，不是独立的）：目标达到了；查到 R19-1（`./BOUNDK~1.EXE.` 在 Bash 里标错了原因，Git Bash 不运行它）、R19-2（交给 `Start-Process`、`cmd /c` 的短名程序照常送审）、R19-3（短名目录里按短名读受保护的文件是灰色），都没有修。
 - R18-1 到 R18-3 按使用者的决定记为 IR-7 的同类，不修（`docs/threat-model.md` 第 4 节）。
 - 全量里那条失败查到的问题，早于这次修改，没有修：
   - `programs.py` 把 `/dev/null`、`/dev/stdin`、`/dev/stdout`、`/dev/stderr`、`/dev/tty`、`/dev/zero` 当作无害设备，不记路径。这是 Bash 的读法，PowerShell 一侧也照用了。
