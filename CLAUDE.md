@@ -166,7 +166,7 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
     - 失败用例存在 `.hypothesis/` 里，修好之前本机每次都会失败。
   - 这次修复没有复审，真实宿主里没有跑。
   - 代价：路径写错、文件不存在的短名程序也直接问，不再送审。
-- **PowerShell 里的 `/dev/null`、`/dev/zero` 是普通路径，规格修订 20**（2026-11-10，已提交，`92a5e56` 代码，文档在其后一个提交，未推送，未打标签；记录 `docs/reports/M3a-ps-dev-paths.md`）：使用者说"修 /dev 这条"，范围选"整个 PowerShell 工具"，`/dev/tcp` 选"记路径，网络标记也留着"。
+- **PowerShell 里的 `/dev/null`、`/dev/zero` 是普通路径，规格修订 20**（2026-11-10，已提交并推送，`92a5e56` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-dev-paths.md`）：使用者说"修 /dev 这条"，范围选"整个 PowerShell 工具"，`/dev/tcp` 选"记路径，网络标记也留着"。
   - 改了什么：`/dev/null`、`/dev/stdin`、`/dev/stdout`、`/dev/stderr`、`/dev/tty`、`/dev/zero` 只在 bash 方言里是无害设备。PowerShell 方言里照常记路径：cmdlet 的路径参数、重定向、外部程序的参数（`programs._Acc` 的 `posix_devices`，建的时候必须给，`psprograms` 一侧给 False）。`/dev/tcp/…`、`/dev/udp/…` 在 PowerShell 里既记路径，也保留网络目标。
   - 实测（PowerShell 5.1，临时目录挂成 PSDrive）：`Remove-Item /dev/zero`、`Remove-Item -Recurse /dev/null`、`Set-Content`、`>` 都真的作用在当前盘根下的 `\dev\…` 上；`'x' > /dev/tcp/example.com/80` 写的是文件。python、`curl.exe`、cmd 也按当前盘的路径读，只有 git 自己把 `/dev/null` 当空文件。
   - 规则条目与策略文件没变，bash 方言一条没变。专门扫描 2482 行：0 行变松，PowerShell 有 120 行收紧（`Remove-Item -Recurse -Force /dev/null` 从灰色到 deny），672 行级别相同、多记了路径。
