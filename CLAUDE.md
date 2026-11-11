@@ -180,10 +180,24 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
     - R19-1（信息）：Bash 里 `./BOUNDK~1.EXE.`（`.EXE` 后面再带点或空格）展开不了时标成了 `program-short-name`，照常送审。Git Bash 实测不运行它。
     - R19-2、R19-3（低）：和 R18-4 同一个原因，`cd` 进短名目录之后工作目录算未知。交给 `Start-Process`、`cmd /c` 的短名程序照常送审；按短名读受保护的文件（`cat ./ENV~1.PRO`，它是 `.env.production`）是灰色，长名目录里是 deny，两种 shell 实测都读出内容。
     - R20-1（低）：Windows 上 Git Bash 启动的原生程序拿到的不是设备（`/dev/tty` 是 `C:\dev\tty`，`/dev/zero` 变成 `/Device/Null`，实测）。受信任项目里 `pytest /dev/tty` 由规则放行，`pytest /dev/ttx` 是问。那个位置有内容时的效果没有实测。
-    - 范围之外的 O-1，按 X1 审查 F3、F4 的标准应算中危，`m3a-done` 起就有：PowerShell 里单独成句的表达式（`git status; [IO.File]::ReadAllText('.env')`）照常送审，请求里没有它的任何文字。只在有后端时起作用，要在 M3b 之前定。
-    - 都等使用者决定。
+    - 范围之外的 O-1，按 X1 审查 F3、F4 的标准应算中危，`m3a-done` 起就有：PowerShell 里单独成句的表达式（`git status; [IO.File]::ReadAllText('.env')`）照常送审，请求里没有它的任何文字。只在有后端时起作用，要在 M3b 之前定。（修订 21 已修，见下一条。）
+    - R19-1 到 R19-3、R20-1 都等使用者决定。
   - **复审时编的假项目要留意巧合：`cat ./ENV~1` 是 deny，只是因为假项目自己也有 `.env`。对照用的受保护文件要只存在于被测的那个目录里。**
   - **随机生成测试（hypothesis）的失败不是偶发：它会把失败用例存进 `.hypothesis/`，以后每次重放。先在旧代码上单跑，旧代码也失败就是早已存在的问题。**
+- **PowerShell 里不在任何命令之内的文字，规格修订 21**（2026-11-11，已提交，没有推送，`e52c596` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-outside-command.md`）：使用者说"按建议执行"，指复审的建议"先定 O-1"。两处取舍的提问被应用退出打断，先是开发 agent 按自己的推荐定的；全量跑完后使用者说"按照你建议执行；先提交修订21再去修改O-3"，照此定下：O-1 的范围选"白名单，比较和逻辑运算算无害"；带盘符的变量选"按读写文件记路径"。
+  - 原因是同一个：PowerShell 会执行不是命令的文字，而守卫和发给 LLM 的请求都是按命令看的。
+  - O-1：不在任何命令的参数里的表达式和语句是灰色 `ps-outside-command:<类型>`，不送审（辅助进程回复里新增的 `loose`）。无害清单：常量、变量、字符串、数组；括号、`$(…)`、`@(…)`、脚本块、哈希表；比较和逻辑运算。`using module`、`using assembly`、`switch -File`、带类型或特性的函数参数也算。重定向的目标按不在参数里看。
+  - 修 O-1 时查到一条更重的，不需要后端：`${E:\proj\.env}` 这样带盘符的变量就是那个文件的内容。原来 `Get-Date; ${E:\proj\.env}` 由规则放行（`allow-ps-no-path-commands`），项目之外的 `.ssh\id_rsa` 也一样。现在辅助进程把每一处报成一条命令（名字种类 `file-read` / `file-write`），按 `Get-Content -Path` / `Set-Content -Path` 判，`.env` 是 deny。
+  - 在命令里、但请求里也没有的三种文字：开关参数的值（`ps-switch-value`，原来就有这个原因，现在不送审）、`uv run` 一类运行器自己的选项的值（新原因 `ps-runner-value`）、超过 128 个字符的程序名（发送闸门拒绝，原来是截断）。
+  - 实测（PowerShell 5.1，TEMP 下的假文件）：带盘符的变量单独成句、在字符串里、在条件里都读出文件，通配符起作用，赋值改写文件；类型转换、`-as`、带类型的参数、开关参数的值、命令名表达式、重定向目标、条件、参数默认值、`using module` 都真的建出了文件，`switch -File` 读出了内容。
+  - 规则条目与策略文件没变，Bash 没变。专门扫描 694 行：会动手的表达式 187 行由送审改为不送审；带盘符的变量 79 行变成 deny（原来 10 行是 allow）；4 行变松，都是单独一条的带盘符变量，现在和 `Get-Content` 同一个路径得到的一样。
+  - 手头语料 1146 条 PowerShell 命令：70 条由送审改为不送审，都在测试语料里（64 条是语料专门写的开关值用例），评测集 0 条，没有变松。
+  - 测试：新测试 203 条，在修改前的代码上 169 条失败。夹具 293 个用真的辅助进程重新生成，只多了 `loose` 一项。原有差分全部相同；`boundkeep test` 1142 / 0、334 / 0；评测指标相同，一条漏判样本的灰色原因多了两个，`eval/report.md` 没有重新生成。变异 40 个全部抓到（第一轮有一个等价的存活，去掉了那处多余的判断）。
+  - 全量分六段跑，不是一个进程：28945 通过、169 跳过、0 失败，六段都一次跑完，合计与收集到的 29114 条相同。中途按使用者的话停过一次：前四段跑完后第 5 段停在约 51%，核对工作区没有变（`git diff HEAD` 和两个未跟踪文件的哈希）之后，第 5、6 两段从头跑。各段用时合计 3:26:12（前四段 40:15，最佳性能；后两段 2:45:57，最佳能效）。
+  - 真实宿主里没有跑。PowerShell 7 上没有量。
+  - 代价：有后端时，`$x.Count`、`$a[0]`、`[int]$x`、`1..10`、`'{0}' -f $x` 写在命令参数之外也直接问；`uv run --with $pkg pytest`、`-Force:$x` 只要带变量就不送审；带类型的函数参数一律算。
+  - **O-3 没有修，等使用者决定**：单独成句的变量和带变量的字符串不在任何命令里。`Get-Date; $env:SECRET_TOKEN` 由规则放行（不需要后端），把环境变量的值打印进上下文；`Write-Output $env:SECRET_TOKEN` 是灰色。和 X1 审查的 H-4 是同一类（当时评为高危），`m3a-done` 起就有。两种修法都有代价：当作 `Write-Output <表达式>`（单独一条的表达式会从不送审变成带着文字送审），或只标灰色（`git status; "exit=$LASTEXITCODE"` 在默认配置下由 allow 变成问）。
+  - **修一处"看不到的文字"时，把同一类的位置都扫一遍：这次从一条表达式查出了带盘符的变量、开关值、运行器选项、命令名四处。探针要让发送闸门自己判"送不送"，并检查请求的 JSON 里有没有那段文字。**
 - **下一步**：M3b（自备密钥、确认费用）或 M4（不依赖 M3b）；接真实后端之前，收尾记录第 5 节里还剩 `auto` 模式的实测。总览见 `PROJECT_SPEC.md` 开头的"当前进度"与 §14 的状态列。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
 - M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。

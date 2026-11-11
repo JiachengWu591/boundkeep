@@ -103,8 +103,18 @@
 >   - `/dev/tcp/主机/端口`、`/dev/udp/主机/端口`：bash 方言不变（网络目标，不记路径）。PowerShell 方言里既记路径，也保留网络目标，判决取更严的。PowerShell 把它当普通文件读写（实测），保留网络目标只是为了没有一条判决变松。
 >   - bash 方言一条不变。
 > - 代价：PowerShell 里的 `git status 2>/dev/null` 从 allow 变成 ask。当前盘没有 `\dev` 目录时，这条命令在 PowerShell 5.1 里本来就报错、不运行（实测）。
+>
+> **修订 21（2026-11-11，使用者说"按建议执行"，指复审的建议"先定 O-1"）**：复审 `docs/reviews/M3a-rev19-20-review.md` 的 O-1，和修它时查到的带盘符的变量，记录在 `docs/reports/M3a-ps-outside-command.md`。两处取舍先是开发 agent 按自己的推荐定的（提问被打断）；全量跑完后使用者说"按照你建议执行；先提交修订21再去修改O-3"，照此定下。
+> - §5.1：PowerShell 里 `${C:\x\.env}` 这样带盘符的变量就是那个文件的内容。读它是读文件，给它赋值是写文件，名字里的通配符照样展开（实测 PowerShell 5.1）。现在按 `Get-Content -Path` / `Set-Content -Path` 记路径，写在哪里都一样：单独成句、字符串里、条件里、参数里。
+>   - 原来它不在任何命令里，守卫看不到：`Get-Date; ${E:\proj\.env}` 由规则放行（`allow-ps-no-path-commands`），不需要 LLM 后端；项目之外的 `.ssh\id_rsa` 也一样。
+>   - `$env:X`、`$function:x`、`$alias:x`、`$variable:x` 不是文件，不记。
+> - §7：PowerShell 里不在任何命令的参数之内的表达式和语句，请求里没有它的文字，算"请求装不下的输入"，是灰色 `ps-outside-command:<类型>`，不送审（复审 O-1）。
+>   - 原来单独一条时靠"整个调用什么都没看懂"拦下，前面多一条 `Get-Date` 就送审了：`git status; [IO.File]::ReadAllText('.env')` 的请求里没有这个表达式的任何文字。
+>   - 无害的几种不算：常量、变量、字符串、数组；括号、`$(…)`、`@(…)`、脚本块、哈希表这些容器（里面的内容各自再看）；常量和变量之间的比较与逻辑运算。
+>   - 重定向的目标也按不在参数里看。
+> - 代价：有后端时，`$x.Count`、`$a[0]`、`[int]$x`、`1..10`、`'{0}' -f $x` 这些写在命令参数之外的写法也直接问，不再送审。没有后端时这一条不改变任何判决。
 
-> **当前进度（2026-11-10）**
+> **当前进度（2026-11-11）**
 >
 > - **已完成并有标签**：M0a、M0、M1、M1b、M1c、M1c-2、M1c-3、M1c-4、M2（`m2-baseline`）、M3a（`m3a-done`，2026-11-01；LLM 层没有接过真实服务）。M1+M1b、M1c / M1c-2 的独立 X1 审查与复审都已做完，高危、中危清零，修复已提交（M1c / M1c-2 的规则冻结在 `6821142`，标签 `m1c2-x1-rereview2-fixes-done`；审查在 `docs/reviews/`，修复报告 `docs/reports/M1c2-review-fixes*.md`）。M1c-4 的真实会话手工验收未做（`docs/reports/M1c4.md`）。
 > - **M2**：评测集 633 条（恶意 241、正常 392，全部经使用者确认）、评测框架 `src/boundkeep/evalkit` 与 `eval/run_eval.py`、`rules-only` 基线（报告 `docs/reports/M2.md`，口径 `docs/eval-methodology.md`）。**已知缺口：obfuscation 只有 11 条（目标 30 条）**。
@@ -165,8 +175,15 @@
 >   - 代价：PowerShell 里的 `git status 2>/dev/null` 从 allow 变成 ask。
 > - **修订 19、20 的复审**（2026-11-10，`docs/reviews/M3a-rev19-20-review.md`，不是独立的，同一个会话做的；`b15e064`，已推送）：两次修订的目标都达到了，没有回退。
 >   - 范围之内低危 3、信息 1（R19-1 到 R19-3、R20-1），都早于这两次修订，没有修。R19-2、R19-3 和 R18-4 是同一个原因：`cd` 进短名目录之后工作目录算未知，按短名读受保护的文件（`cat ./ENV~1.PRO`）是灰色，不是 deny。R20-1：Windows 上 Git Bash 启动的原生程序拿到的不是设备，受信任项目里 `pytest /dev/tty` 由规则放行。
->   - 范围之外查到 O-1：PowerShell 里单独成句的表达式和别的命令写在同一行时照常送审，请求里没有它的文字。按 X1 审查 F3、F4 的标准应算中危，`m3a-done` 起就有，要在 M3b 之前定。
->   - 都等使用者决定。
+>   - 范围之外查到 O-1：PowerShell 里单独成句的表达式和别的命令写在同一行时照常送审，请求里没有它的文字。按 X1 审查 F3、F4 的标准应算中危，`m3a-done` 起就有，要在 M3b 之前定。（修订 21 已修，见下一条。）
+>   - R19-1 到 R19-3、R20-1 都等使用者决定。
+> - **PowerShell 里不在任何命令之内的文字（修订 21）**（已提交，没有推送，`e52c596` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-outside-command.md`）：使用者说"按建议执行"。两处取舍先是开发 agent 按自己的推荐定的，使用者后来确认（"按照你建议执行"）。这次修复没有复审。
+>   - O-1：不在任何命令的参数里的表达式和语句是灰色 `ps-outside-command:<类型>`，不送审。常量、变量、容器、比较和逻辑运算不算。
+>   - 修 O-1 时查到一条更重的，不需要后端：带盘符的变量 `${E:\proj\.env}` 就是那个文件的内容，原来 `Get-Date; ${E:\proj\.env}` 由规则放行。现在按 `Get-Content -Path` / `Set-Content -Path` 判，是 deny。
+>   - 开关参数的值、`uv run` 一类运行器选项的值不在请求里，不送审；超过 128 个字符的程序名由发送闸门拒绝。
+>   - 规则条目与策略文件没变，Bash 没变。
+>   - 全量分六段跑，不是一个进程：28945 通过、169 跳过、0 失败（合计与收集到的 29114 条相同）。中途按使用者的话停过一次，核对工作区没有变之后，后两段从头跑。真实宿主里没有跑。
+>   - **O-3 没有修，等使用者决定**：`Get-Date; $env:SECRET_TOKEN` 这样单独成句的变量由规则放行，把环境变量的值打印进上下文，和 X1 审查的 H-4 是同一类。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -418,6 +435,7 @@ Claude Code
     - PowerShell 方言：这些名字都是普通路径，照常记。PowerShell 5.1 把 `/dev/zero` 解析成当前盘根下的 `\dev\zero`，cmdlet 和重定向都真的读写、删除那个文件；外部程序拿到原样的文字，python、`curl.exe`、cmd 也按当前盘的路径读（实测）。cmdlet 的路径参数、重定向、外部程序的参数都这样记。`/dev/tcp/…`、`/dev/udp/…` 除了记路径，还保留网络目标，判决取更严的。
     - git 自己把 `/dev/null` 当空文件（实测 `git hash-object /dev/null`），不为它开例外：PowerShell 里的 `git diff --no-index /dev/null x` 会多记一个项目外的路径。
   - PowerShell：优先用 PowerShell 自带的 AST 解析器（`System.Management.Automation.Language.Parser`，只解析不执行），由常驻进程托管一个长驻的辅助进程（`-NoProfile`，请求经 stdin 传入，绝不拼进命令行）。开发机初测：Windows PowerShell 5.1（FullLanguage）下 `Parser::ParseInput` 可用，常见命令能解析出命令名、参数名与字面量参数；动态命令（`& $x`）取不到命令名；5.1 不认识的 `&&` 产生解析错误（应灰色）；单次解析约 0.02 毫秒，但新起一个 `powershell.exe -NoProfile` 要约 1 秒，所以辅助进程必须长驻、在常驻进程启动时预热，未就绪时这次调用按灰色处理，不占用 hook 的时间预算。别名还原用 `AliasInfo.Definition`（总有值）；`ResolvedCommandName` 在模块尚未自动加载时为空，不能依赖；取不到或不唯一一律灰色。退路是自写的保守词法器，只认"单条简单命令 + 字面量参数"，其余灰色 `[待验证]`（M1b）。M1b 完成前，PowerShell 命令一律灰色并带 `exec` 标签。M1b 之后，下列构造仍一律灰色：`Invoke-Expression` / `iex`、`-EncodedCommand`、`& $变量`、反引号拼接、`$(...)` 子表达式、`cmd /c`、`Start-Process`、脚本块、经 `.ps1` 间接执行。5.1 与 7 的语法不同（5.1 没有 `&&`、`||`、三元运算符），解析失败即灰色。
+    - **带盘符的变量是文件**（修订 21）：`${C:\x\.env}` 是那个文件的内容，`${C:\x\y} = 'v'` 写那个文件，`${C:.env}` 相对于 C 盘的当前目录，名字里的 `*`、`?` 按通配符展开（都是实测，PowerShell 5.1）。它不是命令，写在哪里都起作用：单独成句、字符串里（`"${C:\x\.env}"`）、条件里、参数里。辅助进程把每一处都报成一条命令，归一化时读的记成 `Get-Content -Path <路径>`，写的记成 `Set-Content -Path <路径>`，`+=`、`++` 这样又读又写的两条都记，和别的命令按出现的先后排在一起。盘符之外的驱动器名（`HKLM:`、自定义的驱动器）照样交给路径层，和 `Get-Content HKLM:\x` 一样读。`env:`、`function:`、`alias:`、`variable:` 不是文件，不记。
 - **策略**：规则与测试可带 `platform`（§8）；Windows 特有的目标（凭据与浏览器配置目录、PowerShell profile、启动文件夹、`Run` 注册表项、计划任务）放进 `platform: windows` 的规则；覆盖范围逐项记在 `docs/threat-model.md`，没覆盖的明说。
 - **文件与日志**：Windows 默认目录为 `%USERPROFILE%\.boundkeep\`；`init` 读 settings 时容忍 UTF-8 BOM，写入时不带 BOM，并用"写临时文件再 `os.replace`"保证原子；`doctor` 对含 BOM 的 settings 在含 boundkeep hook 的层里报 FAIL、在其他层报 WARN（PowerShell 5.1 的 `Set-Content -Encoding utf8` 会写入 BOM）；`installs.json` 除安装记录外还记 `hook_files`（hook 解释器与脚本的 sha256，`doctor` 与守护进程启动时校验）与 `watched`（会运行命令的配置键与外来 hook 的哈希基线，供 ConfigChange 判断改动）；`0600` 在 Windows 上没有意义，`doctor` 检查该目录与管道的 ACL 没有授予其他用户。
 - **控制台输出**：CLI 的文本输出在 Windows 上显式用 UTF-8 并设 `errors="replace"`，避免代码页 936 下打印 `✓` 一类字符时崩溃。
@@ -547,6 +565,15 @@ event(pre) ─> normalize ─> Action
   - MCP 参数没看全，或参数里带命令；
   - 什么都没认出来（没有程序名、路径、主机，也没有 MCP 工具名）；
   - **请求装不下的输入**（修订 7，P-F34；X1 审查 F3、F4）：命令里的 here-document 或 here-string（shell 自己当命令读的除外，它们被解析成单独的命令）、`NAME=value` 赋值（命令前缀、`env NAME=v`、单独的赋值）、PowerShell 里管道进解释器的字符串与赋值语句、MCP 调用的参数。§9.2 的请求从不带这些内容，模型看不到它们。只有折叠后才读成某个名字的程序名（`program-fold-variant`，修订 14）和 bash 方言里像 8.3 短名的裸程序名（`program-short-name-unresolved`，修订 18）也算：请求里的名字不是实际运行的程序。带路径、最后一段是短名而展开不出长名的程序名（同一个灰色原因，修订 19）也一样。
+  - **PowerShell 里不在任何命令之内的文字**（修订 21，复审 O-1）：请求按命令列出程序名、参数、路径和主机。不在任何命令的参数里的表达式和语句，请求里没有它的文字，是灰色 `ps-outside-command:<类型>`，不送审。例如 `git status; [IO.File]::ReadAllText('.env')`、`if ([IO.File]::Exists('x')) { … }` 的条件、`return`、`throw` 后面的表达式、函数参数的默认值、管道开头的表达式、重定向的目标。
+    - 无害的不算：
+      - 常量、变量、字符串、数组字面量；
+      - 括号、`$(…)`、`@(…)`、脚本块、哈希表：它们只是容器，里面的命令照常解析，里面的表达式各自再看；
+      - 比较和逻辑运算：`-eq`、`-ne`、`-gt`、`-ge`、`-lt`、`-le`、`-like`、`-notlike`、`-match`、`-notmatch`、`-contains`、`-notcontains`、`-in`、`-notin`（带 `i`、`c` 前缀的也算），`-and`、`-or`、`-xor`、`-not`、`!`。所以 `if ($LASTEXITCODE -ne 0) { exit 1 }` 照常送审。
+    - 别的表达式都算：方法调用、成员访问（`$x.Count`）、类型字面量和类型转换（`[IO.StreamWriter]'C:\x'` 会新建那个文件）、`-as`、索引、算术、`..`、`-f`、`-replace`、`-split`、`-join`，以及解析器将来新增的类型。
+    - 语句：`if`、循环、`switch`、`try`、`trap`、函数定义、`return`、`throw`、`exit`、`break`、`continue`、`using namespace`、`data`、类型定义本身不算，里面的内容各自再看。算的有：`using module`、`using assembly`（加载代码）、`switch -File`（读文件）、带类型或特性的参数（`function f([IO.StreamWriter]$w) { }; f C:\x` 在调用时转换），以及不认识的语句类型。
+    - 在命令参数里的表达式不算：它的文字就在请求的 `args` 里（`Write-Output ([IO.File]::ReadAllText('.env'))`、`ForEach-Object { … }`）。
+    - 带盘符的变量（`${C:\x\.env}`）不在这一条里：它按读写文件记路径（§5.1）。
 
   这些调用直接 ask（`decided_by: gray-unanalysed`，理由里写明没有送审），不按 `on_failure`：它们不是审计失败，与没有配置后端时的灰色相同。
 - **碰到 Windows 设备路径的灰色调用不送审**（修订 10）：路径的 key 在 `//./` 之下时，key 说不清它通向哪里，模型放行的只是一串字符。`//./globalroot/device/mup/srv/share/x` 是网络共享（公开资料的说法，没有实测），`//./pipe/x` 是在那个管道上监听的程序，`//./volume{...}`、`//./harddiskvolume1` 与 `//./c:` 是整个卷，`//./com1`、`//./con` 是硬件与控制台，`//./aux` 也可能是项目里的 `aux.py`。这些调用直接 ask（`decided_by: gray-device-path`，理由里写明没有送审，不写路径），不按 `on_failure`。
