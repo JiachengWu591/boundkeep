@@ -196,8 +196,21 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - 全量分六段跑，不是一个进程：28945 通过、169 跳过、0 失败，六段都一次跑完，合计与收集到的 29114 条相同。中途按使用者的话停过一次：前四段跑完后第 5 段停在约 51%，核对工作区没有变（`git diff HEAD` 和两个未跟踪文件的哈希）之后，第 5、6 两段从头跑。各段用时合计 3:26:12（前四段 40:15，最佳性能；后两段 2:45:57，最佳能效）。
   - 真实宿主里没有跑。PowerShell 7 上没有量。
   - 代价：有后端时，`$x.Count`、`$a[0]`、`[int]$x`、`1..10`、`'{0}' -f $x` 写在命令参数之外也直接问；`uv run --with $pkg pytest`、`-Force:$x` 只要带变量就不送审；带类型的函数参数一律算。
-  - **O-3 没有修，等使用者决定**：单独成句的变量和带变量的字符串不在任何命令里。`Get-Date; $env:SECRET_TOKEN` 由规则放行（不需要后端），把环境变量的值打印进上下文；`Write-Output $env:SECRET_TOKEN` 是灰色。和 X1 审查的 H-4 是同一类（当时评为高危），`m3a-done` 起就有。两种修法都有代价：当作 `Write-Output <表达式>`（单独一条的表达式会从不送审变成带着文字送审），或只标灰色（`git status; "exit=$LASTEXITCODE"` 在默认配置下由 allow 变成问）。
+  - **O-3 没有修，等使用者决定**：单独成句的变量和带变量的字符串不在任何命令里。`Get-Date; $env:SECRET_TOKEN` 由规则放行（不需要后端），把环境变量的值打印进上下文；`Write-Output $env:SECRET_TOKEN` 是灰色。和 X1 审查的 H-4 是同一类（当时评为高危），`m3a-done` 起就有。两种修法都有代价：当作 `Write-Output <表达式>`（单独一条的表达式会从不送审变成带着文字送审），或只标灰色（`git status; "exit=$LASTEXITCODE"` 在默认配置下由 allow 变成问）。（修订 22 已修，见下一条。）
   - **修一处"看不到的文字"时，把同一类的位置都扫一遍：这次从一条表达式查出了带盘符的变量、开关值、运行器选项、命令名四处。探针要让发送闸门自己判"送不送"，并检查请求的 JSON 里有没有那段文字。**
+- **PowerShell 里值有去处的表达式，规格修订 22**（2026-11-11，已提交，没有推送，`646cb05` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-expression-output.md`）：使用者说"按照你建议执行；先提交修订21再去修改O-3"。O-3 的两种修法里开发 agent 推荐并采用"当作 `Write-Output <表达式>`"。
+  - PowerShell 里表达式可以站在命令的位置上，`$env:TOKEN` 单独成句就把值打印出来（实测 5.1）。原来 `Get-Date; $env:SECRET_TOKEN`、`Get-Date; "key $env:SECRET_TOKEN"`、`Get-Date; ($env:SECRET_TOKEN)` 由规则放行，不需要后端。
+  - 现在辅助进程把值有去处的表达式报成一条命令（名字种类 `output`），`pscmd` 记成 `Write-Output <表达式>`：单独成句、`return` / `throw` 后面、管道开头、`foreach` 的集合、`switch` 的条件。带变量的是灰色 `ps-dynamic-arg`（H-4 给 `Write-Output $env:TOKEN` 定的原因），送审，请求里有它的文字。
+  - 不记的：值已经知道的（常量，`$true`、`$false`、`$null`）；`if` / `while` / `for` 的条件、`exit` 后面、赋值右边；命令参数里的；带盘符的变量本身；只包着命令的括号。
+  - 会动手的表达式照旧不送审（修订 21 的 `ps-outside-command`），所以 O-3 当时写的那条代价没有发生。规则条目与策略文件没变，Bash 没变。
+  - 专门扫描 928 行（32 种文字 × 29 个位置）：52 行由 allow 变成灰色送审（这就是 O-3）；带变量的行里修改前 57 行 allow，修改后剩 5 行，都是 `(Get-Location)`。变松 122 行，都是整行没有命令、原来靠"什么都没看懂"直接问的，现在和 `Write-Output` 的写法一样送审。没有一行少记路径。
+  - 手头语料 1146 条 PowerShell 命令：级别变了的 0 条。
+  - 测试：新测试 167 条，在修订 21 的代码上 127 条失败。夹具重新生成，36 个多了 `output` 命令。原有差分全部相同（修订 17 的扫描连着跑时有 1 行撞到时间预算，单独重跑后相同）；`boundkeep test` 1142 / 0、334 / 0；评测指标相同，`eval/report.md` 没有重新生成。变异 45 个，44 个抓到，1 个存活的是等价的（赋值右边的表达式不在管道里，前一个检查已经挡掉）。
+  - 全量分六段跑，不是一个进程：29110 通过、169 跳过、**1 失败**，六段都一次跑完，合计与收集到的 29280 条相同，各段用时合计 2:42:49（开始时是最佳能效）。失败的是 `test_m1c2_devtools_bash.py` 里 `python -x -m pytest` 那一条（Bash），结果里多了一条 `budget:time`，归一化撞到了时间预算。全量结束后单独重跑，这次的代码和 `e52c596` 的代码各 5 次都通过，整个文件各 463 通过。这次没有改 Bash 的路径。
+  - 真实宿主里没有跑。PowerShell 7 上没有量。
+  - 代价：`git status; $LASTEXITCODE`、`npm test; "exit=$LASTEXITCODE"` 在默认配置下由 allow 变成问（`Write-Output $LASTEXITCODE` 原来就是）；`"${E:\proj\README.md}"`、`@{ a = 1 }`、`('x')` 单独成句也变灰色；多出来的 `Write-Output` 占发送闸门的 8 条命令上限。
+  - 没有做：`if ($env:A)`、`exit $env:A` 的文字仍不在请求里；`foreach ($u in '常量')` 和函数参数默认值绑的常量也不在。`$LASTEXITCODE`、`$?` 没有放进常量表。
+  - **给不是命令的东西起一个命令名时，值已经知道的要直接放过：`Write-Output` 没有 allow 规则，照记的话 `Get-Date; 'done'` 也会变成问。先看那个名字在规则层是怎么判的。**
 - **下一步**：M3b（自备密钥、确认费用）或 M4（不依赖 M3b）；接真实后端之前，收尾记录第 5 节里还剩 `auto` 模式的实测。总览见 `PROJECT_SPEC.md` 开头的"当前进度"与 §14 的状态列。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
 - M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。

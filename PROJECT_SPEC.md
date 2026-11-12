@@ -114,6 +114,15 @@
 >   - 重定向的目标也按不在参数里看。
 > - 代价：有后端时，`$x.Count`、`$a[0]`、`[int]$x`、`1..10`、`'{0}' -f $x` 这些写在命令参数之外的写法也直接问，不再送审。没有后端时这一条不改变任何判决。
 
+> **修订 22（2026-11-11，使用者说"按照你建议执行；先提交修订21再去修改O-3"）**：修订 21 的记录第 7 节留下的 O-3，记录在 `docs/reports/M3a-ps-expression-output.md`。两种修法里开发 agent 推荐并采用"当作 `Write-Output <表达式>`"；会动手的表达式照旧不送审（修订 21 的规定不变），所以当时写的那条代价（单独一条的表达式变成带着文字送审）没有发生。
+> - §5.1：PowerShell 里不是命令的表达式，它的值有去处时，按 `Write-Output <表达式>` 记成一条命令。有去处的位置是：单独成句（值被打印）、`return` 和 `throw` 后面、管道开头（值流进后面的命令）、`foreach` 的集合和 `switch` 的条件（值绑到变量上）。
+>   - 原来这样的表达式不在任何命令里，守卫看不到：`Get-Date; $env:SECRET_TOKEN`、`Get-Date; "key $env:SECRET_TOKEN"`、`Get-Date; ($env:SECRET_TOKEN)` 由规则放行（`allow-ps-no-path-commands`），把环境变量的值打印进上下文，不需要 LLM 后端。`Write-Output $env:SECRET_TOKEN` 从 M1c-2 的 H-4 起就是灰色。
+>   - 记成命令之后，带变量的是灰色 `ps-dynamic-arg`，照常送审，请求里有它的文字。
+>   - 值已经知道的不记，判决照旧：常量（字符串、数字、它们的数组）和 `$true`、`$false`、`$null`。
+>   - 只被判断、没有去处的位置不记：`if`、`while`、`for` 的条件，`exit` 后面。赋值的右边也不记，赋值语句本来就不送审。
+>   - 写在命令参数里的（脚本块里的语句也算）不另外记，它的文字已经在那条命令的参数里。
+> - 代价：`git status; $LASTEXITCODE`、`npm test; "exit=$LASTEXITCODE"` 这样的写法在默认配置下由 allow 变成问，有后端时送审。`Write-Output $LASTEXITCODE` 原来就是这样。
+
 > **当前进度（2026-11-11）**
 >
 > - **已完成并有标签**：M0a、M0、M1、M1b、M1c、M1c-2、M1c-3、M1c-4、M2（`m2-baseline`）、M3a（`m3a-done`，2026-11-01；LLM 层没有接过真实服务）。M1+M1b、M1c / M1c-2 的独立 X1 审查与复审都已做完，高危、中危清零，修复已提交（M1c / M1c-2 的规则冻结在 `6821142`，标签 `m1c2-x1-rereview2-fixes-done`；审查在 `docs/reviews/`，修复报告 `docs/reports/M1c2-review-fixes*.md`）。M1c-4 的真实会话手工验收未做（`docs/reports/M1c4.md`）。
@@ -183,7 +192,14 @@
 >   - 开关参数的值、`uv run` 一类运行器选项的值不在请求里，不送审；超过 128 个字符的程序名由发送闸门拒绝。
 >   - 规则条目与策略文件没变，Bash 没变。
 >   - 全量分六段跑，不是一个进程：28945 通过、169 跳过、0 失败（合计与收集到的 29114 条相同）。中途按使用者的话停过一次，核对工作区没有变之后，后两段从头跑。真实宿主里没有跑。
->   - **O-3 没有修，等使用者决定**：`Get-Date; $env:SECRET_TOKEN` 这样单独成句的变量由规则放行，把环境变量的值打印进上下文，和 X1 审查的 H-4 是同一类。
+>   - 留下 O-3：`Get-Date; $env:SECRET_TOKEN` 这样单独成句的变量由规则放行，把环境变量的值打印进上下文，和 X1 审查的 H-4 是同一类。（修订 22 已修，见下一条。）
+> - **PowerShell 里值有去处的表达式（修订 22）**（已提交，没有推送，`646cb05` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-expression-output.md`）：使用者说"按照你建议执行；先提交修订21再去修改O-3"。这次修复没有复审。
+>   - 不是命令的表达式，值有去处时按 `Write-Output <表达式>` 记成一条命令：单独成句、`return` / `throw` 后面、管道开头、`foreach` 的集合、`switch` 的条件。带变量的是灰色 `ps-dynamic-arg`，送审，请求里有它的文字。
+>   - 值已经知道的（常量，`$true`、`$false`、`$null`）不记，`Get-Date; 'done'` 照旧放行。会动手的表达式照旧不送审。
+>   - 规则条目与策略文件没变，Bash 没变。手头语料 1146 条 PowerShell 命令的级别没有一条变化。
+>   - 变松一类：整行没有命令、只有表达式的调用，有后端时由问变成送审，和 `Write-Output` 的写法一样。
+>   - 代价：`git status; $LASTEXITCODE` 这样的收尾写法在默认配置下由 allow 变成问。
+>   - 原有差分全部相同，评测指标相同。全量分六段跑，不是一个进程：29110 通过、169 跳过、1 失败（合计与收集到的 29280 条相同）。失败的是一条 Bash 测试撞到归一化的时间预算，单独重跑时这次的代码和修订 21 的代码都通过。真实宿主里没有跑。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -436,6 +452,20 @@ Claude Code
     - git 自己把 `/dev/null` 当空文件（实测 `git hash-object /dev/null`），不为它开例外：PowerShell 里的 `git diff --no-index /dev/null x` 会多记一个项目外的路径。
   - PowerShell：优先用 PowerShell 自带的 AST 解析器（`System.Management.Automation.Language.Parser`，只解析不执行），由常驻进程托管一个长驻的辅助进程（`-NoProfile`，请求经 stdin 传入，绝不拼进命令行）。开发机初测：Windows PowerShell 5.1（FullLanguage）下 `Parser::ParseInput` 可用，常见命令能解析出命令名、参数名与字面量参数；动态命令（`& $x`）取不到命令名；5.1 不认识的 `&&` 产生解析错误（应灰色）；单次解析约 0.02 毫秒，但新起一个 `powershell.exe -NoProfile` 要约 1 秒，所以辅助进程必须长驻、在常驻进程启动时预热，未就绪时这次调用按灰色处理，不占用 hook 的时间预算。别名还原用 `AliasInfo.Definition`（总有值）；`ResolvedCommandName` 在模块尚未自动加载时为空，不能依赖；取不到或不唯一一律灰色。退路是自写的保守词法器，只认"单条简单命令 + 字面量参数"，其余灰色 `[待验证]`（M1b）。M1b 完成前，PowerShell 命令一律灰色并带 `exec` 标签。M1b 之后，下列构造仍一律灰色：`Invoke-Expression` / `iex`、`-EncodedCommand`、`& $变量`、反引号拼接、`$(...)` 子表达式、`cmd /c`、`Start-Process`、脚本块、经 `.ps1` 间接执行。5.1 与 7 的语法不同（5.1 没有 `&&`、`||`、三元运算符），解析失败即灰色。
     - **带盘符的变量是文件**（修订 21）：`${C:\x\.env}` 是那个文件的内容，`${C:\x\y} = 'v'` 写那个文件，`${C:.env}` 相对于 C 盘的当前目录，名字里的 `*`、`?` 按通配符展开（都是实测，PowerShell 5.1）。它不是命令，写在哪里都起作用：单独成句、字符串里（`"${C:\x\.env}"`）、条件里、参数里。辅助进程把每一处都报成一条命令，归一化时读的记成 `Get-Content -Path <路径>`，写的记成 `Set-Content -Path <路径>`，`+=`、`++` 这样又读又写的两条都记，和别的命令按出现的先后排在一起。盘符之外的驱动器名（`HKLM:`、自定义的驱动器）照样交给路径层，和 `Get-Content HKLM:\x` 一样读。`env:`、`function:`、`alias:`、`variable:` 不是文件，不记。
+    - **值有去处的表达式是一条 `Write-Output`**（修订 22）：PowerShell 里表达式可以站在命令的位置上，`$env:TOKEN` 单独成句就把值打印出来，和 `Write-Output $env:TOKEN` 一样（实测，PowerShell 5.1）。辅助进程把下面几个位置上的表达式报成一条命令（名字种类 `output`，表达式是它唯一的参数），归一化时记成 `Write-Output <表达式>`，和别的命令按出现的先后排在一起：
+      - 单独成句：脚本、函数、脚本块的语句，以及 `if`、循环、`switch`、`try` / `catch` / `finally`、`trap` 的语句块里的语句；
+      - `return`、`throw` 后面；
+      - 管道的开头（`$env:TOKEN | Out-Host`），后面的命令照旧另外带着它（`ps-pipeline-head-dynamic`）；
+      - `foreach (… in <表达式>)` 的集合、`switch (<表达式>)` 的条件。
+    - 这样记的表达式里有变量时，是灰色 `ps-dynamic-arg`（M1c-2 的 H-4 给 `Write-Output $env:TOKEN` 定的原因）；是括号、`$(…)`、`@(…)`、哈希表、比较运算这些时，是灰色 `ps-dynamic-value:<类型>`，文字整段放进参数。会动手的表达式另有 `ps-outside-command:<类型>`（§7），照旧不送审。
+    - 不记的：
+      - 值已经知道的：字符串常量、数字、它们的数组，`$true`、`$false`、`$null`。`Get-Date; 'done'` 照旧由规则放行。
+      - 只被判断的：`if`、`while`、`do`、`for` 的条件，`exit` 后面；括号、`$(…)`、`@(…)`、哈希表里面的语句（外面那一层已经整段记了）。
+      - 赋值的右边：赋值语句是灰色 `ps-compound:AssignmentStatementAst`，不送审。
+      - 写在某条命令的参数里的，脚本块参数里的语句也算（`ForEach-Object { $_.Name }`）：文字已经在那条命令的参数里。
+      - 带重定向的表达式（`'x' > f`）照旧报成名字是表达式的命令，不变。
+      - 单独成句或在管道开头的带盘符变量（`${C:\x\y}`）：它已经是一条 `Get-Content`（修订 21），那条命令本来就打印内容。写在字符串里的照记（`"${C:\x\y}"` 是 `Write-Output` 一条，加 `Get-Content` 一条）。
+      - 括号里只有命令的（`(Get-Location)`、`(Get-Content f | Select-Object -First 1)`）：它的值就是里面那些命令的输出，那些命令各自照常记。
 - **策略**：规则与测试可带 `platform`（§8）；Windows 特有的目标（凭据与浏览器配置目录、PowerShell profile、启动文件夹、`Run` 注册表项、计划任务）放进 `platform: windows` 的规则；覆盖范围逐项记在 `docs/threat-model.md`，没覆盖的明说。
 - **文件与日志**：Windows 默认目录为 `%USERPROFILE%\.boundkeep\`；`init` 读 settings 时容忍 UTF-8 BOM，写入时不带 BOM，并用"写临时文件再 `os.replace`"保证原子；`doctor` 对含 BOM 的 settings 在含 boundkeep hook 的层里报 FAIL、在其他层报 WARN（PowerShell 5.1 的 `Set-Content -Encoding utf8` 会写入 BOM）；`installs.json` 除安装记录外还记 `hook_files`（hook 解释器与脚本的 sha256，`doctor` 与守护进程启动时校验）与 `watched`（会运行命令的配置键与外来 hook 的哈希基线，供 ConfigChange 判断改动）；`0600` 在 Windows 上没有意义，`doctor` 检查该目录与管道的 ACL 没有授予其他用户。
 - **控制台输出**：CLI 的文本输出在 Windows 上显式用 UTF-8 并设 `errors="replace"`，避免代码页 936 下打印 `✓` 一类字符时崩溃。
@@ -565,7 +595,7 @@ event(pre) ─> normalize ─> Action
   - MCP 参数没看全，或参数里带命令；
   - 什么都没认出来（没有程序名、路径、主机，也没有 MCP 工具名）；
   - **请求装不下的输入**（修订 7，P-F34；X1 审查 F3、F4）：命令里的 here-document 或 here-string（shell 自己当命令读的除外，它们被解析成单独的命令）、`NAME=value` 赋值（命令前缀、`env NAME=v`、单独的赋值）、PowerShell 里管道进解释器的字符串与赋值语句、MCP 调用的参数。§9.2 的请求从不带这些内容，模型看不到它们。只有折叠后才读成某个名字的程序名（`program-fold-variant`，修订 14）和 bash 方言里像 8.3 短名的裸程序名（`program-short-name-unresolved`，修订 18）也算：请求里的名字不是实际运行的程序。带路径、最后一段是短名而展开不出长名的程序名（同一个灰色原因，修订 19）也一样。
-  - **PowerShell 里不在任何命令之内的文字**（修订 21，复审 O-1）：请求按命令列出程序名、参数、路径和主机。不在任何命令的参数里的表达式和语句，请求里没有它的文字，是灰色 `ps-outside-command:<类型>`，不送审。例如 `git status; [IO.File]::ReadAllText('.env')`、`if ([IO.File]::Exists('x')) { … }` 的条件、`return`、`throw` 后面的表达式、函数参数的默认值、管道开头的表达式、重定向的目标。
+  - **PowerShell 里不在任何命令之内的文字**（修订 21，复审 O-1）：请求按命令列出程序名、参数、路径和主机。不在任何命令的参数里的表达式和语句，请求里没有它的文字，是灰色 `ps-outside-command:<类型>`，不送审。例如 `git status; [IO.File]::ReadAllText('.env')`、`if ([IO.File]::Exists('x')) { … }` 的条件、`return`、`throw` 后面的表达式、函数参数的默认值、管道开头的表达式、重定向的目标。修订 22 之后，值有去处的表达式另外记成一条 `Write-Output`（§5.1），请求里有它的文字；会动手的表达式仍然带这个灰色原因，照旧不送审。
     - 无害的不算：
       - 常量、变量、字符串、数组字面量；
       - 括号、`$(…)`、`@(…)`、脚本块、哈希表：它们只是容器，里面的命令照常解析，里面的表达式各自再看；
