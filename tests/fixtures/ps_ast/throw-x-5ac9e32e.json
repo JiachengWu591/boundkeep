@@ -1,7 +1,32 @@
 {
  "ok": true,
  "parse_errors": [],
- "commands": [],
+ "commands": [
+  {
+   "pos": [
+    6,
+    9
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "single",
+     "v": "x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
  "compound": [
   "ThrowStatementAst"
  ],

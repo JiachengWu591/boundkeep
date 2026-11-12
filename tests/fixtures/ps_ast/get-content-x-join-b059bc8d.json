@@ -4,6 +4,30 @@
  "commands": [
   {
    "pos": [
+    0,
+    25
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "BinaryExpressionAst",
+     "text": "(Get-Content x) -join ','"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  },
+  {
+   "pos": [
     1,
     14
    ],

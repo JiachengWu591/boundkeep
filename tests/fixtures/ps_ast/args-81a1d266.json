@@ -7,7 +7,32 @@
    "col": 1
   }
  ],
- "commands": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    5
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "var",
+     "name": "args",
+     "splat": true
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
  "compound": [],
  "dynamic": [],
  "loose": [],

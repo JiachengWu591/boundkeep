@@ -4,6 +4,29 @@
  "commands": [
   {
    "pos": [
+    0,
+    1
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "num",
+     "v": "1"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
     4,
     12
    ],

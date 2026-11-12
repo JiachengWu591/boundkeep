@@ -17,7 +17,9 @@
 #           or   {"id":"..","ok":false,"error":"too-large|internal"}
 # "loose" names what is in no command's arguments and is not known to do nothing (the tables
 # below). A drive-qualified variable (${C:\x\y}) is a command of its own, with the name kind
-# "file-read" or "file-write" and the path as the name's value.
+# "file-read" or "file-write" and the path as the name's value. An expression whose value goes
+# somewhere (Test-Output) is a command with the name kind "output" and the expression as its
+# only element.
 #
 # Speed note: a PowerShell function call costs ~20 microseconds and a StringBuilder call ~1, so the
 # serializer builds whole JSON fragments per call instead of one call per token.
@@ -253,14 +255,18 @@ function Add-Command($c, $root) {
         $invoke = if ($inv -eq 'Ampersand') { '&' } elseif ($inv -eq 'Dot') { '.' } else { '' }
     }
     [void]$sb.Append('{"pos":[' + $c.Extent.StartOffset + ',' + $c.Extent.EndOffset + '],"invoke":"' + $invoke + '","name":')
+    $elems = @()
     if ($isCmd) {
         $elems = $c.CommandElements
         if ($elems.Count -gt 0) { Add-Name $elems[0] } else { [void]$sb.Append('{"kind":"expr","v":""}') }
+        [void]$sb.Append(',"elements":[')
+    } elseif ($c.Redirections.Count -eq 0) {
+        # An expression whose value goes somewhere: the consumer reads it as Write-Output <expr>
+        [void]$sb.Append('{"kind":"output","v":""},"elements":[')
+        Add-Elem $c.Expression 0
     } else {
-        $elems = @()
-        [void]$sb.Append('{"kind":"expr","v":' + (JClip $c.Extent.Text $script:MaxOtherText) + '}')
+        [void]$sb.Append('{"kind":"expr","v":' + (JClip $c.Extent.Text $script:MaxOtherText) + '},"elements":[')
     }
-    [void]$sb.Append(',"elements":[')
     for ($i = 1; $i -lt $elems.Count; $i++) {
         if ($i -gt 1) { [void]$sb.Append(',') }
         Add-Elem $elems[$i] 0
@@ -313,6 +319,43 @@ function Test-Loose($n) {
         $p = $p.Parent
     }
     return $true
+}
+
+# Does the value of this expression go somewhere (spec revision 22)? An expression can stand where
+# a command can: `$env:TOKEN` as a statement prints the value like `Write-Output $env:TOKEN`. The
+# places: a statement of a script, function or script block or of the block of an if, loop, switch,
+# try, catch, finally or trap; after return or throw; the start of a pipeline; the collection of a
+# foreach and the condition of a switch (the value is bound to a variable). Not a condition of if,
+# while or for, not after exit, not the right side of an assignment (not sent as it is), and not
+# what is inside (...), $(...), @(...) or a hashtable (the outer expression carries that text).
+# An expression in a command's arguments is in that command's words already, a drive-qualified
+# variable is a command of its own, and parentheses around commands only add nothing to them.
+function Test-Output($e) {
+    $p = $e.Parent
+    # the right side of `$b = $a` is the expression itself, in no pipeline
+    if ($p -isnot [PipelineAst]) { return $false }
+    $x = $e.Expression
+    if (($x -is [VariableExpressionAst]) -and $x.VariablePath.IsDriveQualified -and
+        -not $script:NoFileDrive.ContainsKey($x.VariablePath.DriveName)) { return $false }
+    # (Get-Location) is the output of the commands in it, and those are reported on their own
+    if (($x -is [ParenExpressionAst]) -and ($x.Pipeline -is [PipelineAst])) {
+        $onlyCommands = $true
+        foreach ($el in $x.Pipeline.PipelineElements) {
+            if ($el -isnot [CommandAst]) { $onlyCommands = $false }
+        }
+        if ($onlyCommands) { return $false }
+    }
+    if ($p.PipelineElements.Count -eq 1) {
+        $c = $p.Parent
+        while (($null -ne $c) -and $c.PSObject.TypeNames[0].EndsWith('.PipelineChainAst')) { $c = $c.Parent }
+        if ($c -is [StatementBlockAst]) {
+            if (($c.Parent -is [SubExpressionAst]) -or ($c.Parent -is [ArrayExpressionAst])) { return $false }
+        } elseif (-not (($c -is [NamedBlockAst]) -or ($c -is [ReturnStatementAst]) -or ($c -is [ThrowStatementAst]) -or
+                ($c -is [ForEachStatementAst]) -or ($c -is [SwitchStatementAst]))) {
+            return $false
+        }
+    }
+    return (Test-Loose $e)
 }
 
 # What a drive-qualified variable does to its file: an assignment writes it (also through a type
@@ -372,8 +415,9 @@ function New-Reply([string]$b64) {
     $pred = [System.Func[Ast, bool]] {
         param($a)
         # An expression statement with a redirection ('x' > file, $a >> f) writes a file although it
-        # is no CommandAst: report it as a command whose name is an expression.
-        if ($a -is [CommandExpressionAst]) { return ($a.Redirections.Count -gt 0) }
+        # is no CommandAst: it is reported as a command whose name is an expression. One without is
+        # reported when its value goes somewhere (Test-Output, in the loop below).
+        if ($a -is [CommandExpressionAst]) { return $true }
         if ($a -is [CommandBaseAst]) { return ($a -is [CommandAst]) }
         if ($a -is [PipelineAst]) { return $false }
         if ($a -is [StatementAst]) { return $true }
@@ -399,7 +443,9 @@ function New-Reply([string]$b64) {
     $loose = [System.Collections.Generic.List[string]]::new()
     $script:Steps = 0
     foreach ($n in $nodes) {
-        if (($n -is [CommandAst]) -or ($n -is [CommandExpressionAst]) -or ($n -is [VariableExpressionAst])) {
+        if ($n -is [CommandExpressionAst]) {
+            if (($n.Redirections.Count -gt 0) -or (Test-Output $n)) { $cmds.Add($n) }
+        } elseif (($n -is [CommandAst]) -or ($n -is [VariableExpressionAst])) {
             $cmds.Add($n)
         } else {
             $short = TypeShort $n
@@ -497,7 +543,7 @@ if ($script:Mode -eq 'FullLanguage') {
 # Run the whole pipeline once on fixed samples (JIT and type loading cost ~0.3 s on the first
 # request otherwise). The samples are constants of this file, never user input.
 foreach ($sample in @(
-        'Get-ChildItem -Path "$env:TEMP\x$(1)" -Recurse:$true 1,2 @a 5 ''q'' | ForEach-Object { $_.Name; [IO.Path]::GetTempPath() } > out.txt 2>&1; $x = if ($a) { "b" }; ${C:\a} = "${C:\b}"; [IO.Path]::GetTempPath()',
+        'Get-ChildItem -Path "$env:TEMP\x$(1)" -Recurse:$true 1,2 @a 5 ''q'' | ForEach-Object { $_.Name; [IO.Path]::GetTempPath() } > out.txt 2>&1; $x = if ($a) { "b" }; ${C:\a} = "${C:\b}"; [IO.Path]::GetTempPath(); "$a" | Out-Null; foreach ($i in $a) { return $i }',
         'a && b ; rm -rf x < y')) {
     try {
         $null = Get-LineReply ('{"id":"00","b64":"' + [System.Convert]::ToBase64String($script:Utf8.GetBytes($sample)) + '"}')

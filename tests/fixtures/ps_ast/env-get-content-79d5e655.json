@@ -4,6 +4,30 @@
  "commands": [
   {
    "pos": [
+    0,
+    6
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "single",
+     "v": ".env"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
     9,
     20
    ],

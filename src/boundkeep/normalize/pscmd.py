@@ -51,6 +51,12 @@ OUTSIDE_COMMAND_GRAY = "ps-outside-command"
 # other runners (dropped with the runner). Not sent either.
 SWITCH_VALUE_GRAY = "ps-switch-value"
 RUNNER_VALUE_GRAY = "ps-runner-value"
+# The name kind of an expression whose value goes somewhere (a statement of its own, after
+# ``return`` / ``throw``, the start of a pipeline, the collection of a ``foreach``, the condition
+# of a ``switch``), and the cmdlet it is judged as: ``$env:TOKEN`` as a statement prints the value
+# exactly like ``Write-Output $env:TOKEN`` (spec revision 22).
+_OUTPUT_KIND = "output"
+_OUTPUT_CMDLET = "Write-Output"
 
 MAX_COMMANDS = 4000
 MAX_ELEMENTS = 20000
@@ -540,6 +546,44 @@ def _with_pipeline_head(
     return args if param is None else [*args, Word(param), *words]
 
 
+def _known_value(e: object) -> bool:
+    """A value that is known without running anything: a plain constant, ``$true`` / ``$false`` /
+    ``$null``, or an array of them. Printing it shows nothing the command line does not."""
+    if _plain_constant(e):
+        return True
+    if not isinstance(e, Mapping):
+        return False
+    if e.get("t") == "var":
+        name = e.get("name")
+        return (
+            isinstance(name, str)
+            and e.get("splat") is not True
+            and "$" + name.lower() in _BOOLEAN_LITERALS
+        )
+    items = e.get("items")
+    return (
+        e.get("t") == "array"
+        and isinstance(items, list)
+        and bool(items)
+        and all(_known_value(i) for i in items)
+    )
+
+
+def _output_words(
+    c: Mapping[str, Any], name: Mapping[str, Any], st: _State
+) -> tuple[list[Word], bool] | None:
+    """(the argument words, the value is known) of an expression that is judged as
+    ``Write-Output <expression>``; None for a malformed entry (gray). A known value has no words
+    and makes no command: ``Get-Date; 'done'`` stays what it was."""
+    elements = c.get("elements")
+    if name.get("v") != "" or not isinstance(elements, list) or len(elements) != 1:
+        st.add_gray("ps-internal-error")
+        return None
+    if _known_value(elements[0]):
+        return [], True
+    return _convert(elements[0], st, sep=True), False
+
+
 # name kinds of a drive-qualified variable -> the cmdlet it is judged as
 _FILE_VARIABLE = {"file-read": "Get-Content", "file-write": "Set-Content"}
 
@@ -575,8 +619,17 @@ def _command(c: object, st: _State) -> SimpleCmd | None:
     invoke = c.get("invoke", "")
     if invoke not in ("", "&", "."):
         st.add_gray("ps-internal-error")
-    program, cmdlet, dynamic = _program(c.get("name"), st)
-    args = _elements(c, st, cmdlet)
+    known = False
+    cmdlet: str | None
+    if isinstance(name, Mapping) and kind == _OUTPUT_KIND:
+        output = _output_words(c, name, st)
+        if output is None:
+            return None
+        args, known = output
+        program, cmdlet, dynamic = Word(_OUTPUT_CMDLET), _OUTPUT_CMDLET, False
+    else:
+        program, cmdlet, dynamic = _program(c.get("name"), st)
+        args = _elements(c, st, cmdlet)
     if not dynamic and program.text == "Set-Location":
         name = c.get("name")
         fixed = None
@@ -632,6 +685,8 @@ def _command(c: object, st: _State) -> SimpleCmd | None:
         and psprograms.reads_stdin_as_code(program.text, args)
     ):
         st.add_exec("ps-pipe-to-interpreter")
+    if known:
+        return None  # a constant prints itself: the entry was checked, there is nothing to judge
     nested = c.get("nested") is True
     origin = "top"
     if nested:
@@ -709,7 +764,9 @@ def build(reply: Mapping[str, Any], *, source: str) -> BashResult:
 
     A drive-qualified variable (``${C:\\x\\y}``) comes as a command with the name kind
     ``file-read`` or ``file-write`` and becomes ``Get-Content -Path`` / ``Set-Content -Path`` of
-    that path; what ``reply["loose"]`` names is gray ``ps-outside-command:<type>``.
+    that path; what ``reply["loose"]`` names is gray ``ps-outside-command:<type>``. An expression
+    whose value goes somewhere comes with the name kind ``output`` and becomes ``Write-Output
+    <expression>``, unless its value is known (a constant, ``$true`` / ``$false`` / ``$null``).
 
     Never raises. A reply that is not a mapping, lacks ``commands`` / ``compound`` / ``dynamic`` /
     ``loose`` / ``parse_errors`` or has them in the wrong type is gray (``ps-internal-error``); one

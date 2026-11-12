@@ -4,6 +4,30 @@
  "commands": [
   {
    "pos": [
+    0,
+    24
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "InvokeMemberExpressionAst",
+     "text": "[IO.Path]::GetTempPath()"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
     27,
     40
    ],

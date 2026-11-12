@@ -4,6 +4,33 @@
  "commands": [
   {
    "pos": [
+    0,
+    30
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "expstr",
+     "v": "$env:USERPROFILE\\.ssh\\id_rsa",
+     "vars": [
+      "env:USERPROFILE"
+     ],
+     "subexpr": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
     33,
     44
    ],

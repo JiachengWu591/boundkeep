@@ -10,6 +10,30 @@
  "commands": [
   {
    "pos": [
+    0,
+    2
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "var",
+     "name": "x",
+     "splat": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  },
+  {
+   "pos": [
     3,
     9
    ],

@@ -448,7 +448,11 @@ def test_real_digest(text: str, last: list[str], has: list[str], lacks: list[str
 
 def test_real_digest_carries_the_head_in_every_later_stage_only() -> None:
     reply = _fixture("'x' | Select-Object | Get-Content")
-    stages = [c["stage"] for c in reply["commands"]]
+    # revision 22: the head itself is a command of the name kind "output", stage 0
+    first, *later = reply["commands"]
+    assert first["name"]["kind"] == "output"
+    assert first["stage"] == {"index": 0, "of": 3}
+    stages = [c["stage"] for c in later]
     assert [s["index"] for s in stages] == [1, 2]
     assert all(
         s["of"] == 3 and s["head"] == {"t": "str", "kind": "single", "v": "x"} for s in stages

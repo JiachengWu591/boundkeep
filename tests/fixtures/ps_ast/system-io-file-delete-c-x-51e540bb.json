@@ -1,7 +1,32 @@
 {
  "ok": true,
  "parse_errors": [],
- "commands": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    32
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "InvokeMemberExpressionAst",
+     "text": "[System.IO.File]::Delete('C:\\x')"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
  "compound": [],
  "dynamic": [
   "InvokeMemberExpressionAst",

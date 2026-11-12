@@ -1,7 +1,35 @@
 {
  "ok": true,
  "parse_errors": [],
- "commands": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    25
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "expstr",
+     "v": "hello $env:USERNAME",
+     "vars": [
+      "env:USERNAME"
+     ],
+     "subexpr": false
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
  "compound": [],
  "dynamic": [],
  "loose": [],

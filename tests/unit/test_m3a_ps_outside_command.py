@@ -156,7 +156,8 @@ def test_text_that_is_in_no_command_is_not_sent(command: str, on_failure: str) -
 @pytest.mark.windows
 def test_the_review_s_command_names_what_was_outside() -> None:
     actions = _actions(f"git status; {CALL}")
-    assert [a.program for a in actions if a.program] == ["git"]
+    # revision 22 lists the statement as Write-Output of the expression; it is still not sent
+    assert [a.program for a in actions if a.program] == ["git", "write-output"]
     reasons = {r for a in actions for r in a.gray_reasons}
     assert PREFIX + "InvokeMemberExpressionAst" in reasons
     assert pipeline.incomplete_analysis(actions) is None
@@ -218,9 +219,10 @@ def test_an_expression_in_a_command_s_arguments_is_sent_with_its_text(command: s
 @pytest.mark.windows
 @pytest.mark.parametrize(
     "command",
-    ["Get-Date; $x", "Get-Date; 'text'", "Get-Date; 1, 2", "Get-Date; $env:PATH", "Get-Date; $?"],
+    ["Get-Date; 'text'", "Get-Date; 1, 2", "Get-Date; $true", "Get-Date; $null"],
 )
-def test_a_constant_or_a_variable_beside_an_allowed_command_changes_nothing(command: str) -> None:
+def test_a_constant_beside_an_allowed_command_changes_nothing(command: str) -> None:
+    """A variable there is printed: revision 22, ``test_m3a_ps_expression_output.py``."""
     decision, backend = _audited(command)
     assert decision.verdict == "allow"
     assert backend.requests == []
@@ -282,7 +284,8 @@ def test_the_helper_s_other_lists_are_what_they_were() -> None:
     reply = _reply("if ($a) { [IO.File]::Delete('x') }; Write-Output ($b.c)")
     assert reply["compound"] == ["IfStatementAst"]
     assert set(reply["dynamic"]) >= {"InvokeMemberExpressionAst", "MemberExpressionAst"}
-    assert [c["name"]["v"] for c in reply["commands"]] == ["Write-Output"]
+    assert [c["name"]["v"] for c in reply["commands"]] == ["", "Write-Output"]
+    assert reply["commands"][0]["name"]["kind"] == "output"  # the statement in the if (revision 22)
 
 
 def test_the_builder_turns_the_list_into_gray_reasons() -> None:
@@ -478,7 +481,7 @@ def test_a_compound_assignment_reads_and_writes_it() -> None:
 def test_a_drive_that_is_not_a_file_system_lists_no_path(command: str) -> None:
     actions = _actions(command)
     assert [p for a in actions for p in a.paths] == []
-    assert [a.program for a in actions] == ["get-date"]
+    assert [a.program for a in actions] == ["get-date", "write-output"]  # printed (revision 22)
 
 
 # --- text that is in a command and in no action's words -------------------------------------------

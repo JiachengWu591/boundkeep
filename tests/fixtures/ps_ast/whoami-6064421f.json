@@ -1,7 +1,32 @@
 {
  "ok": true,
  "parse_errors": [],
- "commands": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    10
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "ParenExpressionAst",
+     "text": "('whoami')"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
  "compound": [],
  "dynamic": [],
  "loose": [],

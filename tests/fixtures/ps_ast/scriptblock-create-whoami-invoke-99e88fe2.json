@@ -1,7 +1,32 @@
 {
  "ok": true,
  "parse_errors": [],
- "commands": [],
+ "commands": [
+  {
+   "pos": [
+    0,
+    40
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "InvokeMemberExpressionAst",
+     "text": "[scriptblock]::Create('whoami').Invoke()"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 1
+   },
+   "nested": false
+  }
+ ],
  "compound": [],
  "dynamic": [
   "InvokeMemberExpressionAst",

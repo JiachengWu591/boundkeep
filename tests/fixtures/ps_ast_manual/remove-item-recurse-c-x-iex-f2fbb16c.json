@@ -4,6 +4,30 @@
  "commands": [
   {
    "pos": [
+    0,
+    27
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "str",
+     "kind": "double",
+     "v": "Remove-Item -Recurse C:\\x"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
     30,
     33
    ],

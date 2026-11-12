@@ -4,6 +4,30 @@
  "commands": [
   {
    "pos": [
+    0,
+    6
+   ],
+   "invoke": "",
+   "name": {
+    "kind": "output",
+    "v": ""
+   },
+   "elements": [
+    {
+     "t": "other",
+     "ast": "ArrayExpressionAst",
+     "text": "@(1,2)"
+    }
+   ],
+   "redirects": [],
+   "stage": {
+    "index": 0,
+    "of": 2
+   },
+   "nested": false
+  },
+  {
+   "pos": [
     9,
     22
    ],

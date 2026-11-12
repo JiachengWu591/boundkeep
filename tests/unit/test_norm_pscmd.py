@@ -1673,6 +1673,7 @@ def _conforms(reply: Any) -> bool:
             "expandable",
             "variable",
             "expr",
+            "output",
         ):
             return False
         if c.get("invoke", "") not in ("", "&", "."):
@@ -1681,6 +1682,8 @@ def _conforms(reply: Any) -> bool:
             element(e) for e in c.get("elements", [])
         ):
             return False
+        if name["kind"] == "output" and (name["v"] != "" or len(c.get("elements", [])) != 1):
+            return False  # an expression judged as Write-Output: exactly the expression
         reds = c.get("redirects", [])
         if not isinstance(reds, list):
             return False
