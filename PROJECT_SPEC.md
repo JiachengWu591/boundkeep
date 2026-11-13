@@ -157,6 +157,25 @@
 >   - PowerShell 方言不剥这些名字：`sudo`、`env` 在那里是普通程序，参数照常在请求里，不变。规则层不变：带 `wrappers` 的动作本来就不由 allow 规则放行。
 > - 代价：有后端时 `timeout 60 pytest`、`xargs -n 1 wc -l`、`nice -n 10 make` 直接问，不再送审。
 
+> **修订 27（2026-11-12，使用者说"按建议顺序修三条"）**：复审 `docs/reviews/M3a-rev23-26-review.md` 的 O-4、RV26-1、RV24-1，记录在 `docs/reports/M3a-rev23-26-review-fixes.md`。三条都是"请求里少了一段，调用却照常送审"，都只在有后端时起作用。
+> - §7（O-4）：PowerShell 辅助进程遇到超过 32768 个字符的字符串常量或可展开字符串（管道开头的字符串超过 4096 个字符）时，只报前 200 个字符（类型 `TooLongString`）。这样的一行加上 `ps-too-large`，算没看全，不送审。
+>   - 原来只有灰色 `ps-dynamic-value:TooLongString`，照常送审。200 个字符低于发送闸门每个词 400 个字符的上限，闸门看不出被截过。
+>   - 实测 PowerShell 5.1 里 `Invoke-Expression '<33000 个字符>…'` 执行了请求里看不到的尾部，`Add-Type -TypeDefinition` 编译了它；按 Claude Code 启动 PowerShell 的方式（脚本放在环境变量里），7 万个字符的脚本也能运行。外部程序收不到这么长的参数（Windows 报"文件名或扩展名太长"）。
+>   - 别的截断不用改：其余表达式的文字截在 2000 个字符，命令名截在 2000 或 32768 个字符，都超过发送闸门的上限（词 400、程序名 128），本来就不送审。Bash 的词不截。
+> - §7（RV26-1）：Bash 方言里，包装器的长开关写成 `--名字=值`（`sudo --preserve-env=LIST`、`xargs --replace=R`）时，值也算包装器吃掉的词：灰色 `wrapper-option-value`，不送审。原来这个值被丢掉，也不标。GNU `env`、`timeout` 拒绝给开关带值（报错退出，命令不运行，实测），所以真正受影响的是接受可选值的长开关。
+> - §7（RV24-1）：辅助进程报的 `compound`、`dynamic`、`loose` 三张类型表各最多读 64 条，超过时这一行同样加上 `ps-too-large`。现在碰不到（三张表都去重，PowerShell 5.1 一共只有 64 种具体的 AST 类型），防的是以后的版本类型变多。
+> - 规则层不变。没有后端时这些调用本来就是灰色，问，不变。
+> - 代价：有后端时，带超长字符串的 PowerShell 命令、`sudo --preserve-env=LIST …` 直接问，不再送审。
+> - 修的时候查到、没有修的（O-5）：PowerShell 里绑到变量上的常量不在请求里。修订 22、24 让已知值（常量）不建命令，理由是打印出来不多给什么；但参数默认值、`foreach` 的集合、`switch` 的条件、喂给别的命令的管道开头是**绑定**的位置，值之后可能被执行或当路径用。`param($p = '~\.ssh\id_rsa') Get-Content $p` 送审，请求里只有 `Get-Content $p`（直接写路径是 deny）；`param($x = '<代码>') Invoke-Expression $x`、`foreach ($c in '<代码>') { Invoke-Expression $c }` 送审，请求里没有代码。写成赋值（`$x = '…'; …`）则不送审。早于修订 23，要后端。要先定设计。（修订 28 已修。）
+
+> **修订 28（2026-11-12，使用者说"O-5 也按你的建议修"）**：修订 27 时查到的 O-5，记录在 `docs/reports/M3a-rev23-26-review-fixes.md`（和修订 27 同一份）。
+> - §7：一行里把**写在命令行上的值**绑到变量上、而请求里没有这个值时，这次调用不送审。规则层不变，判决级别不变：这件事只记进动作的 `unshown`（规则不看它），只有灰色、本来要送审的调用受影响。
+>   - PowerShell：值已经知道的表达式（常量，`$true`、`$false`、`$null`，安静的一行里的 `$LASTEXITCODE`、`$?`）在绑定的位置上：参数默认值、`foreach` 的集合、`switch` 的条件、管道开头，以及函数、`filter`、类的方法、脚本块表达式、`data` 段里的语句（它们的输出交给调用者，可能被拿去执行）。修订 22、24 让这些值不建 `Write-Output`（打印它们不多给什么），这一点不变，只多记一项 `ps-bound-value:<位置>`。值不是已知的，照旧记成 `Write-Output`，请求里有它。`switch -File <路径>` 的路径不算：它绑的是文件的各行，修订 21 已经让它不送审（`ps-outside-command:SwitchStatementAst`）。
+>   - Bash：`for NAME in 词…`、`select NAME in 词…` 的词表（`for-words`）。词表不是命令，请求里没有它；词里的命令替换照旧解析成命令。
+>   - 原来 `param($p = '~\.ssh\id_rsa') Get-Content $p`、`foreach ($p in '~\.ssh\id_rsa') { Get-Content $p }`、`for p in ~/.ssh/id_rsa; do cat "$p"; done` 送审，请求里只有读 `$p`，直接写路径是 deny；`param($x = '<代码>') Invoke-Expression $x`、`function f { '<代码>' }; Invoke-Expression (f)`、`data v { '<代码>' }; Invoke-Expression $v`、`for c in '<代码>'; do eval "$c"; done` 送审，请求里没有代码。写成赋值（`$x = '…'`、`x=…`）的本来就不送审（修订 7）。
+>   - 打印的位置不算：函数和脚本块之外单独成句、`return`、`throw` 后面的值进的是输出，不进变量（`Get-Date; 'done'` 照旧由规则放行）。
+> - 代价：有后端时，带这些绑定的灰色调用直接问，不再送审：`foreach ($f in 'a.py', 'b.py') { ruff check $f }`、`for f in *.py; do ruff check "$f"; done`、`'a.py' | ForEach-Object { … }`、定义了带常量输出的函数的一行。没有后端时不变；由规则放行的（`param($n = 5) Get-Date`）不变。
+
 > **当前进度（2026-11-11）**
 >
 > - **已完成并有标签**：M0a、M0、M1、M1b、M1c、M1c-2、M1c-3、M1c-4、M2（`m2-baseline`）、M3a（`m3a-done`，2026-11-01；LLM 层没有接过真实服务）。M1+M1b、M1c / M1c-2 的独立 X1 审查与复审都已做完，高危、中危清零，修复已提交（M1c / M1c-2 的规则冻结在 `6821142`，标签 `m1c2-x1-rereview2-fixes-done`；审查在 `docs/reviews/`，修复报告 `docs/reports/M1c2-review-fixes*.md`）。M1c-4 的真实会话手工验收未做（`docs/reports/M1c4.md`）。
@@ -234,12 +253,13 @@
 >   - 变松一类：整行没有命令、只有表达式的调用，有后端时由问变成送审，和 `Write-Output` 的写法一样。
 >   - 代价：`git status; $LASTEXITCODE` 这样的收尾写法在默认配置下由 allow 变成问。
 >   - 原有差分全部相同，评测指标相同。全量分六段跑，不是一个进程：29110 通过、169 跳过、1 失败（合计与收集到的 29280 条相同）。失败的是一条 Bash 测试撞到归一化的时间预算，单独重跑时这次的代码和修订 21 的代码都通过。真实宿主里没有跑。
-> - **`$LASTEXITCODE` 和 `$?` 算已知值（修订 23）**（已提交，没有推送，`8d268d3` 代码（修订 23 到 26 一起），文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-known-variables.md`）：使用者说"当做已知值"。
+> - **`$LASTEXITCODE` 和 `$?` 算已知值（修订 23）**（已提交并推送，`8d268d3` 代码（修订 23 到 26 一起），`ced7a87` 文档，未打标签；记录 `docs/reports/M3a-ps-known-variables.md`）：使用者说"当做已知值"。
 >   - 值有去处的表达式里，这两个变量和只含它们的双引号字符串不记成 `Write-Output`，`git status; $LASTEXITCODE` 回到由规则放行。
 >   - 实测这个名字能被同一行绑上任意值，所以有两道限制：名字是它的参数和 `foreach` 变量让整行不送审、直接问；只有整行别的命令的参数都是常量、又没有提到这个名字时才算。
 >   - 规则条目与策略文件没变，Bash 没变。手头语料 1146 条 PowerShell 命令的级别没有一条变化。
 >   - 测试：新测试 190 条，变异 35 个全部抓到；原有差分全部相同，评测指标相同。全量（和修订 24 到 26 一起）分六段跑，不是一个进程：29659 通过、169 跳过、0 失败（合计与收集到的 29828 条相同）。真实宿主（2026-11-12，`scripts/smoke_claude_m3a.py --only readings`，修订 10 到 24 各一条代表写法）：23 项 0 失败。
-> - **修订 21 和 22 的复审**（已提交，没有推送，和修订 23 到 26 的文档一起；`docs/reviews/M3a-rev21-22-review.md`，不是独立的）：目标达到，没有回退，没有不需要后端的放行。中危 1 条（R21-1：灰色原因 64 条的上限会把"不送审"的原因挤掉）、低危 1 条（R22-1：参数默认值不在请求里）、范围外 1 条（O-2：`uv run` 等运行器自己的选项不在请求里，也不进规则）。三条都只在有后端时起作用。R21-1、R22-1 已修（修订 24，代码 `8d268d3`，记录 `docs/reports/M3a-rev21-22-review-fixes.md`；原有差分全部相同，全量和修订 23 一起跑，0 失败）；O-2 已修（修订 25，代码 `8d268d3`，记录 `docs/reports/M3a-runner-options.md`）：使用者选"带值选项就不送审"，两种 shell 都这样，规则层不变。修的时候查到同一类的 W-1（`sudo -u`、`env -C` 的值不在请求里），使用者说"也照同样的办法修"：修订 26，代码 `8d268d3`，记录 `docs/reports/M3a-wrapper-options.md`，只在 Bash 方言里。
+> - **修订 21 和 22 的复审**（已提交并推送，在 `ced7a87` 里；`docs/reviews/M3a-rev21-22-review.md`，不是独立的）：目标达到，没有回退，没有不需要后端的放行。中危 1 条（R21-1：灰色原因 64 条的上限会把"不送审"的原因挤掉）、低危 1 条（R22-1：参数默认值不在请求里）、范围外 1 条（O-2：`uv run` 等运行器自己的选项不在请求里，也不进规则）。三条都只在有后端时起作用。R21-1、R22-1 已修（修订 24，代码 `8d268d3`，记录 `docs/reports/M3a-rev21-22-review-fixes.md`；原有差分全部相同，全量和修订 23 一起跑，0 失败）；O-2 已修（修订 25，代码 `8d268d3`，记录 `docs/reports/M3a-runner-options.md`）：使用者选"带值选项就不送审"，两种 shell 都这样，规则层不变。修的时候查到同一类的 W-1（`sudo -u`、`env -C` 的值不在请求里），使用者说"也照同样的办法修"：修订 26，代码 `8d268d3`，记录 `docs/reports/M3a-wrapper-options.md`，只在 Bash 方言里。
+> - **修订 23 到 26 的复审**（已提交，在 `86a7e2f` 之后的文档提交里；`docs/reviews/M3a-rev23-26-review.md`，不是独立的）：目标达到，没有回退，没有不需要后端的放行。低危 1 条（RV26-1：包装器的长开关写成 `--名字=值` 时值被丢掉，`sudo --preserve-env=X pytest` 送审，请求里没有 X）、信息 3 条；范围外 1 条（O-4：PowerShell 里超过 32768 个字符的字符串只剩前 200 个字符，照常送审，`Invoke-Expression`、`Add-Type` 实测执行了看不到的尾部，M1b 起就有）。都要后端。O-4、RV26-1、RV24-1 已修：规格修订 27（已提交，代码 `86a7e2f`，记录 `docs/reports/M3a-rev23-26-review-fixes.md`；新测试 90 条，变异 10 个全部抓到，原有差分全部相同；全量和修订 28 一起分六段跑，不是一个进程：29866 通过、169 跳过、0 失败（合计与收集到的 30035 条相同））。修的时候查到 O-5：绑到变量上的常量（PowerShell 的参数默认值、`foreach` 的集合、`switch` 的条件、管道开头、函数体的输出，Bash 的 `for` / `select` 词表）不在请求里，照常送审；已修：规格修订 28（已提交，代码 `86a7e2f`，同一份记录），记进动作的 `unshown`，灰色时不送审，判决不变。新测试 116 条，变异 20 个，1 个等价存活，原有差分全部相同；全量见上。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -641,8 +661,8 @@ event(pre) ─> normalize ─> Action
   - 什么都没认出来（没有程序名、路径、主机，也没有 MCP 工具名）；
   - **请求装不下的输入**（修订 7，P-F34；X1 审查 F3、F4）：命令里的 here-document 或 here-string（shell 自己当命令读的除外，它们被解析成单独的命令）、`NAME=value` 赋值（命令前缀、`env NAME=v`、单独的赋值）、PowerShell 里管道进解释器的字符串与赋值语句、MCP 调用的参数。§9.2 的请求从不带这些内容，模型看不到它们。只有折叠后才读成某个名字的程序名（`program-fold-variant`，修订 14）和 bash 方言里像 8.3 短名的裸程序名（`program-short-name-unresolved`，修订 18）也算：请求里的名字不是实际运行的程序。带路径、最后一段是短名而展开不出长名的程序名（同一个灰色原因，修订 19）也一样。
   - **运行器自己的选项**（修订 25，复审 O-2）：`uv run`、`uv tool run`、`uvx`、`pipx run`、`poetry run` 被剥掉之后按里面的命令判，运行器自己的选项不在任何动作的词里。带了有值的选项（`--with`、`--env-file`、`--index-url`、`--python`、`--spec`、`--directory` 等，`--opt 值` 和 `--opt=值` 都算）时不送审：灰色 `runner-option-value`（Bash 方言）或 `ps-runner-value`（PowerShell 方言）。只带开关的（`uv run --frozen pytest`）照常送审。选项的值不进路径层和域名层，规则层不变。
-  - **包装器自己吃掉的词**（修订 26，W-1）：Bash 方言里 `sudo`、`env`、`time`、`nice`、`timeout`、`xargs` 等包装器被剥掉时，吃掉的词里有不是开关的（选项的值、`nice -5`、`timeout 60` 的时长、`gosu user` 的用户）就不送审：灰色 `wrapper-option-value`。只带开关的照常送审；带 `env -S` 时 env 命令连同选项整条记下，后面没有命令时包装器不被剥掉，这两种都不标。
-  - **PowerShell 里不在任何命令之内的文字**（修订 21，复审 O-1）：请求按命令列出程序名、参数、路径和主机。不在任何命令的参数里的表达式和语句，请求里没有它的文字，是灰色 `ps-outside-command:<类型>`，不送审。例如 `git status; [IO.File]::ReadAllText('.env')`、`if ([IO.File]::Exists('x')) { … }` 的条件、`return`、`throw` 后面的表达式、函数参数的默认值、管道开头的表达式、重定向的目标。修订 22 之后，值有去处的表达式另外记成一条 `Write-Output`（§5.1），请求里有它的文字；会动手的表达式仍然带这个灰色原因，照旧不送审。PowerShell 一行的灰色原因最多记 64 条；记满之后又来了新的原因，这一行加上 `ps-too-large`，算没看全，不送审（修订 24）：决定"不送审"的原因可能正好在记不下的那些里。
+  - **包装器自己吃掉的词**（修订 26，W-1）：Bash 方言里 `sudo`、`env`、`time`、`nice`、`timeout`、`xargs` 等包装器被剥掉时，吃掉的词里有不是开关的（选项的值、`nice -5`、`timeout 60` 的时长、`gosu user` 的用户，以及长开关写成 `--名字=值` 时的值，修订 27）就不送审：灰色 `wrapper-option-value`。只带开关的照常送审；带 `env -S` 时 env 命令连同选项整条记下，后面没有命令时包装器不被剥掉，这两种都不标。
+  - **PowerShell 里不在任何命令之内的文字**（修订 21，复审 O-1）：请求按命令列出程序名、参数、路径和主机。不在任何命令的参数里的表达式和语句，请求里没有它的文字，是灰色 `ps-outside-command:<类型>`，不送审。例如 `git status; [IO.File]::ReadAllText('.env')`、`if ([IO.File]::Exists('x')) { … }` 的条件、`return`、`throw` 后面的表达式、函数参数的默认值、管道开头的表达式、重定向的目标。修订 22 之后，值有去处的表达式另外记成一条 `Write-Output`（§5.1），请求里有它的文字；会动手的表达式仍然带这个灰色原因，照旧不送审。PowerShell 一行的灰色原因最多记 64 条；记满之后又来了新的原因，这一行加上 `ps-too-large`，算没看全，不送审（修订 24）：决定"不送审"的原因可能正好在记不下的那些里。辅助进程报的 `compound`、`dynamic`、`loose` 三张类型表各超过 64 条时也一样（修订 27）。
     - 无害的不算：
       - 常量、变量、字符串、数组字面量；
       - 括号、`$(…)`、`@(…)`、脚本块、哈希表：它们只是容器，里面的命令照常解析，里面的表达式各自再看；
@@ -651,6 +671,8 @@ event(pre) ─> normalize ─> Action
     - 语句：`if`、循环、`switch`、`try`、`trap`、函数定义、`return`、`throw`、`exit`、`break`、`continue`、`using namespace`、`data`、类型定义本身不算，里面的内容各自再看。算的有：`using module`、`using assembly`（加载代码）、`switch -File`（读文件）、带类型或特性的参数（`function f([IO.StreamWriter]$w) { }; f C:\x` 在调用时转换），以及不认识的语句类型。
     - 在命令参数里的表达式不算：它的文字就在请求的 `args` 里（`Write-Output ([IO.File]::ReadAllText('.env'))`、`ForEach-Object { … }`）。
     - 带盘符的变量（`${C:\x\.env}`）不在这一条里：它按读写文件记路径（§5.1）。
+  - **绑到变量上的值**（修订 28，O-5）：PowerShell 里值已经知道的表达式在绑定的位置上（参数默认值、`foreach` 的集合、`switch` 的条件、管道开头、函数 / `filter` / 类的方法 / 脚本块表达式 / `data` 段里的语句）不建命令，请求里没有它，记成 `unshown` 的 `ps-bound-value:<位置>`；Bash 的 `for` / `select` 词表记成 `for-words`。规则不看 `unshown`，判决不变，只是不送审：`param($p = '~\.ssh\id_rsa') Get-Content $p` 的请求里只有 `Get-Content $p`。
+  - **PowerShell 里被截短的字符串**（修订 27，复审 O-4）：辅助进程把超过 32768 个字符的字符串（管道开头的超过 4096 个）只报前 200 个字符。这一行加上 `ps-too-large`，算没看全，不送审：`Invoke-Expression`、`Add-Type` 会执行或编译请求里看不到的尾部。
 
   这些调用直接 ask（`decided_by: gray-unanalysed`，理由里写明没有送审），不按 `on_failure`：它们不是审计失败，与没有配置后端时的灰色相同。
 - **碰到 Windows 设备路径的灰色调用不送审**（修订 10）：路径的 key 在 `//./` 之下时，key 说不清它通向哪里，模型放行的只是一串字符。`//./globalroot/device/mup/srv/share/x` 是网络共享（公开资料的说法，没有实测），`//./pipe/x` 是在那个管道上监听的程序，`//./volume{...}`、`//./harddiskvolume1` 与 `//./c:` 是整个卷，`//./com1`、`//./con` 是硬件与控制台，`//./aux` 也可能是项目里的 `aux.py`。这些调用直接 ask（`decided_by: gray-device-path`，理由里写明没有送审，不写路径），不按 `on_failure`。

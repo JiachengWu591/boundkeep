@@ -211,7 +211,7 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - 代价：`git status; $LASTEXITCODE`、`npm test; "exit=$LASTEXITCODE"` 在默认配置下由 allow 变成问（`Write-Output $LASTEXITCODE` 原来就是）；`"${E:\proj\README.md}"`、`@{ a = 1 }`、`('x')` 单独成句也变灰色；多出来的 `Write-Output` 占发送闸门的 8 条命令上限。
   - 没有做：`if ($env:A)`、`exit $env:A` 的文字仍不在请求里；`foreach ($u in '常量')` 和函数参数默认值绑的常量也不在。`$LASTEXITCODE`、`$?` 没有放进常量表。
   - **给不是命令的东西起一个命令名时，值已经知道的要直接放过：`Write-Output` 没有 allow 规则，照记的话 `Get-Date; 'done'` 也会变成问。先看那个名字在规则层是怎么判的。**
-- **`$LASTEXITCODE` 和 `$?` 算已知值，规格修订 23**（2026-11-11，已提交，没有推送，`8d268d3` 代码（修订 23 到 26 一起），文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-known-variables.md`）：使用者说"当做已知值"。
+- **`$LASTEXITCODE` 和 `$?` 算已知值，规格修订 23**（2026-11-11，已提交并推送，`8d268d3` 代码（修订 23 到 26 一起），`ced7a87` 文档，未打标签；记录 `docs/reports/M3a-ps-known-variables.md`）：使用者说"当做已知值"。
   - 值有去处的表达式里，不带作用域的 `$LASTEXITCODE`、`$?` 和只含它们的双引号字符串不记成 `Write-Output`。`git status; $LASTEXITCODE` 回到由规则放行。
   - 实测这个名字能被同一行绑上任意值，所以加了两道限制。直接加名字的话 `param($LASTEXITCODE = $env:SECRET_TOKEN) Get-Date; $LASTEXITCODE` 由规则放行，打印环境变量。
     - 名字是它的参数和 `foreach` 变量：辅助进程报 `AutomaticVariable`，整行灰色 `ps-outside-command:AutomaticVariable`，不送审。写在命令参数里的脚本块里也报。
@@ -222,32 +222,52 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - 冒烟脚本的 `readings` 加了修订 17 到 24 的 10 条探针（共 19 条调用），`--dry` 23 项 0 失败。真实宿主（2026-11-12，Claude Code 2.1.318，使用者在自己的终端里运行）：23 项 0 失败，约 0.215 美元，记在 `docs/hook-behavior.md`。只验证每次修订的一条代表写法；R21-1 的长命令、Bash 工具、子目录里的工作目录没有覆盖。
   - 代价：有后端时安静的一行送审的请求里没有这次打印（能给它放值的只剩这一行运行的代码，那些代码自己就能打印）；`Get-ChildItem src\*; $LASTEXITCODE`、`pytest $args; $LASTEXITCODE` 里它仍是 `Write-Output`。
   - **把一个变量算作已知之前，先量它能不能被同一行改掉：参数、`foreach`、按名字放值的命令（含通配符）都要试。**
-- **修订 21 和 22 的复审**（2026-11-11，已提交，没有推送，和修订 23 到 26 的文档一起；`docs/reviews/M3a-rev21-22-review.md`，不是独立的，同一个会话做的）：两次修订的目标达到了，没有回退，没有不需要后端的放行。范围之内高危 0、中危 1、低危 1、信息 3；范围之外 1 条。R21-1、R22-1 已修（下一条），O-2 已修（再下一条）。
+- **修订 21 和 22 的复审**（2026-11-11，已提交并推送，在 `ced7a87` 里；`docs/reviews/M3a-rev21-22-review.md`，不是独立的，同一个会话做的）：两次修订的目标达到了，没有回退，没有不需要后端的放行。范围之内高危 0、中危 1、低危 1、信息 3；范围之外 1 条。R21-1、R22-1 已修（下一条），O-2 已修（再下一条）。
   - R21-1（中，要后端）：`pscmd` 的灰色原因最多记 64 条（M1b 就有）。一行里先用不认识的参数凑够 64 条，`ps-switch-value`、`ps-runner-value`、`ps-pipe-to-interpreter` 就记不进去，整行照常送审，请求里没有被丢掉的文字。建议：上限满了改记 `ps-too-large`，直接问。
   - R22-1（低，要后端）：参数默认值是变量时不在请求里，`param($x = $env:SECRET_TOKEN) Get-Date; $x` 送审的请求里只有 `Write-Output $x`。早于修订 21。
   - O-2（范围外，按 F3、F4 的标准是中危，要后端，两种 shell）：`uv run`、`uvx`、`pipx run` 自己的选项不在请求里，也不进规则：`uv run --env-file .env pytest`、`uv run --index-url https://… pytest` 的请求里只有 `pytest -q`。
   - 信息：`for` 的初始化和迭代位置不记（实测不打印）；`$true`、`$false`、`$null` 绑不上别的值（实测）；带盘符的变量各种写法里会读文件的都按读文件判。
-- **复审的两条修复，规格修订 24**（2026-11-12，已提交，没有推送，`8d268d3` 代码（修订 23 到 26 一起），文档在其后一个提交，未打标签；记录 `docs/reports/M3a-rev21-22-review-fixes.md`）：使用者说"先修这两条"。
+- **复审的两条修复，规格修订 24**（2026-11-12，已提交并推送，`8d268d3` 代码（修订 23 到 26 一起），`ced7a87` 文档，未打标签；记录 `docs/reports/M3a-rev21-22-review-fixes.md`）：使用者说"先修这两条"。
   - R21-1：`pscmd` 的灰色原因记满 64 条之后又来新的，这一行加上 `ps-too-large`（放在第一条），不送审。`pipeline` 没有改，`ps-too-large` 本来就不送审。复审的 4 种写法现在都不送审。
   - R22-1：辅助进程把参数的默认值报成名字种类 `output` 的一条命令，`pscmd` 照修订 22 读成 `Write-Output <默认值>`。值已经知道的、写在脚本块参数里的、带盘符的变量本身、只包着命令的括号不记。
   - 规则条目与策略文件没变，Bash 没变。专门扫描 240 行（20 种默认值 × 12 种写法）：18 行由 allow 变成灰色送审，没有变松；带变量的默认值送审时请求里都有它（原来 72 行里 45 行没有）。手头语料 1146 条：0 条变化。
   - 测试：见记录；原有差分全部相同。全量：见修订 23 那一条（四次修订一起跑，0 失败）。
   - 代价：`param($x = $env:USERNAME) Get-Date` 由 allow 变成灰色；带 64 个以上不同灰色原因的一行不再送审。
   - **"不送审"靠的是某一条原因在不在，所以任何会丢原因的地方（条数上限、截断、去重）都要当成"没看全"处理。**
-- **运行器自己的选项，规格修订 25**（2026-11-12，已提交，没有推送，`8d268d3` 代码（修订 23 到 26 一起），文档在其后一个提交，未打标签；记录 `docs/reports/M3a-runner-options.md`）：复审的 O-2，使用者在三种做法里选"带值选项就不送审"。
+- **运行器自己的选项，规格修订 25**（2026-11-12，已提交并推送，`8d268d3` 代码（修订 23 到 26 一起），`ced7a87` 文档，未打标签；记录 `docs/reports/M3a-runner-options.md`）：复审的 O-2，使用者在三种做法里选"带值选项就不送审"。
   - `uv run`、`uv tool run`、`uvx`、`pipx run`、`poetry run` 带了有值的选项（`--with`、`--env-file`、`--index-url`、`--python`、`--spec` 等）时不送审、直接问：Bash 方言是灰色 `runner-option-value`，PowerShell 方言是 `ps-runner-value`（修订 21 就有，原来只管值带变量的）。只带开关的照常送审。
   - `programs.peel_runner_options` 多返回一项"有没有带值的选项"；`peel_runner` 不变。`pipeline._UNSHOWN_REASONS` 加了 `runner-option-value`。
   - 规则层没有变（带 `wrappers` 的动作本来就不由 allow 规则放行），规则条目与策略文件没变。专门扫描 620 行（31 种前缀 × 10 种命令 × 两种 shell）：带值选项的行原来 297 行送审，现在 0 行；其余一项没变。手头语料 PowerShell 1146 条、Bash 1880 条 × 两个平台：0 条变化。
   - 测试：见记录；原有差分全部相同。全量：见修订 23 那一条（四次修订一起跑，0 失败）。
   - 代价：有后端时 `uv run --with rich pytest`、`uv run --python 3.12 pytest` 直接问。`uv run --env-file .env pytest` 是问，不是 deny：选项的值仍然不进路径层和域名层。
   - W-1（`sudo -u`、`env -C` 的值不在请求里）修订 26 已修，见下一条。
-- **包装器自己吃掉的词，规格修订 26**（2026-11-12，已提交，没有推送，`8d268d3` 代码（修订 23 到 26 一起），文档在其后一个提交，未打标签；记录 `docs/reports/M3a-wrapper-options.md`）：使用者说"W-1 也照同样的办法修"。
+- **包装器自己吃掉的词，规格修订 26**（2026-11-12，已提交并推送，`8d268d3` 代码（修订 23 到 26 一起），`ced7a87` 文档，未打标签；记录 `docs/reports/M3a-wrapper-options.md`）：使用者说"W-1 也照同样的办法修"。
   - Bash 方言里 `sudo`、`env`、`time`、`nice`、`timeout`、`xargs` 等包装器被剥掉时，吃掉的词里有不是开关的（选项的值、`nice -5`、`timeout 60` 的时长、`gosu user` 的用户），这次调用不送审：灰色 `wrapper-option-value`。只带开关的照常送审。PowerShell 不剥这些名字，没有变。规则层不变。
   - 带 `env -S` 时 env 不被剥掉，整条连同选项记下，值在请求里，不标。第一版把它也标了，扫描查出请求里本来就有那个值，改掉了。后面没有命令时包装器不被剥掉，也不标。
   - 专门扫描 450 行：176 行由送审变成问，没有一行变松，没有一行少记路径。手头语料 Bash 1880 条 × 两个平台：4 条由送审变成问（3 条 `timeout 5 pytest`，1 条 `env -C ~/.claude sh -c "echo x > settings.json"`，后者正是这一类问题）。
   - 测试：新测试 195 条；`tests/corpus/bash_parse.yaml` 的 23 条包装器条目补上新的灰色原因。变异 13 个，第一轮存活 1 个（缺 `env -C x -S '…' tests` 这种写法的测试），补测试后全部抓到。原有差分全部相同。全量：见修订 23 那一条（四次修订一起跑，0 失败）。
   - 代价：有后端时 `timeout 60 pytest`、`nice -n 10 make` 直接问。值仍然不进路径层：`env -C ~/.claude sh -c "echo x > settings.json"` 是问，不是 deny。
   - **看"请求里有没有"要量请求本身：带 `env -S` 的那一条从代码上看像是丢了值，实际 env 命令被整条记下了。**
+- **修订 23 到 26 的复审**（2026-11-12，已提交，在 `86a7e2f` 之后的文档提交里，未推送；`docs/reviews/M3a-rev23-26-review.md`，不是独立的，同一个会话做的）：四次修订的目标达到了，没有回退，没有不需要后端的放行。范围之内高危、中危 0，低危 1，信息 3；范围之外 1 条。O-4、RV26-1、RV24-1 已修（规格修订 27，下一条）。
+  - RV26-1（低，要后端，Bash）：包装器的长开关写成 `--名字=值` 时，值被丢掉、不标：`sudo --preserve-env=X pytest` 送审，请求里没有 X。GNU `env`、`timeout` 拒绝这种写法（实测，命令不运行），带 `xargs` 的行由规则问；效果不超过照常送审的 `sudo -E`。
+  - 信息：RV23-1 用 `ſ`、`ı`、`İ` 写的名字不是 `$LASTEXITCODE`（实测）；RV24-1 三张类型表截在 64 条，实际碰不到；RV25-1 `python -Xdev -m boundkeep` 不记带值，规则本来就问。
+  - O-4（范围外，按 F3、F4 的标准是中危，要后端，只在 PowerShell）：超过 32768 个字符的字符串常量只剩前 200 个字符，整条照常送审。`Invoke-Expression`、`Add-Type` 实测执行或编译了请求里看不到的尾部；照 Claude Code 启动 PowerShell 的方式（脚本放在环境变量里），7 万个字符的脚本也能运行。M1b 起就有。建议按 `ps-too-large` 处理，不送审。
+  - **找"请求里看不到的文字"时也要看截断：辅助进程截到 200 个字符，低于发送闸门 400 个字符的上限，闸门就发现不了。**
+- **复审的三条修复，规格修订 27**（2026-11-12，已提交，`86a7e2f` 代码（修订 27、28 一起），文档在其后一个提交，未推送，未打标签；记录 `docs/reports/M3a-rev23-26-review-fixes.md`）：使用者说"按建议顺序修三条"。
+  - O-4：`pscmd._convert` 遇到辅助进程截短的字符串（`TooLongString`）时，这一行加上 `ps-too-large`，不送审。辅助进程报的每个元素都经过这里，所以只改这一处；辅助进程和夹具没有改。
+  - RV26-1：Bash 包装器的长开关写成 `--名字=值` 时置 `taken`，灰色 `wrapper-option-value`，不送审。包装器照旧被剥掉，里面的命令照旧由规则判。
+  - RV24-1：`_type_names` 截断 `compound`、`dynamic`、`loose` 时置 `overflow`，这一行加上 `ps-too-large`。
+  - 规则条目与策略文件没变，没有后端时判决级别不变。新测试 90 条（在 `ced7a87` 上 42 条失败）；专门扫描 627 行，没有一行变松，没有一行少记路径；语料 0 条变化；变异 10 个全部抓到；原有差分全部相同。全量：见修订 28 那一条（两次修订一起跑）。
+  - 代价：有后端时带超长字符串的 PowerShell 命令、`sudo --preserve-env=LIST …` 直接问。
+  - 修的时候查到 O-5（绑到变量上的常量不在请求里），修订 28 已修，见下一条。
+- **绑到变量上的值，规格修订 28**（2026-11-12，已提交，`86a7e2f` 代码（修订 27、28 一起），文档在其后一个提交，未推送，未打标签；记录同上，第 7 节）：使用者说"O-5 也按你的建议修"。
+  - 原来：修订 22、24 让 PowerShell 里值已经知道的表达式（常量）不建 `Write-Output`，理由是打印它不多给什么；但参数默认值、`foreach` 的集合、`switch` 的条件、管道开头、函数体的输出是把值绑到变量上或交给调用者。`param($p = '~\.ssh\id_rsa') Get-Content $p` 送审，请求里只有 `Get-Content $p`（直接写路径是 deny）；`param($x = '<代码>') Invoke-Expression $x` 送审，请求里没有代码。Bash 的 `for p in ~/.ssh/id_rsa; do cat "$p"; done` 也一样。修订 24 只看了带变量的默认值，修订 23 到 26 的复审也没有查到；修这三条时的扫描（`rv27_scan.py`）里出现了"送审、请求里没有标记"的几行，才看出它们和打印不是一回事。
+  - 现在：辅助进程给绑定位置上的这种条目加 `"bind"`（`default`、`foreach`、`switch`、`head`、`body`）；`pscmd` 遇到其中值已经知道的，照旧不建命令，另记 `ps-bound-value:<位置>`；Bash 解析器给带词表的 `for` / `select` 记 `for-words`。都进 `BashResult.unshown`，再由 `event` 放进这一行每个动作的 `unshown`：规则不看它，判决不变，灰色时不送审。
+  - 修的时候查到、一起修的：`data v { '…' }` 数据段、函数体里的常量输出（`function f { '<代码>' }; Invoke-Expression (f)`）、Bash 的 `for` / `select`。
+  - 测试与测量：新测试 116 条（在 `ced7a87` 上 77 条失败）；专门扫描 316 行，没有一行变松，没有一行少记路径；语料 PowerShell 1146 条里 9 条由送审改为不送审（都在 `tests/corpus`），Bash 0 条；夹具 26 个只多了 `bind`；变异 20 个，1 个等价存活（PowerShell 5.1 里类的方法体外面还有一层 `FunctionDefinitionAst`）。`switch -File` 的路径不算绑定（修订 21 已经不送审）。原有差分全部相同。全量（修订 27、28 一起跑）分六段跑，不是一个进程：29866 通过、169 跳过、0 失败，合计与收集到的 30035 条相同，各段用时合计 2:24:42（开始、续跑和结束时电源都是最佳性能）。中途按使用者的话停过一次：前五段跑完后第 6 段停在约 95%，核对工作区没有变（限于代码、测试等目录的 `git diff HEAD` 和两个新测试文件的哈希）之后，第 6 段从头单独跑。
+  - 真实宿主里没有跑。PowerShell 7 上没有量。
+  - 代价：有后端时 `foreach ($f in 'a.py', 'b.py') { ruff check $f }`、`for f in *.py; do ruff check "$f"; done`、`'x' | Out-File out.txt` 这类灰色调用直接问。由规则放行的（`param($n = 5) Get-Date`）不变。
+  - **给已知值开豁免时要分清"打印"和"绑定"：值进了变量，之后可能被执行或当路径用，请求里就得有它，否则不送审。**
 - **下一步**：M3b（自备密钥、确认费用）或 M4（不依赖 M3b）；接真实后端之前，收尾记录第 5 节里还剩 `auto` 模式的实测。总览见 `PROJECT_SPEC.md` 开头的"当前进度"与 §14 的状态列。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
 - M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。
