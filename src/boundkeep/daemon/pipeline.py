@@ -648,7 +648,9 @@ def incomplete_analysis(actions: Sequence[Action]) -> str | None:
 # nothing of the program it is (spec revisions 18 and 19). The request lists commands with their
 # arguments, so a PowerShell expression or statement that is in no command's arguments is not in
 # it: ``git status; [IO.File]::ReadAllText('.env')`` (``pscmd.OUTSIDE_COMMAND_GRAY``, revision 21).
-# Nor is the computed value of a switch (``-Force:(...)``) or of an option of ``uv run``: the
+# Nor is the computed value of a switch (``-Force:(...)``), the value of an option of ``uv run``
+# and the other runners (``uv run --env-file .env pytest``, both dialects, revision 25) or a
+# word a Bash wrapper took (``sudo -u root pytest``, ``timeout 60 pytest``, revision 26): the
 # normalizer drops those words.
 _UNSHOWN_REASONS: Final = (
     "ps-pipe-to-interpreter",
@@ -656,6 +658,8 @@ _UNSHOWN_REASONS: Final = (
     "ps-outside-command",
     "ps-switch-value",
     "ps-runner-value",
+    "runner-option-value",
+    "wrapper-option-value",
     "program-fold-variant",
     "program-short-name-unresolved",
 )

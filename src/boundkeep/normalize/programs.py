@@ -40,6 +40,7 @@ __all__ = [
     "devtool_form",
     "is_code_env",
     "peel_runner",
+    "peel_runner_options",
 ]
 
 _ALL_TAGS: tuple[RiskTag, ...] = (
@@ -1932,15 +1933,28 @@ def _python_like(name: str) -> bool:
 
 
 def peel_runner(argv: Sequence[Word]) -> tuple[int, str, Word | None] | str | None:
+    """``peel_runner_options`` without its last item."""
+    peeled = peel_runner_options(argv)
+    return peeled[:3] if isinstance(peeled, tuple) else peeled
+
+
+def peel_runner_options(
+    argv: Sequence[Word],
+) -> tuple[int, str, Word | None, bool] | str | None:
     """Recognize a runner that starts another program at the head of ``argv``.
 
     ``uv run [options] CMD ...``, ``uv tool run``, ``uvx [options] CMD``,
     ``pipx run [options] CMD``, ``poetry run CMD`` and ``python -m boundkeep[.MODULE] ...`` (the
     interpreter is only a launcher there).
-    Returns ``(n_drop, marker, synthetic)``: drop the first ``n_drop`` words, prepend ``synthetic``
-    (a word, or None) and record ``marker`` as a wrapper, so the inner command is judged and no
-    allow rule matches the wrapped line; ``"unsure"`` when an option is not in the tables (where
-    the command starts is unknown: the caller makes the line gray); None for anything else.
+    Returns ``(n_drop, marker, synthetic, valued)``: drop the first ``n_drop`` words, prepend
+    ``synthetic`` (a word, or None) and record ``marker`` as a wrapper, so the inner command is
+    judged and no allow rule matches the wrapped line; ``"unsure"`` when an option is not in the
+    tables (where the command starts is unknown: the caller makes the line gray); None for
+    anything else.
+
+    ``valued``: one of the dropped words is an option of the runner that has a value (``--with
+    x``, ``--env-file=.env``, ``--index-url URL``). The value is in no action's words, so the
+    caller keeps such a call from being sent to the LLM audit (spec revision 25).
     """
     if not argv or not _literal(argv[0]):
         return None
@@ -1966,6 +1980,7 @@ def peel_runner(argv: Sequence[Word]) -> tuple[int, str, Word | None] | str | No
                 return None
             i += 1
     n = len(argv)
+    valued = False
     while i < n:
         w = argv[i]
         t = w.text
@@ -1981,6 +1996,7 @@ def peel_runner(argv: Sequence[Word]) -> tuple[int, str, Word | None] | str | No
         name, eq, _ = t.partition("=")
         if name in values:
             i += 1 if eq else 2
+            valued = True
             if marker == "uv-run" and name in _UV_RUN_WITH:
                 marker = "uv-run-remote"
         elif name in flags and not eq:
@@ -1991,7 +2007,7 @@ def peel_runner(argv: Sequence[Word]) -> tuple[int, str, Word | None] | str | No
         return None  # nothing to run (``uv run`` alone)
     if marker == "uv-run" and "://" in argv[i].text:
         marker = "uv-run-remote"  # ``uv run https://example.com/x.py``
-    return i, marker, None
+    return i, marker, None, valued
 
 
 def _boundkeep_module(name: str) -> str | None:
@@ -2007,10 +2023,12 @@ def _boundkeep_module(name: str) -> str | None:
     return None
 
 
-def _peel_python_m(argv: Sequence[Word]) -> tuple[int, str, Word | None] | None:
-    """``python [flags] -m boundkeep[.MODULE] ARGS``: the interpreter only launches boundkeep."""
+def _peel_python_m(argv: Sequence[Word]) -> tuple[int, str, Word | None, bool] | None:
+    """``python [flags] -m boundkeep[.MODULE] ARGS``: the interpreter only launches boundkeep.
+    The last item: one of the flags had a value (``-W``, ``-X``, ``-Q``), which is dropped."""
     n = len(argv)
     i = 1
+    valued = False
     while i < n:
         w = argv[i]
         t = w.text
@@ -2019,16 +2037,17 @@ def _peel_python_m(argv: Sequence[Word]) -> tuple[int, str, Word | None] | None:
         if t == "-m":
             if i + 1 < n and _literal(argv[i + 1]):
                 if argv[i + 1].text == "boundkeep":
-                    return i + 1, "python-m", None
+                    return i + 1, "python-m", None, valued
                 program = _boundkeep_module(argv[i + 1].text)
                 if program is not None:
-                    return i + 2, "python-m", Word(program)
+                    return i + 2, "python-m", Word(program), valued
             return None
         if t.startswith("-m") and len(t) > 2:
             program = _boundkeep_module(t[2:])
-            return (i + 1, "python-m", Word(program)) if program is not None else None
+            return (i + 1, "python-m", Word(program), valued) if program is not None else None
         if t in _PY_VALUE_FLAGS:
             i += 2
+            valued = True
         elif t.startswith("-") and not t.startswith("--") and len(t) > 1 and "c" not in t[1:]:
             i += 1  # -u -B -I -E -s -3 -3.12 -Xutf8 ...
         else:

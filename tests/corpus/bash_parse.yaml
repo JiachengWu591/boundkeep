@@ -694,12 +694,14 @@
 - id: sudo-user
   adv: true
   cmd: 'sudo -u x rm y'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, y], wrappers: [sudo]}
 
 - id: sudo-combined-flags-and-dashdash
   adv: true
   cmd: 'sudo -Eu root -- rm y'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, y], wrappers: [sudo]}
 
@@ -714,7 +716,7 @@
   cmd: 'sudo -D /etc rm y'
   commands:
     - {argv: [rm, y], wrappers: [sudo]}
-  gray: ['wrapper-option:sudo:-D']
+  gray: ['wrapper-option:sudo:-D', wrapper-option-value]
 
 - id: sudo-unknown-option-is-gray-and-not-stripped
   adv: true
@@ -746,6 +748,7 @@
 
 - id: doas
   cmd: 'doas -u x rm y'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, y], wrappers: [doas]}
 
@@ -757,6 +760,7 @@
 
 - id: env-unset
   cmd: 'env -u HOME rm x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, x], wrappers: [env]}
 
@@ -787,26 +791,31 @@
 - id: time-nested-wrappers
   adv: true
   cmd: 'time sudo nice -n 5 timeout 10 rm x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, x], wrappers: [time, sudo, nice, timeout]}
 
 - id: timeout-options
   cmd: 'timeout -k 5 --signal=KILL 10 rm x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, x], wrappers: [timeout]}
 
 - id: nice-numeric
   cmd: 'nice -10 rm x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, x], wrappers: [nice]}
 
 - id: stdbuf-attached
   cmd: 'stdbuf -oL rm x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, x], wrappers: [stdbuf]}
 
 - id: ionice-setsid
   cmd: 'ionice -c3 setsid -f rm x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, x], wrappers: [ionice, setsid]}
 
@@ -827,7 +836,7 @@
   cmd: 'time -o /etc/x ls'
   commands:
     - {argv: [ls], wrappers: [time]}
-  gray: ['wrapper-option:time:-o']
+  gray: ['wrapper-option:time:-o', wrapper-option-value]
 
 - id: wrapper-with-dynamic-option
   adv: true
@@ -844,6 +853,7 @@
 
 - id: xargs-options
   cmd: 'find . | xargs -0 -I{} -n1 -P4 rm {}'
+  gray: [wrapper-option-value]
   has:
     - {argv: ['rm', '{}'], wrappers: [xargs], args_from_stdin: true, in_pipeline: true}
 
@@ -859,7 +869,7 @@
   cmd: 'xargs -a list rm'
   commands:
     - {argv: [rm], wrappers: [xargs], args_from_stdin: true}
-  gray: ['wrapper-option:xargs:-a']
+  gray: ['wrapper-option:xargs:-a', wrapper-option-value]
 
 - id: xargs-sh-c
   adv: true
@@ -1689,6 +1699,7 @@
 - id: wsl-distribution-and-user
   adv: true
   cmd: 'wsl -d Ubuntu -u root --exec rm x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, x], wrappers: [wsl]}
 
@@ -1706,7 +1717,7 @@
   cmd: 'wsl --cd /tmp -e rm x'
   commands:
     - {argv: [rm, x], wrappers: [wsl]}
-  gray: ['wrapper-option:wsl:--cd']
+  gray: ['wrapper-option:wsl:--cd', wrapper-option-value]
 
 - id: wsl-management-command-is-not-stripped
   cmd: 'wsl --shutdown'
@@ -1717,6 +1728,7 @@
 - id: sshpass-peeled
   adv: true
   cmd: 'sshpass -p secret ssh host'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [ssh, host], wrappers: [sshpass]}
 
@@ -1725,7 +1737,7 @@
   cmd: 'sshpass -f ~/.pw ssh host'
   commands:
     - {argv: [ssh, host], wrappers: [sshpass]}
-  gray: ['wrapper-option:sshpass:-f']
+  gray: ['wrapper-option:sshpass:-f', wrapper-option-value]
 
 - id: sshpass-then-sudo-chain
   adv: true
@@ -1736,17 +1748,20 @@
 - id: gosu-peeled
   adv: true
   cmd: 'gosu root rm -rf /x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, -rf, /x], wrappers: [gosu]}
 
 - id: gosu-user-and-group
   cmd: 'gosu app:app rm x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, x], wrappers: [gosu]}
 
 - id: su-exec-peeled
   adv: true
   cmd: 'su-exec root rm -rf /x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, -rf, /x], wrappers: [su-exec]}
 
@@ -1758,6 +1773,7 @@
 
 - id: ssh-agent-options
   cmd: 'ssh-agent -t 3600 -a /tmp/s rm x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, x], wrappers: [ssh-agent]}
 
@@ -1800,11 +1816,13 @@
 - id: numactl-peeled
   adv: true
   cmd: 'numactl --cpunodebind=0 -m 1 rm -rf /x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, -rf, /x], wrappers: [numactl]}
 
 - id: numactl-physcpubind-arg
   cmd: 'numactl -C 0-3 --localalloc rm x'
+  gray: [wrapper-option-value]
   commands:
     - {argv: [rm, x], wrappers: [numactl]}
 

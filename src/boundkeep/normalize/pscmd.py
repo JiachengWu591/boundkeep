@@ -31,7 +31,7 @@ from typing import Any
 
 from boundkeep.normalize import programs, psaliases, psprograms
 from boundkeep.normalize.model import BashResult, Redirect, SimpleCmd, Word
-from boundkeep.normalize.programs import peel_runner
+from boundkeep.normalize.programs import peel_runner_options
 
 __all__ = [
     "MAX_COMMANDS",
@@ -47,8 +47,9 @@ __all__ = [
 # call is not sent to the LLM audit (``pipeline.unshown_input``, spec revision 21).
 OUTSIDE_COMMAND_GRAY = "ps-outside-command"
 # Text that is in a command and still in no action's words: the computed value of a switch
-# (``-Force:(...)``, dropped because a switch takes none) and of an option of ``uv run`` and the
-# other runners (dropped with the runner). Not sent either.
+# (``-Force:(...)``, dropped because a switch takes none) and the value of an option of ``uv run``
+# and the other runners (dropped with the runner; any value since spec revision 25, a computed
+# one since revision 21). Not sent either.
 SWITCH_VALUE_GRAY = "ps-switch-value"
 RUNNER_VALUE_GRAY = "ps-runner-value"
 # The name kind of an expression whose value goes somewhere (a statement of its own, after
@@ -63,6 +64,7 @@ MAX_ELEMENTS = 20000
 MAX_STRING = 1 << 16  # one value / name / text of the digest
 MAX_DEPTH = 12  # nesting of arrays and parameter arguments
 MAX_REASONS = 64
+_TOO_LARGE = "ps-too-large"  # not all of the line is recorded: never sent to the LLM audit
 _MAX_RAW = 512
 _MAX_TAG = 64
 _REDIRECT_CHARS = frozenset("0123456789*<>&")
@@ -89,6 +91,8 @@ class _State:
     exec_: dict[str, None] = field(default_factory=dict)
     elements: int = 0
     dynamic_kinds: frozenset[str] = frozenset()
+    quiet: bool = False  # no command of the line could have set $LASTEXITCODE by name
+    overflow: bool = False  # a gray reason came when MAX_REASONS were recorded already
     shadowed: set[str] = field(default_factory=set)  # names the line redefined (Set-Alias, ...)
     shadow_all: bool = False  # a redefinition with an unknowable name: every alias is suspect
     # what the earlier commands of the line named (file names, lower-cased): a path-qualified dev
@@ -98,8 +102,14 @@ class _State:
     mention_dynamic: bool = False
 
     def add_gray(self, reason: str) -> None:
+        if reason in self.gray:
+            return
         if len(self.gray) < MAX_REASONS:
-            self.gray.setdefault(reason, None)
+            self.gray[reason] = None
+        else:
+            # Review R21-1: a reason that is not recorded cannot keep the line from being sent
+            # (``ps-switch-value`` behind 64 unknown parameters), so the line counts as not seen
+            self.overflow = True
 
     def add_exec(self, reason: str) -> None:
         """A reason the line runs code we cannot see: gray as well."""
@@ -451,19 +461,21 @@ def _peel_runners(
     wrappers: list[str] = []
     for _ in range(_MAX_RUNNER_LAYERS):
         words = [program, *args]
-        peeled = peel_runner(words)
+        peeled = peel_runner_options(words)
         if peeled is None:
             break
         if isinstance(peeled, str):
             st.add_gray("ps-runner-options")
             break
-        n_drop, marker, synthetic = peeled
+        n_drop, marker, synthetic, valued = peeled
         rest = ([synthetic] if synthetic is not None else []) + words[n_drop:]
         if not rest:
             break
-        if any(w.expands for w in words[1:n_drop]):
-            # the runner's own options go with the runner: a value that is computed
-            # (``uv run --with ([IO.File]::Delete('x')) pytest``) would be in no action's words
+        if valued:
+            # the runner's own options go with the runner: a value, constant (``uv run
+            # --env-file .env pytest``) or computed (``uv run --with ([IO.File]::Delete('x'))
+            # pytest``), would be in no action's words (spec revisions 21 and 25). Every dropped
+            # word that can expand is such a value: the others are compared as literal text.
             st.add_gray(RUNNER_VALUE_GRAY)
         wrappers.append(marker)
         program = Word(_strip_exe(rest[0].text), rest[0].expands, rest[0].glob, rest[0].quoted)
@@ -546,26 +558,99 @@ def _with_pipeline_head(
     return args if param is None else [*args, Word(param), *words]
 
 
-def _known_value(e: object) -> bool:
+# Spec revision 23: the exit code of the last program and whether the last statement succeeded
+# are known too, but only in a line where nothing else could have put a value under that name:
+# - a parameter or a foreach variable of that name comes with ``AutomaticVariable`` in ``loose``;
+# - an assignment is a statement that is not let through;
+# - a command can set a variable it is given the name of (``Set-Variable``, ``-OutVariable``,
+#   ``Tee-Object -Variable``, ``Set-Item Variable:\LAST*``), so every command of the line must
+#   have constant arguments only, none of which names the variable (``_quiet``).
+# What is left is code the line runs (a script, a function), and that can print by itself.
+_EXIT_VARIABLES = frozenset({"$lastexitcode", "$?"})
+_EXIT_NAME = "lastexitcode"
+_CONSTANT_NAME_KINDS = frozenset({"bare", "single", "double"})
+
+
+def _names_exit_code(text: str) -> bool:
+    """Could this constant argument name the variable, as it stands or as a wildcard?"""
+    low = text.lower()
+    if _EXIT_NAME in low:
+        return True
+    tail = low.replace("\\", "/").replace(":", "/").rsplit("/", 1)[-1]
+    return _glob(tail) and fnmatch.fnmatchcase(_EXIT_NAME, tail)
+
+
+def _settled(e: object, depth: int = 0) -> bool:
+    """A constant argument that does not name the exit-code variable."""
+    if depth > MAX_DEPTH or not isinstance(e, Mapping):
+        return False
+    kind = e.get("t")
+    value = e.get("v")
+    if kind == "str":
+        return isinstance(value, str) and not _names_exit_code(value)
+    if kind == "num":
+        return isinstance(value, str)
+    if kind == "param":
+        return e.get("arg") is None or _settled(e.get("arg"), depth + 1)
+    items = e.get("items")
+    return (
+        kind == "array" and isinstance(items, list) and all(_settled(i, depth + 1) for i in items)
+    )
+
+
+def _quiet(commands: object) -> bool:
+    """Is every command of the line one that cannot have set ``$LASTEXITCODE`` by name?"""
+    if not isinstance(commands, list):
+        return False
+    for c in commands:
+        name = c.get("name") if isinstance(c, Mapping) else None
+        if not isinstance(name, Mapping):
+            return False
+        kind = name.get("kind")
+        if kind == _OUTPUT_KIND or kind in _FILE_VARIABLE:
+            continue  # an expression or a file variable: no command that takes a name
+        elements = c.get("elements")
+        if (
+            kind not in _CONSTANT_NAME_KINDS
+            or not isinstance(elements, list)
+            or not all(_settled(e) for e in elements)
+        ):
+            return False
+    return True
+
+
+def _known_variable(name: object, st: _State) -> bool:
+    if not isinstance(name, str):
+        return False
+    text = "$" + name.lower()
+    return text in _BOOLEAN_LITERALS or (st.quiet and text in _EXIT_VARIABLES)
+
+
+def _known_value(e: object, st: _State) -> bool:
     """A value that is known without running anything: a plain constant, ``$true`` / ``$false`` /
-    ``$null``, or an array of them. Printing it shows nothing the command line does not."""
+    ``$null``, in a quiet line ``$LASTEXITCODE`` / ``$?``, a double-quoted string that expands
+    nothing but those, or an array of them. Printing it shows nothing the command line does not."""
     if _plain_constant(e):
         return True
     if not isinstance(e, Mapping):
         return False
     if e.get("t") == "var":
-        name = e.get("name")
+        return e.get("splat") is not True and _known_variable(e.get("name"), st)
+    if e.get("t") == "expstr":
+        names = e.get("vars")
         return (
-            isinstance(name, str)
-            and e.get("splat") is not True
-            and "$" + name.lower() in _BOOLEAN_LITERALS
+            e.get("subexpr") is False
+            and isinstance(e.get("v"), str)
+            and isinstance(names, list)
+            and bool(names)
+            and all(_known_variable(n, st) for n in names)
         )
     items = e.get("items")
     return (
         e.get("t") == "array"
         and isinstance(items, list)
         and bool(items)
-        and all(_known_value(i) for i in items)
+        and all(_known_value(i, st) for i in items)
     )
 
 
@@ -579,7 +664,7 @@ def _output_words(
     if name.get("v") != "" or not isinstance(elements, list) or len(elements) != 1:
         st.add_gray("ps-internal-error")
         return None
-    if _known_value(elements[0]):
+    if _known_value(elements[0], st):
         return [], True
     return _convert(elements[0], st, sep=True), False
 
@@ -747,6 +832,8 @@ def _run(reply: object, st: _State) -> None:
     if len(commands) > MAX_COMMANDS:
         st.add_gray("ps-too-large")
         commands = commands[:MAX_COMMANDS]
+    else:
+        st.quiet = _quiet(commands)
     for c in commands:
         built = _command(c, st)
         if built is not None:
@@ -766,13 +853,15 @@ def build(reply: Mapping[str, Any], *, source: str) -> BashResult:
     ``file-read`` or ``file-write`` and becomes ``Get-Content -Path`` / ``Set-Content -Path`` of
     that path; what ``reply["loose"]`` names is gray ``ps-outside-command:<type>``. An expression
     whose value goes somewhere comes with the name kind ``output`` and becomes ``Write-Output
-    <expression>``, unless its value is known (a constant, ``$true`` / ``$false`` / ``$null``).
+    <expression>``, unless its value is known (a constant, ``$true`` / ``$false`` / ``$null``,
+    ``$LASTEXITCODE`` / ``$?``).
 
     Never raises. A reply that is not a mapping, lacks ``commands`` / ``compound`` / ``dynamic`` /
     ``loose`` / ``parse_errors`` or has them in the wrong type is gray (``ps-internal-error``); one
     with more than ``MAX_COMMANDS`` commands, ``MAX_ELEMENTS`` elements or a string over
     ``MAX_STRING`` characters is gray (``ps-too-large``); the commands built before the limit are
-    kept.
+    kept. A line with more than ``MAX_REASONS`` gray reasons is ``ps-too-large`` as well: the
+    reasons that did not fit are not recorded, and one of them may be why the line is not sent.
     """
     st = _State(source if isinstance(source, str) else "")
     try:
@@ -781,4 +870,7 @@ def build(reply: Mapping[str, Any], *, source: str) -> BashResult:
         st.add_gray("ps-too-large")
     except Exception:  # noqa: BLE001 - a builder that raises would fail the gate open
         st.add_gray("ps-internal-error")
-    return BashResult(tuple(st.cmds), tuple(st.gray), tuple(st.exec_))
+    gray = tuple(st.gray)
+    if st.overflow and _TOO_LARGE not in st.gray:
+        gray = (_TOO_LARGE, *gray)  # first: it is what decides that the line is not sent
+    return BashResult(tuple(st.cmds), gray, tuple(st.exec_))

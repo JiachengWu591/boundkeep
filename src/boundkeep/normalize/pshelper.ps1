@@ -129,6 +129,11 @@ foreach ($n in @(
 }
 # ${C:\x\y} is the content of that file. These drives are not files.
 $script:NoFileDrive = @{ 'env' = $true; 'function' = $true; 'alias' = $true; 'variable' = $true }
+# Spec revision 23: where a value is printed, the consumer takes $LASTEXITCODE and $? as known. A
+# parameter or a foreach variable of that name holds whatever the line binds to it (measured:
+# `param($LASTEXITCODE = $env:X)`, `foreach ($LASTEXITCODE in $env:X)`), so such a line is reported
+# in "loose" as AutomaticVariable. An assignment is a statement the consumer does not let through.
+$script:AutomaticName = @{ 'lastexitcode' = $true; '?' = $true }
 $script:MaxSteps = 1000000          # parent links followed for one request
 $script:Steps = 0
 
@@ -321,6 +326,30 @@ function Test-Loose($n) {
     return $true
 }
 
+# Is this the variable of a parameter or a foreach named like $LASTEXITCODE or $?, with or without
+# a scope (`$script:LASTEXITCODE`)?
+function Test-Automatic($v) {
+    if ($v -isnot [VariableExpressionAst]) { return $false }
+    $name = $v.VariablePath.UserPath
+    $i = $name.LastIndexOf(':')
+    if ($i -ge 0) { $name = $name.Substring($i + 1) }
+    return $script:AutomaticName.ContainsKey($name)
+}
+
+# Is the expression in the reply already? A drive-qualified variable is a command of its own, and
+# (Get-Location) is the output of the commands in it, which are reported on their own.
+function Test-Carried($x) {
+    if (($x -is [VariableExpressionAst]) -and $x.VariablePath.IsDriveQualified -and
+        -not $script:NoFileDrive.ContainsKey($x.VariablePath.DriveName)) { return $true }
+    if (($x -is [ParenExpressionAst]) -and ($x.Pipeline -is [PipelineAst])) {
+        foreach ($el in $x.Pipeline.PipelineElements) {
+            if ($el -isnot [CommandAst]) { return $false }
+        }
+        return $true
+    }
+    return $false
+}
+
 # Does the value of this expression go somewhere (spec revision 22)? An expression can stand where
 # a command can: `$env:TOKEN` as a statement prints the value like `Write-Output $env:TOKEN`. The
 # places: a statement of a script, function or script block or of the block of an if, loop, switch,
@@ -334,17 +363,7 @@ function Test-Output($e) {
     $p = $e.Parent
     # the right side of `$b = $a` is the expression itself, in no pipeline
     if ($p -isnot [PipelineAst]) { return $false }
-    $x = $e.Expression
-    if (($x -is [VariableExpressionAst]) -and $x.VariablePath.IsDriveQualified -and
-        -not $script:NoFileDrive.ContainsKey($x.VariablePath.DriveName)) { return $false }
-    # (Get-Location) is the output of the commands in it, and those are reported on their own
-    if (($x -is [ParenExpressionAst]) -and ($x.Pipeline -is [PipelineAst])) {
-        $onlyCommands = $true
-        foreach ($el in $x.Pipeline.PipelineElements) {
-            if ($el -isnot [CommandAst]) { $onlyCommands = $false }
-        }
-        if ($onlyCommands) { return $false }
-    }
+    if (Test-Carried $e.Expression) { return $false }
     if ($p.PipelineElements.Count -eq 1) {
         $c = $p.Parent
         while (($null -ne $c) -and $c.PSObject.TypeNames[0].EndsWith('.PipelineChainAst')) { $c = $c.Parent }
@@ -356,6 +375,18 @@ function Test-Output($e) {
         }
     }
     return (Test-Loose $e)
+}
+
+# The default value of a parameter is bound to the parameter's variable, like the collection of a
+# foreach: `param($x = $env:TOKEN) Get-Date; $x` prints it. The consumer reads it as Write-Output
+# <default> (spec revision 24).
+function Add-Default($p) {
+    $sb = $script:Sb
+    if ($sb.Length -gt $script:MaxOutChars) { throw 'too-large' }
+    $d = $p.DefaultValue
+    [void]$sb.Append('{"pos":[' + $d.Extent.StartOffset + ',' + $d.Extent.EndOffset + '],"invoke":"","name":{"kind":"output","v":""},"elements":[')
+    Add-Elem $d 0
+    [void]$sb.Append('],"redirects":[],"stage":{"index":0,"of":1},"nested":true}')
 }
 
 # What a drive-qualified variable does to its file: an assignment writes it (also through a type
@@ -427,7 +458,10 @@ function New-Reply([string]$b64) {
             return ($vp.IsDriveQualified -and -not $script:NoFileDrive.ContainsKey($vp.DriveName))
         }
         # a parameter with a type or an attribute converts or validates what it is given
-        if ($a -is [ParameterAst]) { return ($a.Attributes.Count -gt 0) }
+        # so does one with a default value, which goes into the parameter's variable
+        if ($a -is [ParameterAst]) {
+            return (($a.Attributes.Count -gt 0) -or ($null -ne $a.DefaultValue) -or (Test-Automatic $a.Name))
+        }
         if ($a -is [ExpressionAst]) {
             return -not (($a -is [ConstantExpressionAst]) -or ($a -is [VariableExpressionAst]) -or
                 ($a -is [ExpandableStringExpressionAst]) -or ($a -is [ArrayLiteralAst]))
@@ -449,6 +483,13 @@ function New-Reply([string]$b64) {
             $cmds.Add($n)
         } else {
             $short = TypeShort $n
+            # wherever it stands: a script block in a command's arguments binds it just the same
+            if ((($n -is [ParameterAst]) -and (Test-Automatic $n.Name)) -or
+                (($n -is [ForEachStatementAst]) -and (Test-Automatic $n.Variable))) {
+                if (-not $loose.Contains('AutomaticVariable')) { $loose.Add('AutomaticVariable') }
+            }
+            if (($n -is [ParameterAst]) -and ($null -ne $n.DefaultValue) -and
+                (-not (Test-Carried $n.DefaultValue)) -and (Test-Loose $n)) { $cmds.Add($n) }
             if ($n -is [ExpressionAst]) {
                 if ($script:DynamicTypes.ContainsKey($short) -and -not $dynamic.Contains($short)) { $dynamic.Add($short) }
                 $inert = $script:InertExpr.ContainsKey($short)
@@ -460,7 +501,7 @@ function New-Reply([string]$b64) {
                     }
                 }
             } elseif ($n -is [ParameterAst]) {
-                $inert = $false
+                $inert = ($n.Attributes.Count -eq 0)
             } else {
                 if (-not $compound.Contains($short)) { $compound.Add($short) }
                 $inert = $script:PlainStatement.ContainsKey($short)
@@ -499,6 +540,7 @@ function New-Reply([string]$b64) {
         }
         if (-not $first) { [void]$sb.Append(',') }
         $first = $false
+        if ($c -is [ParameterAst]) { Add-Default $c; continue }
         Add-Command $c $root
     }
     [void]$sb.Append('],"compound":')

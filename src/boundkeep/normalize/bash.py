@@ -73,7 +73,9 @@ literal as Bash 5 does).  Dynamic: ``dynamic-command-name``, ``dynamic-code:<wha
 (eval, trap, heredoc, herestring, param-prompt for ``${x@P}``),
 ``dynamic-interpreter-args:<name>``.  Wrappers: ``wrapper-options:<name>`` (unknown / dynamic
 option), ``wrapper-option:<name>:<opt>`` (option whose argument is a path or command, e.g.
-``sudo -D``, ``env -C``, ``xargs -a``, ``time -o``), ``wrapper-layers``.  Others:
+``sudo -D``, ``env -C``, ``xargs -a``, ``time -o``), ``wrapper-layers``, ``runner-option-value``
+(``uv run`` and the other runners with an option that has a value), ``wrapper-option-value``
+(a wrapper that took a word that is no flag).  Others:
 ``foreign-shell:<name>``, ``find-exec-unterminated`` and every ``exec:<reason>``.
 
 Exec reasons: ``eval``, ``source``, ``interpreter-c:<name>`` (``python -c``, ``node -e``, ...),
@@ -98,10 +100,24 @@ from boundkeep.normalize.programs import (
     devtool_exe_in_env,
     devtool_form,
     is_code_env,
-    peel_runner,
+    peel_runner_options,
 )
 
-__all__ = ["parse_bash"]
+__all__ = ["RUNNER_OPTION_VALUE_GRAY", "WRAPPER_OPTION_VALUE_GRAY", "parse_bash"]
+
+# ``uv run``, ``uvx``, ``pipx run`` and ``poetry run`` are peeled and their own options dropped: the
+# value of one (``--env-file .env``, ``--index-url URL``, ``--with PKG``) is in no action's words.
+# A call with this reason is not sent to the LLM audit (``pipeline.unshown_input``, spec revision
+# 25); the PowerShell dialect says ``ps-runner-value``.
+RUNNER_OPTION_VALUE_GRAY = "runner-option-value"
+# The same for the wrappers of ``_WRAPPERS`` (spec revision 26): ``sudo -u root pytest`` and
+# ``env -C dir pytest`` are judged, and shown, as ``pytest`` with the marker ``sudo`` / ``env``.
+# Any word the wrapper takes that is no flag counts: an option's value, ``nice -5``, the
+# operand of ``timeout 60`` and ``gosu user``.
+WRAPPER_OPTION_VALUE_GRAY = "wrapper-option-value"
+# ``env -S TEXT``: TEXT is parsed again as commands and the env command is kept whole, its other
+# options with it (``['env', '-C', 'dir', '-S', 'pytest -q']``), so nothing it took is dropped
+_SPLIT_STRING = frozenset({"-S", "--split-string"})
 
 _MAX_NEST = 32  # structural nesting ($(, (, {, ${, `...`, bash -c, ...): bounds Python recursion
 _TICK_FACTOR = 16  # token budget = factor * max_words
@@ -510,6 +526,9 @@ class _Stripped(NamedTuple):
     assigns: list[tuple[str, Word]]
     seen: set[str]
     optargs: list[tuple[str, str]]
+    # a word that is no flag and not in ``optargs``: ``nice -5``, an optional value attached
+    # to its option (``xargs -i{}``), the operand of ``timeout 60`` / ``gosu user``
+    taken: bool = False
 
 
 class _IScanResult(NamedTuple):
@@ -1735,6 +1754,7 @@ class _Parser:
         i = 0
         seen: set[str] = set()
         optargs: list[tuple[str, str]] = []
+        taken = False
         while i < n:
             a = args[i]
             t = a.word.text
@@ -1766,6 +1786,7 @@ class _Parser:
                 return None
             if len(t) > 1 and t[0] == "-":
                 if spec.numeric and t[1:].isdecimal() and t.isascii():
+                    taken = True
                     i += 1
                     continue
                 k = 1
@@ -1789,6 +1810,7 @@ class _Parser:
                         break
                     elif ch in spec.optargs:
                         seen.add("-" + ch)
+                        taken = taken or k + 1 < len(t)
                         break
                     else:
                         return None
@@ -1803,6 +1825,8 @@ class _Parser:
         for opt, _ in optargs:
             if opt in spec.risky:
                 self._gray(f"wrapper-option:{name}:{opt}")
+        if spec.operands and i < n:
+            taken = True
         i = min(n, i + spec.operands)
         assigns: list[tuple[str, Word]] = []
         if spec.assigns:
@@ -1815,7 +1839,7 @@ class _Parser:
                 w = args[i].word
                 assigns.append((aname, Word(w.text[am.end() :], w.expands, w.glob, w.quoted)))
                 i += 1
-        return _Stripped(args[i:], assigns, seen, optargs)
+        return _Stripped(args[i:], assigns, seen, optargs, taken)
 
     def _emit(
         self,
@@ -1865,13 +1889,17 @@ class _Parser:
             name = _canon(w0.word.text)
             spec = _WRAPPERS.get(name)
             if spec is None:
-                peeled = peel_runner([w.word for w in cur])
+                peeled = peel_runner_options([w.word for w in cur])
                 if peeled is None:
                     break
                 if isinstance(peeled, str):
                     self._gray(f"wrapper-options:{name}")
                     break
-                n_drop, marker, synthetic = peeled
+                n_drop, marker, synthetic, valued = peeled
+                if valued:
+                    # the runner's own options go with the runner: ``uv run --env-file .env
+                    # pytest`` would be judged, and shown to the LLM audit, as ``pytest``
+                    self._gray(RUNNER_OPTION_VALUE_GRAY)
                 lead = [_W(synthetic, False, synthetic.text)] if synthetic is not None else []
                 wrappers.append(marker)
                 cur = lead + cur[n_drop:]
@@ -1882,6 +1910,11 @@ class _Parser:
                 break
             if name == "command" and res.seen & {"-v", "-V"}:
                 break
+            kept_whole = name == "env" and bool(res.seen & _SPLIT_STRING)
+            if res.rest and not kept_whole and (res.taken or res.optargs):
+                # peeled, and a word it took is in no action's words: ``sudo -u root pytest``
+                # would be shown to the LLM audit as ``pytest`` (spec revision 26)
+                self._gray(WRAPPER_OPTION_VALUE_GRAY)
             shell_mode = (
                 name in ("sudo", "doas") and bool(res.seen & {"-s", "-i", "--shell", "--login"})
             ) or (name == "wsl" and not res.seen & {"-e", "--exec"})  # wsl: the rest is a LINE
@@ -1891,8 +1924,8 @@ class _Parser:
                 self._exec(f"wrapper-shell:{name}")
                 text = " ".join(w.word.text for w in res.rest)
                 self._recurse(text, "bash-c", (*wrappers, name))
-            if name == "env" and res.seen & {"-S", "--split-string"}:
-                parts = [v for o, v in res.optargs if o in ("-S", "--split-string")]
+            if kept_whole:
+                parts = [v for o, v in res.optargs if o in _SPLIT_STRING]
                 self._exec("env-split-string")
                 text = " ".join([*parts, *(w.word.text for w in res.rest)])
                 self._recurse(text, "bash-c", (*wrappers, name))

@@ -512,13 +512,16 @@ def test_a_computed_value_the_normalizer_drops_is_not_sent(command: str, reason:
 @pytest.mark.parametrize(
     "command",
     [
-        "uv run --with rich make test",
+        "uv run make test",
+        "uv run --frozen make test",
         "uv run make $target",
-        "uvx --from ruff make test",
+        "uvx make test",
         f"uv run make ({CALL})",
     ],
 )
-def test_a_runner_whose_own_options_are_constants_is_sent(command: str) -> None:
+def test_a_runner_without_an_option_that_has_a_value_is_sent(command: str) -> None:
+    """Spec revision 25: one with such an option is not, whatever the value is
+    (tests/unit/test_m3a_runner_options.py)."""
     decision, backend = _audited(command)
     assert len(backend.requests) == 1, decision.reason
 
@@ -529,8 +532,10 @@ def test_the_builder_marks_a_runner_option_that_is_computed() -> None:
     assert pscmd.RUNNER_VALUE_GRAY in res.gray
     res = build(rep(cmd("uv", S("run"), S("--with"), V("pkg"), S("pytest"))))
     assert pscmd.RUNNER_VALUE_GRAY in res.gray
-    res = build(rep(cmd("uv", S("run"), S("--with"), S("rich"), S("pytest"), call)))
+    res = build(rep(cmd("uv", S("run"), S("--frozen"), S("pytest"), call)))
     assert pscmd.RUNNER_VALUE_GRAY not in res.gray  # the tool's own argument stays in its words
+    res = build(rep(cmd("uv", S("run"), S("--with"), S("rich"), S("pytest"))))
+    assert pscmd.RUNNER_VALUE_GRAY in res.gray  # spec revision 25: a constant value as well
     res = build(rep(cmd("Get-ChildItem", P("Force", call))))
     assert pscmd.SWITCH_VALUE_GRAY in res.gray
 

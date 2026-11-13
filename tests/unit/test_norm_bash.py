@@ -365,7 +365,7 @@ def test_wrapper_edge_cases() -> None:
     assert res.commands[0].argv[0].text == "ionice"
     res = parse_bash("sudo -u $u rm x")
     assert [w.text for w in res.commands[0].argv] == ["rm", "x"]
-    assert not res.gray
+    assert res.gray == ("wrapper-option-value",)  # spec revision 26: the value is not shown
 
 
 def test_wrapper_glob_option_is_unsure() -> None:

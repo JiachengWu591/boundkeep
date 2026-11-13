@@ -184,10 +184,9 @@ def test_where_the_value_goes_somewhere_the_request_has_the_text(command: str) -
         f"@{{ a = {TOKEN} }}",
         f"({TOKEN} -eq 'x')",
         "$x",
-        "$LASTEXITCODE",
-        "$?",
         "$PSVersionTable",
-        '"exit=$LASTEXITCODE"',
+        "$global:LASTEXITCODE",
+        '"exit=$LASTEXITCODE $x"',
     ],
 )
 def test_it_gets_what_write_output_gets(expr: str) -> None:

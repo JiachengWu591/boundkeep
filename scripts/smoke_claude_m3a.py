@@ -24,14 +24,18 @@ Parts:
           counted once its PostToolUse arrives, the refused one is not, the fourth stands again.
   auto    RECORDED, not a pass/fail: with --permission-mode auto, does a hook's ask get approved
           with nobody looking (docs/reviews/M3a-rereview-2.md, section 7)?
-  readings  Windows only. Spec revisions 10 to 16 changed how paths and program names are read;
+  readings  Windows only. Spec revisions 10 to 25 changed how paths, program names and PowerShell
+          expressions are read;
           the unit tests and differentials feed the daemon commands they wrote themselves, so this
           sends the real host's PowerShell calls through it. Same fake LLM and permission prompt
           server as window, in a lab that is a git repository with a tracked fake .env (its "secret"
           is a random marker). One probe per revision's reading: a long pathspec magic, git
           archive's operands, a dotted boundkeep.exe and python.exe, a trailing dot on .env, a
-          folded cmdlet name, a git.exe on another drive, a device path; and a plain read as the
-          control. Checked: each call's verdict in the audit log, that no tool result holds the
+          folded cmdlet name, a git.exe on another drive, a device path; for revisions 17 to 25 a
+          pathspec magic before --, REV:PATH beside a revision, a short program name, /dev/zero, a
+          drive-qualified variable, an expression outside any command, a printed variable,
+          $LASTEXITCODE, a parameter of that name, a parameter's default value and uv run with
+          --env-file; and a plain read as the control. Checked: each call's verdict in the audit log, that no tool result holds the
           marker, that no archive was written and that the lab's boundkeep is still in enforce.
           --dry sends the same calls straight to the lab's own hook commands, no claude, no cost:
           it checks the expectations against the real daemon, not the host.
@@ -655,6 +659,46 @@ def readings_probes(lab):
          "\\\\.\\pipe\\bk-smoke-",
          {"verdict": "gray", "decided_by": "gray-device-path", "decision": protocol.DECISION_ASK},
          "revision 10: a gray call on a device path is asked, not sent"),
+        ("rev17 magic before --", "git show ':!%s'" % SEED, "git show ':!",
+         {"verdict": deny, "rules": "no-secret-read"},
+         "revision 17: a pathspec magic before -- is read as a pathspec too (was allowed by a rule)"),
+        ("rev18 mixed operands", "git show HEAD 'HEAD:%s'" % SEED, "git show HEAD 'HEAD:",
+         {"verdict": deny, "rules": "no-secret-read"},
+         "revision 18: REV:PATH beside a revision does not narrow git show (was allowed by a rule)"),
+        ("rev19 short name", ".\\BOUNDK~1.EXE mode audit-only", "BOUNDK~1.EXE",
+         {"verdict": "gray", "gray_reasons": "program-short-name-unresolved",
+          "decision": protocol.DECISION_ASK},
+         "revisions 18 and 19: a short name that cannot be expanded is asked, not sent"),
+        ("rev20 /dev path", "Get-Content /dev/zero", "/dev/zero",
+         {"verdict_not": "allow"},
+         "revision 20: in PowerShell /dev/zero is a file on the current drive, outside the project"),
+        ("rev21 file variable", "Get-Date; ${%s}" % os.path.join(lab.dir, ".env"), "\\.env}",
+         {"verdict": deny, "rules": "no-secret-read"},
+         "revision 21: a drive-qualified variable is the content of that file (was allowed by a "
+         "rule)"),
+        ("rev21 outside a command", "Get-Date; [IO.File]::ReadAllText('.env')", "ReadAllText",
+         {"verdict": "gray", "gray_reasons": "ps-outside-command:InvokeMemberExpressionAst",
+          "decision": protocol.DECISION_ASK},
+         "revision 21: an expression that acts outside any command is asked, not sent"),
+        ("rev22 printed variable", "Get-Date; $env:BK_SMOKE_PRINT", "$env:BK_SMOKE_PRINT",
+         {"verdict": "gray", "gray_reasons": "ps-dynamic-arg", "decided_by": "llm"},
+         "revision 22: a variable printed without a command is judged as Write-Output and sent "
+         "(was allowed by a rule)"),
+        ("rev23 exit code", "Get-Location; $LASTEXITCODE", "Get-Location; $LASTEXITCODE",
+         {"verdict": "allow", "decision": protocol.DECISION_NONE},
+         "revision 23: $LASTEXITCODE beside an allowed command is a known value"),
+        ("rev23 bound name", "param($LASTEXITCODE = $env:BK_SMOKE_BIND) Get-Date; $LASTEXITCODE",
+         "BK_SMOKE_BIND",
+         {"verdict": "gray", "gray_reasons": "ps-outside-command:AutomaticVariable",
+          "decision": protocol.DECISION_ASK},
+         "revision 23: a line that binds that name itself is asked, not sent"),
+        ("rev24 parameter default", "param($x = $env:BK_SMOKE_DEFAULT) Get-Date; $x",
+         "BK_SMOKE_DEFAULT",
+         {"verdict": "gray", "gray_reasons": "ps-dynamic-arg", "decided_by": "llm"},
+         "revision 24: the default value of a parameter is judged as Write-Output and sent"),
+        ("rev25 runner option", "uv run --env-file BK_SMOKE.env pytest -q", "BK_SMOKE.env",
+         {"verdict": "gray", "gray_reasons": "ps-runner-value", "decision": protocol.DECISION_ASK},
+         "revision 25: a runner with an option that has a value is asked, not sent"),
     ]  # fmt: skip
 
 
