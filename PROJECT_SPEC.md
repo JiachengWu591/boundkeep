@@ -121,7 +121,41 @@
 >   - 值已经知道的不记，判决照旧：常量（字符串、数字、它们的数组）和 `$true`、`$false`、`$null`。
 >   - 只被判断、没有去处的位置不记：`if`、`while`、`for` 的条件，`exit` 后面。赋值的右边也不记，赋值语句本来就不送审。
 >   - 写在命令参数里的（脚本块里的语句也算）不另外记，它的文字已经在那条命令的参数里。
-> - 代价：`git status; $LASTEXITCODE`、`npm test; "exit=$LASTEXITCODE"` 这样的写法在默认配置下由 allow 变成问，有后端时送审。`Write-Output $LASTEXITCODE` 原来就是这样。
+> - 代价：`git status; $LASTEXITCODE`、`npm test; "exit=$LASTEXITCODE"` 这样的写法在默认配置下由 allow 变成问，有后端时送审。`Write-Output $LASTEXITCODE` 原来就是这样。（修订 23 把这两个变量算作已知值，这条代价不再有。）
+
+> **修订 23（2026-11-11，使用者说"当做已知值"）**：修订 22 的代价里那条收尾写法，记录在 `docs/reports/M3a-ps-known-variables.md`。
+> - §5.1：值有去处的表达式里，`$LASTEXITCODE`（上一个程序的退出码）和 `$?`（上一条是否成功）算已知值，不记成 `Write-Output`。只含这两个变量和 `$true`、`$false`、`$null` 的双引号字符串也算（`"exit=$LASTEXITCODE"`），它们的数组也算。`git status; $LASTEXITCODE` 回到由规则放行。
+> - 只认不带作用域的写法（`$LASTEXITCODE`、`${LASTEXITCODE}`、`$?`，不分大小写）。`$global:LASTEXITCODE`、`$env:LASTEXITCODE` 不算。字符串里有 `$(…)` 的不算。
+> - 只在"值有去处的表达式"这一处算。写在命令参数里时照旧是会展开的词：`Write-Output $LASTEXITCODE`、`ConvertTo-Json $LASTEXITCODE` 不变（`Write-Output` 没有 allow 规则，`Write-Output 'done'` 也是灰色）。Bash 不变。
+> - **同一行里给这两个名字另外绑值的，整行不送审、直接问**：`param($LASTEXITCODE = $env:TOKEN)`（脚本、函数、脚本块的参数）和 `foreach ($LASTEXITCODE in $env:TOKEN)` 能把任意值放进这个名字（实测，PowerShell 5.1），之后单独成句的 `$LASTEXITCODE` 打印的就是它。辅助进程把这样的参数和 `foreach` 变量报进 `loose`（名字 `AutomaticVariable`），是灰色 `ps-outside-command:AutomaticVariable`，写在命令参数里的脚本块里也报。带作用域的名字（`$script:LASTEXITCODE`）一样算。赋值语句本来就不送审。`$?` 实测绑不上，一样报。
+> - **只在"安静的一行"里算**：命令拿到名字就能给变量放值，`Set-Variable LASTEXITCODE $env:TOKEN`、`New-Variable`、`-OutVariable LASTEXITCODE`、`Tee-Object -Variable`、`Set-Item Variable:\LAST*`、`Set-Variable LASTEXIT*` 都行，通配符也认（实测）。所以只有整行每条命令的名字和参数都是常量、并且没有一个参数可能指到这个名字时，这两个变量才算已知值；否则照修订 22 记成 `Write-Output`，请求里有它。"可能指到"指：参数里含 `lastexitcode`（不分大小写），或者最后一个 `:`、`\`、`/` 之后的部分是能匹配它的通配符（`LAST*`、`*`）。带变量、`$(…)`、括号、脚本块、splat 的参数都不是常量。
+>   - 这样之后，安静的一行里还能给它放值的只有这一行运行的代码（脚本、函数、模块），那些代码自己就能打印。
+>   - 代价：`Get-ChildItem src\*; $LASTEXITCODE`、`pytest $args; $LASTEXITCODE`、`Get-Date | ForEach-Object { … }; $LASTEXITCODE` 里它照旧是 `Write-Output`（问，或送审）。
+> - 没有改的：H-4 那张表（命令参数里哪些展开的词算无害）。修订 22 的记录里写过"要放宽应该改那张表，两种写法一起放"，这次没有照办：那张表管所有命令、两种 shell（Bash 里 `$LASTEXITCODE` 是普通变量），而 `Write-Output` 没有 allow 规则，改了表它也还是问。
+
+> **修订 24（2026-11-12，使用者说"先修这两条"）**：复审 `docs/reviews/M3a-rev21-22-review.md` 的 R21-1、R22-1，记录在 `docs/reports/M3a-rev21-22-review-fixes.md`。
+> - §7（R21-1）：PowerShell 一行的灰色原因最多记 64 条。记满之后又来了新的原因，这一行就算没看全：加上 `ps-too-large`，不送审、直接问。原来多出来的原因直接丢掉；`ps-switch-value`、`ps-runner-value`、`ps-pipe-to-interpreter` 是逐条处理命令时才加的，前面先凑够 64 条别的原因（每个不认识的参数一条），它们就记不进去，整行照常送审，请求里没有被丢掉的那段文字。
+> - §5.1（R22-1）：参数的默认值也是"值有去处"的位置（值绑到参数变量上），按 `Write-Output <默认值>` 记成一条命令：脚本的 `param(…)`、函数的参数。原来 `param($x = $env:SECRET_TOKEN) Get-Date; $x` 送审的请求里只有 `Write-Output $x`，看不出 `$x` 是哪里来的。
+>   - 不记的和修订 22 一样：值已经知道的（`param($n = 5)`、`param($f = $false)`）；写在命令参数里的脚本块的参数（文字已经在那条命令的参数里）；带盘符的变量本身；只包着命令的括号（`param($x = (Get-Content README.md))`，里面的命令照常记）。
+> - 代价：`param($x = $env:USERNAME) Get-Date` 由 allow 变成灰色（问，或送审）；带 64 个以上不同灰色原因的一行不再送审。
+
+> **修订 25（2026-11-12，使用者选"带值选项就不送审"）**：复审 `docs/reviews/M3a-rev21-22-review.md` 的 O-2，记录在 `docs/reports/M3a-runner-options.md`。
+> - §7：`uv run`、`uv tool run`、`uvx`、`pipx run`、`poetry run` 被剥掉之后，按里面的命令判，运行器自己的选项不在任何动作的词里。运行器带了**有值的选项**（`--with`、`--env-file`、`--index-url`、`--python`、`--spec`、`--directory` 等，`--opt 值` 和 `--opt=值` 两种写法）时，这次调用不送审、直接问：灰色 `runner-option-value`（Bash 方言）或 `ps-runner-value`（PowerShell 方言，修订 21 起就有，原来只管值里带变量的）。
+>   - 原来 `uv run --env-file .env pytest`、`uv run --index-url https://… pytest`、`uvx --from <包> cowsay` 送审的请求里只有里面的命令和一个 `wrappers` 标记，没有选项的值，`network` 是 `false`。Bash 里连值带变量的（`uv run --with $PKG pytest`）也照常送审。
+>   - 只带开关的（`uv run --frozen pytest`、`uv run -q pytest`）照旧送审：开关没有值，`wrappers` 标记已经说明经过了运行器。
+>   - 规则层没有变：带 `wrappers` 的动作本来就不由 allow 规则放行，没有后端时这些调用本来就是问。选项的值仍然不进路径层和域名层，`uv run --env-file .env pytest` 是问，不是 deny。
+> - 代价：有后端时 `uv run --with rich pytest`、`uv run --python 3.12 pytest` 直接问，不再送审。
+> - 没有做的：把选项的值交给路径层和域名层（让 `--env-file .env` 被 `no-secret-read` 拒绝、让 `--index-url` 的主机进网络规则）。
+> - 修的时候查到、没有修的（W-1）：Bash 方言里 `sudo -u <用户> pytest`、`env -C <目录> pytest` 照常送审，请求里没有那个用户和目录。和 O-2 是同一类，早就有。（修订 26 已修。）
+
+> **修订 26（2026-11-12，使用者说"W-1 也照同样的办法修"）**：修订 25 时查到的 W-1，记录在 `docs/reports/M3a-wrapper-options.md`。
+> - §7：Bash 方言里，`sudo`、`doas`、`env`、`time`、`exec`、`nice`、`ionice`、`timeout`、`stdbuf`、`wsl`、`sshpass`、`gosu`、`su-exec`、`ssh-agent`、`tini`、`numactl`、`xargs` 这些包装器被剥掉之后，按里面的命令判，包装器自己吃掉的词不在任何动作的词里。吃掉的词里有不是开关的（选项的值：`sudo -u root`、`env -C dir`、`time -o f`、`xargs -n 1`；`nice -5` 这样写在选项里的数；`timeout 60`、`gosu user` 这样的操作数）时，这次调用不送审、直接问：灰色 `wrapper-option-value`。
+>   - 原来 `sudo -u <用户> pytest`、`env -C <目录> pytest` 送审的请求里只有 `pytest` 和 `wrappers` 标记，看不出换成了哪个用户、哪个目录。
+>   - 只带开关的（`sudo -n pytest`、`nohup pytest`、`xargs -0 rm`）照常送审。
+>   - 带 `env -S` 时 env 不被剥掉：`-S` 的值当命令再解析一遍，env 命令本身连同别的选项（`env -C dir -S '…'` 里的 `-C dir`）作为一条命令记下，都在请求里，不标。包装器后面没有命令时（`timeout 60` 单独一条）它也不被剥掉，整条的词都在请求里，也不标。
+>   - `NAME=value` 赋值（`env A=b cmd`、`sudo A=b cmd`）本来就不送审（修订 7），不变。
+>   - PowerShell 方言不剥这些名字：`sudo`、`env` 在那里是普通程序，参数照常在请求里，不变。规则层不变：带 `wrappers` 的动作本来就不由 allow 规则放行。
+> - 代价：有后端时 `timeout 60 pytest`、`xargs -n 1 wc -l`、`nice -n 10 make` 直接问，不再送审。
 
 > **当前进度（2026-11-11）**
 >
@@ -186,20 +220,26 @@
 >   - 范围之内低危 3、信息 1（R19-1 到 R19-3、R20-1），都早于这两次修订，没有修。R19-2、R19-3 和 R18-4 是同一个原因：`cd` 进短名目录之后工作目录算未知，按短名读受保护的文件（`cat ./ENV~1.PRO`）是灰色，不是 deny。R20-1：Windows 上 Git Bash 启动的原生程序拿到的不是设备，受信任项目里 `pytest /dev/tty` 由规则放行。
 >   - 范围之外查到 O-1：PowerShell 里单独成句的表达式和别的命令写在同一行时照常送审，请求里没有它的文字。按 X1 审查 F3、F4 的标准应算中危，`m3a-done` 起就有，要在 M3b 之前定。（修订 21 已修，见下一条。）
 >   - R19-1 到 R19-3、R20-1 都等使用者决定。
-> - **PowerShell 里不在任何命令之内的文字（修订 21）**（已提交，没有推送，`e52c596` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-outside-command.md`）：使用者说"按建议执行"。两处取舍先是开发 agent 按自己的推荐定的，使用者后来确认（"按照你建议执行"）。这次修复没有复审。
+> - **PowerShell 里不在任何命令之内的文字（修订 21）**（已提交并推送，`e52c596` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-outside-command.md`）：使用者说"按建议执行"。两处取舍先是开发 agent 按自己的推荐定的，使用者后来确认（"按照你建议执行"）。复审见下面"修订 21 和 22 的复审"一条。
 >   - O-1：不在任何命令的参数里的表达式和语句是灰色 `ps-outside-command:<类型>`，不送审。常量、变量、容器、比较和逻辑运算不算。
 >   - 修 O-1 时查到一条更重的，不需要后端：带盘符的变量 `${E:\proj\.env}` 就是那个文件的内容，原来 `Get-Date; ${E:\proj\.env}` 由规则放行。现在按 `Get-Content -Path` / `Set-Content -Path` 判，是 deny。
 >   - 开关参数的值、`uv run` 一类运行器选项的值不在请求里，不送审；超过 128 个字符的程序名由发送闸门拒绝。
 >   - 规则条目与策略文件没变，Bash 没变。
 >   - 全量分六段跑，不是一个进程：28945 通过、169 跳过、0 失败（合计与收集到的 29114 条相同）。中途按使用者的话停过一次，核对工作区没有变之后，后两段从头跑。真实宿主里没有跑。
 >   - 留下 O-3：`Get-Date; $env:SECRET_TOKEN` 这样单独成句的变量由规则放行，把环境变量的值打印进上下文，和 X1 审查的 H-4 是同一类。（修订 22 已修，见下一条。）
-> - **PowerShell 里值有去处的表达式（修订 22）**（已提交，没有推送，`646cb05` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-expression-output.md`）：使用者说"按照你建议执行；先提交修订21再去修改O-3"。这次修复没有复审。
+> - **PowerShell 里值有去处的表达式（修订 22）**（已提交并推送，`646cb05` 代码，文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-expression-output.md`）：使用者说"按照你建议执行；先提交修订21再去修改O-3"。复审见下面"修订 21 和 22 的复审"一条。
 >   - 不是命令的表达式，值有去处时按 `Write-Output <表达式>` 记成一条命令：单独成句、`return` / `throw` 后面、管道开头、`foreach` 的集合、`switch` 的条件。带变量的是灰色 `ps-dynamic-arg`，送审，请求里有它的文字。
 >   - 值已经知道的（常量，`$true`、`$false`、`$null`）不记，`Get-Date; 'done'` 照旧放行。会动手的表达式照旧不送审。
 >   - 规则条目与策略文件没变，Bash 没变。手头语料 1146 条 PowerShell 命令的级别没有一条变化。
 >   - 变松一类：整行没有命令、只有表达式的调用，有后端时由问变成送审，和 `Write-Output` 的写法一样。
 >   - 代价：`git status; $LASTEXITCODE` 这样的收尾写法在默认配置下由 allow 变成问。
 >   - 原有差分全部相同，评测指标相同。全量分六段跑，不是一个进程：29110 通过、169 跳过、1 失败（合计与收集到的 29280 条相同）。失败的是一条 Bash 测试撞到归一化的时间预算，单独重跑时这次的代码和修订 21 的代码都通过。真实宿主里没有跑。
+> - **`$LASTEXITCODE` 和 `$?` 算已知值（修订 23）**（已提交，没有推送，`8d268d3` 代码（修订 23 到 26 一起），文档在其后一个提交，未打标签；记录 `docs/reports/M3a-ps-known-variables.md`）：使用者说"当做已知值"。
+>   - 值有去处的表达式里，这两个变量和只含它们的双引号字符串不记成 `Write-Output`，`git status; $LASTEXITCODE` 回到由规则放行。
+>   - 实测这个名字能被同一行绑上任意值，所以有两道限制：名字是它的参数和 `foreach` 变量让整行不送审、直接问；只有整行别的命令的参数都是常量、又没有提到这个名字时才算。
+>   - 规则条目与策略文件没变，Bash 没变。手头语料 1146 条 PowerShell 命令的级别没有一条变化。
+>   - 测试：新测试 190 条，变异 35 个全部抓到；原有差分全部相同，评测指标相同。全量（和修订 24 到 26 一起）分六段跑，不是一个进程：29659 通过、169 跳过、0 失败（合计与收集到的 29828 条相同）。真实宿主（2026-11-12，`scripts/smoke_claude_m3a.py --only readings`，修订 10 到 24 各一条代表写法）：23 项 0 失败。
+> - **修订 21 和 22 的复审**（已提交，没有推送，和修订 23 到 26 的文档一起；`docs/reviews/M3a-rev21-22-review.md`，不是独立的）：目标达到，没有回退，没有不需要后端的放行。中危 1 条（R21-1：灰色原因 64 条的上限会把"不送审"的原因挤掉）、低危 1 条（R22-1：参数默认值不在请求里）、范围外 1 条（O-2：`uv run` 等运行器自己的选项不在请求里，也不进规则）。三条都只在有后端时起作用。R21-1、R22-1 已修（修订 24，代码 `8d268d3`，记录 `docs/reports/M3a-rev21-22-review-fixes.md`；原有差分全部相同，全量和修订 23 一起跑，0 失败）；O-2 已修（修订 25，代码 `8d268d3`，记录 `docs/reports/M3a-runner-options.md`）：使用者选"带值选项就不送审"，两种 shell 都这样，规则层不变。修的时候查到同一类的 W-1（`sudo -u`、`env -C` 的值不在请求里），使用者说"也照同样的办法修"：修订 26，代码 `8d268d3`，记录 `docs/reports/M3a-wrapper-options.md`，只在 Bash 方言里。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -456,10 +496,15 @@ Claude Code
       - 单独成句：脚本、函数、脚本块的语句，以及 `if`、循环、`switch`、`try` / `catch` / `finally`、`trap` 的语句块里的语句；
       - `return`、`throw` 后面；
       - 管道的开头（`$env:TOKEN | Out-Host`），后面的命令照旧另外带着它（`ps-pipeline-head-dynamic`）；
-      - `foreach (… in <表达式>)` 的集合、`switch (<表达式>)` 的条件。
+      - `foreach (… in <表达式>)` 的集合、`switch (<表达式>)` 的条件；
+      - 参数的默认值（修订 24）：脚本的 `param($x = <表达式>)` 和函数的参数，值绑到参数变量上。写在命令参数里的脚本块的参数不算。
     - 这样记的表达式里有变量时，是灰色 `ps-dynamic-arg`（M1c-2 的 H-4 给 `Write-Output $env:TOKEN` 定的原因）；是括号、`$(…)`、`@(…)`、哈希表、比较运算这些时，是灰色 `ps-dynamic-value:<类型>`，文字整段放进参数。会动手的表达式另有 `ps-outside-command:<类型>`（§7），照旧不送审。
     - 不记的：
       - 值已经知道的：字符串常量、数字、它们的数组，`$true`、`$false`、`$null`。`Get-Date; 'done'` 照旧由规则放行。
+      - `$LASTEXITCODE` 和 `$?`（修订 23）：不带作用域的写法算已知值；只含这两个变量和 `$true`、`$false`、`$null`、没有 `$(…)` 的双引号字符串也算。`git status; $LASTEXITCODE`、`Get-Date; "exit=$LASTEXITCODE"` 由规则放行。
+        - 只在整行每条命令的名字和参数都是常量、并且没有一个参数可能指到这个名字时才算（含 `lastexitcode`，或最后一个 `:`、`\`、`/` 之后是能匹配它的通配符）：`Set-Variable LASTEXITCODE $env:TOKEN`、`-OutVariable LASTEXITCODE`、`Set-Item Variable:\LAST*` 都能给它放值（实测）。不满足时照旧记成 `Write-Output`。
+        - 同一行里有名字是这两个之一的参数（`param($LASTEXITCODE = …)`）或 `foreach` 变量时，整行是灰色 `ps-outside-command:AutomaticVariable`，不送审：这两种写法能给它绑上任意值（实测）。
+        - 写在命令参数里的 `$LASTEXITCODE` 不是这一条管的，照旧是会展开的词。
       - 只被判断的：`if`、`while`、`do`、`for` 的条件，`exit` 后面；括号、`$(…)`、`@(…)`、哈希表里面的语句（外面那一层已经整段记了）。
       - 赋值的右边：赋值语句是灰色 `ps-compound:AssignmentStatementAst`，不送审。
       - 写在某条命令的参数里的，脚本块参数里的语句也算（`ForEach-Object { $_.Name }`）：文字已经在那条命令的参数里。
@@ -595,7 +640,9 @@ event(pre) ─> normalize ─> Action
   - MCP 参数没看全，或参数里带命令；
   - 什么都没认出来（没有程序名、路径、主机，也没有 MCP 工具名）；
   - **请求装不下的输入**（修订 7，P-F34；X1 审查 F3、F4）：命令里的 here-document 或 here-string（shell 自己当命令读的除外，它们被解析成单独的命令）、`NAME=value` 赋值（命令前缀、`env NAME=v`、单独的赋值）、PowerShell 里管道进解释器的字符串与赋值语句、MCP 调用的参数。§9.2 的请求从不带这些内容，模型看不到它们。只有折叠后才读成某个名字的程序名（`program-fold-variant`，修订 14）和 bash 方言里像 8.3 短名的裸程序名（`program-short-name-unresolved`，修订 18）也算：请求里的名字不是实际运行的程序。带路径、最后一段是短名而展开不出长名的程序名（同一个灰色原因，修订 19）也一样。
-  - **PowerShell 里不在任何命令之内的文字**（修订 21，复审 O-1）：请求按命令列出程序名、参数、路径和主机。不在任何命令的参数里的表达式和语句，请求里没有它的文字，是灰色 `ps-outside-command:<类型>`，不送审。例如 `git status; [IO.File]::ReadAllText('.env')`、`if ([IO.File]::Exists('x')) { … }` 的条件、`return`、`throw` 后面的表达式、函数参数的默认值、管道开头的表达式、重定向的目标。修订 22 之后，值有去处的表达式另外记成一条 `Write-Output`（§5.1），请求里有它的文字；会动手的表达式仍然带这个灰色原因，照旧不送审。
+  - **运行器自己的选项**（修订 25，复审 O-2）：`uv run`、`uv tool run`、`uvx`、`pipx run`、`poetry run` 被剥掉之后按里面的命令判，运行器自己的选项不在任何动作的词里。带了有值的选项（`--with`、`--env-file`、`--index-url`、`--python`、`--spec`、`--directory` 等，`--opt 值` 和 `--opt=值` 都算）时不送审：灰色 `runner-option-value`（Bash 方言）或 `ps-runner-value`（PowerShell 方言）。只带开关的（`uv run --frozen pytest`）照常送审。选项的值不进路径层和域名层，规则层不变。
+  - **包装器自己吃掉的词**（修订 26，W-1）：Bash 方言里 `sudo`、`env`、`time`、`nice`、`timeout`、`xargs` 等包装器被剥掉时，吃掉的词里有不是开关的（选项的值、`nice -5`、`timeout 60` 的时长、`gosu user` 的用户）就不送审：灰色 `wrapper-option-value`。只带开关的照常送审；带 `env -S` 时 env 命令连同选项整条记下，后面没有命令时包装器不被剥掉，这两种都不标。
+  - **PowerShell 里不在任何命令之内的文字**（修订 21，复审 O-1）：请求按命令列出程序名、参数、路径和主机。不在任何命令的参数里的表达式和语句，请求里没有它的文字，是灰色 `ps-outside-command:<类型>`，不送审。例如 `git status; [IO.File]::ReadAllText('.env')`、`if ([IO.File]::Exists('x')) { … }` 的条件、`return`、`throw` 后面的表达式、函数参数的默认值、管道开头的表达式、重定向的目标。修订 22 之后，值有去处的表达式另外记成一条 `Write-Output`（§5.1），请求里有它的文字；会动手的表达式仍然带这个灰色原因，照旧不送审。PowerShell 一行的灰色原因最多记 64 条；记满之后又来了新的原因，这一行加上 `ps-too-large`，算没看全，不送审（修订 24）：决定"不送审"的原因可能正好在记不下的那些里。
     - 无害的不算：
       - 常量、变量、字符串、数组字面量；
       - 括号、`$(…)`、`@(…)`、脚本块、哈希表：它们只是容器，里面的命令照常解析，里面的表达式各自再看；
