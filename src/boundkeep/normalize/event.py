@@ -276,6 +276,8 @@ class _Line:
     written: set[str] = field(default_factory=set)  # keys written by earlier commands
     last_find: list[tuple[Word, Access]] = field(default_factory=list)
     line_gray: list[str] = field(default_factory=list)
+    # what the line binds that no command carries (``BashResult.unshown``, spec revision 28)
+    unshown: tuple[str, ...] = ()
     shell: str = "bash"  # bash | powershell: picks the parser, the path dialect and the tables
 
 
@@ -1822,7 +1824,11 @@ def _command_action(
     # could not be shown it (X1 review of M3a, F3 and F4)
     unshown = tuple(
         dict.fromkeys(
-            [*(f"env:{name}" for name, _value in cmd.env if name != DEV_EXE_ENV), *cmd.stdin_text]
+            [
+                *(f"env:{name}" for name, _value in cmd.env if name != DEV_EXE_ENV),
+                *cmd.stdin_text,
+                *st.unshown,
+            ]
         )
     )
     return Action(
@@ -1857,7 +1863,7 @@ def _shell_actions(ctx: _Ctx, tool: str, shell: Shell, command: str) -> list[Act
     else:
         result = bash.parse_bash(command, max_words=MAX_PARSE_WORDS)
     actions: list[Action] = []
-    st = _Line(cwds=(ctx.cwd,), shell=shell)
+    st = _Line(cwds=(ctx.cwd,), shell=shell, unshown=result.unshown)
     marker: Action | None = None
     lexical: _LexicalPass | None = None
     for cmd in result.commands:
@@ -1896,7 +1902,9 @@ def _shell_actions(ctx: _Ctx, tool: str, shell: Shell, command: str) -> list[Act
         tags_extra: tuple[RiskTag, ...] = (
             ("exec",) if result.exec_reasons or not result.commands else ()
         )
-        actions.append(_gray(ctx, tool, *reasons, risk_tags=tags_extra, **common))
+        actions.append(
+            _gray(ctx, tool, *reasons, risk_tags=tags_extra, unshown=result.unshown, **common)
+        )
     elif result.exec_reasons:
         # The line runs code the parser cannot see inside (eval, python -c, curl | sh).
         actions.append(

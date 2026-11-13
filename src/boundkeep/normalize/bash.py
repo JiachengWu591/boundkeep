@@ -103,7 +103,12 @@ from boundkeep.normalize.programs import (
     peel_runner_options,
 )
 
-__all__ = ["RUNNER_OPTION_VALUE_GRAY", "WRAPPER_OPTION_VALUE_GRAY", "parse_bash"]
+__all__ = [
+    "FOR_WORDS_UNSHOWN",
+    "RUNNER_OPTION_VALUE_GRAY",
+    "WRAPPER_OPTION_VALUE_GRAY",
+    "parse_bash",
+]
 
 # ``uv run``, ``uvx``, ``pipx run`` and ``poetry run`` are peeled and their own options dropped: the
 # value of one (``--env-file .env``, ``--index-url URL``, ``--with PKG``) is in no action's words.
@@ -118,6 +123,11 @@ WRAPPER_OPTION_VALUE_GRAY = "wrapper-option-value"
 # ``env -S TEXT``: TEXT is parsed again as commands and the env command is kept whole, its other
 # options with it (``['env', '-C', 'dir', '-S', 'pytest -q']``), so nothing it took is dropped
 _SPLIT_STRING = frozenset({"-S", "--split-string"})
+# The words of ``for NAME in WORDS`` / ``select NAME in WORDS`` are bound to NAME and are in no
+# command: ``for p in ~/.ssh/id_rsa; do cat "$p"; done`` is shown to the LLM audit as ``cat $p``.
+# Not a gray reason (no level changes) but ``BashResult.unshown``: a gray call with it is not
+# sent (spec revision 28).
+FOR_WORDS_UNSHOWN = "for-words"
 
 _MAX_NEST = 32  # structural nesting ($(, (, {, ${, `...`, bash -c, ...): bounds Python recursion
 _TICK_FACTOR = 16  # token budget = factor * max_words
@@ -212,6 +222,7 @@ class _Shared:
         "quoted_subst",
         "sink",
         "ticks",
+        "unshown",
         "words",
     )
 
@@ -219,6 +230,7 @@ class _Shared:
         self.commands: list[SimpleCmd] = []
         self.gray: dict[str, None] = {}
         self.exec_reasons: dict[str, None] = {}
+        self.unshown: dict[str, None] = {}  # what the line binds that no command carries
         self.quoted_subst = False  # a quoted literal that CONTAINS $( ... ) / backticks / ${
         self.sink = False  # something that evaluates operands as arithmetic / subscripts
         self.words = 0
@@ -527,7 +539,8 @@ class _Stripped(NamedTuple):
     seen: set[str]
     optargs: list[tuple[str, str]]
     # a word that is no flag and not in ``optargs``: ``nice -5``, an optional value attached
-    # to its option (``xargs -i{}``), the operand of ``timeout 60`` / ``gosu user``
+    # to its option (``xargs -i{}``, ``sudo --preserve-env=LIST``), the operand of ``timeout
+    # 60`` / ``gosu user``
     taken: bool = False
 
 
@@ -1213,6 +1226,7 @@ class _Parser:
                     continue
                 if self._read_word() is None:
                     break
+                self.sh.unshown.setdefault(FOR_WORDS_UNSHOWN, None)
 
     def _parse_case(self) -> None:
         s = self.s
@@ -1769,6 +1783,9 @@ class _Parser:
                 nm, eq, val = t.partition("=")
                 if nm in spec.long_flags:
                     seen.add(nm)
+                    # spec revision 27: some take an optional value (``sudo --preserve-env=LIST``,
+                    # ``xargs --replace=R``), which goes with the wrapper
+                    taken = taken or bool(eq)
                     i += 1
                     continue
                 if nm in spec.long_args:
@@ -2209,6 +2226,8 @@ def parse_bash(
             sh.add_gray("dynamic-code:subscript")
         if not sh.commands and not sh.gray:
             sh.add_gray("no-command")
-        return BashResult(tuple(sh.commands), tuple(sh.gray), tuple(sh.exec_reasons))
+        return BashResult(
+            tuple(sh.commands), tuple(sh.gray), tuple(sh.exec_reasons), tuple(sh.unshown)
+        )
     except Exception:  # noqa: BLE001 - the parser must never raise; a bug becomes gray
         return BashResult(tuple(sh.commands), ("internal-error",))

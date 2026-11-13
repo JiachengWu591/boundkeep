@@ -1200,15 +1200,12 @@ def test_fixture_index_is_complete_and_consistent() -> None:
             "mode",
         }
         for item in reply["commands"]:
-            assert set(item) == {
-                "pos",
-                "invoke",
-                "name",
-                "elements",
-                "redirects",
-                "stage",
-                "nested",
-            }, command
+            keys = {"pos", "invoke", "name", "elements", "redirects", "stage", "nested"}
+            if "bind" in item:  # where an expression's value is bound (spec revision 28)
+                assert item["name"]["kind"] == "output", command
+                assert item["bind"] in ("default", "foreach", "switch", "head", "body"), command
+                keys.add("bind")
+            assert set(item) == keys, command
             start, end = item["pos"]
             assert 0 <= start <= end <= len(command), command
     assert len(set(index.values())) == len(index)

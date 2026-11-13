@@ -34,6 +34,7 @@ from boundkeep.normalize.model import BashResult, Redirect, SimpleCmd, Word
 from boundkeep.normalize.programs import peel_runner_options
 
 __all__ = [
+    "BOUND_VALUE_UNSHOWN",
     "MAX_COMMANDS",
     "MAX_ELEMENTS",
     "OUTSIDE_COMMAND_GRAY",
@@ -52,6 +53,13 @@ OUTSIDE_COMMAND_GRAY = "ps-outside-command"
 # one since revision 21). Not sent either.
 SWITCH_VALUE_GRAY = "ps-switch-value"
 RUNNER_VALUE_GRAY = "ps-runner-value"
+# A known value (a constant, ``$true``, ...) makes no command, and printing one shows nothing the
+# line does not. Where the helper says it is BOUND (``"bind"``: a parameter default, the collection
+# of a foreach, the condition of a switch, the head of a pipeline, a statement in a function or
+# script block, whose output goes to a caller), it is not printed but kept: ``param($p =
+# '~\.ssh\id_rsa') Get-Content $p`` shows ``Get-Content $p``. Recorded as ``unshown`` with
+# ``:<where>`` (spec revision 28): no rule looks at it, a gray line with it is not sent.
+BOUND_VALUE_UNSHOWN = "ps-bound-value"
 # The name kind of an expression whose value goes somewhere (a statement of its own, after
 # ``return`` / ``throw``, the start of a pipeline, the collection of a ``foreach``, the condition
 # of a ``switch``), and the cmdlet it is judged as: ``$env:TOKEN`` as a statement prints the value
@@ -65,6 +73,9 @@ MAX_STRING = 1 << 16  # one value / name / text of the digest
 MAX_DEPTH = 12  # nesting of arrays and parameter arguments
 MAX_REASONS = 64
 _TOO_LARGE = "ps-too-large"  # not all of the line is recorded: never sent to the LLM audit
+# a string over the helper's ``MaxString`` (a pipeline head over ``MaxHeadString``): only its
+# first 200 characters are in the reply
+_CUT_STRING = "TooLongString"
 _MAX_RAW = 512
 _MAX_TAG = 64
 _REDIRECT_CHARS = frozenset("0123456789*<>&")
@@ -89,6 +100,7 @@ class _State:
     cmds: list[SimpleCmd] = field(default_factory=list)
     gray: dict[str, None] = field(default_factory=dict)
     exec_: dict[str, None] = field(default_factory=dict)
+    unshown: dict[str, None] = field(default_factory=dict)  # BashResult.unshown
     elements: int = 0
     dynamic_kinds: frozenset[str] = frozenset()
     quiet: bool = False  # no command of the line could have set $LASTEXITCODE by name
@@ -227,6 +239,11 @@ def _convert(e: object, st: _State, depth: int = 0, *, sep: bool = False) -> lis
             out.extend(_convert(item, st, depth + 1, sep=sep))
         return out
     if kind_t == "other":
+        if e.get("ast") == _CUT_STRING:
+            # Review O-4 (spec revision 27): the helper sends the first 200 characters of a string
+            # this long, a word the send gate cannot tell from a whole one, while
+            # ``Invoke-Expression`` / ``Add-Type`` would run the rest: the line is not seen whole
+            st.add_gray(_TOO_LARGE)
         st.add_gray(f"ps-dynamic-value:{_tag(e.get('ast'))}")
         return [_dynamic_word(_str(e.get("text"), st))]
     st.add_gray("ps-dynamic-value:Unknown")
@@ -661,10 +678,18 @@ def _output_words(
     ``Write-Output <expression>``; None for a malformed entry (gray). A known value has no words
     and makes no command: ``Get-Date; 'done'`` stays what it was."""
     elements = c.get("elements")
-    if name.get("v") != "" or not isinstance(elements, list) or len(elements) != 1:
+    bind = c.get("bind")
+    if (
+        name.get("v") != ""
+        or not isinstance(elements, list)
+        or len(elements) != 1
+        or not isinstance(bind, (str, type(None)))
+    ):
         st.add_gray("ps-internal-error")
         return None
     if _known_value(elements[0], st):
+        if bind:
+            st.unshown.setdefault(f"{BOUND_VALUE_UNSHOWN}:{_tag(bind)}", None)
         return [], True
     return _convert(elements[0], st, sep=True), False
 
@@ -798,6 +823,10 @@ def _type_names(reply: Mapping[str, Any], key: str, st: _State) -> list[str]:
     if not isinstance(raw, list):
         st.add_gray("ps-internal-error")
         return []
+    if len(raw) > MAX_REASONS:
+        # Review RV24-1 (spec revision 27): a type that is cut off may be the one that keeps the
+        # line from being sent (``AssignmentStatementAst``), so the line counts as not seen
+        st.overflow = True
     return [_tag(t) for t in raw[:MAX_REASONS]]
 
 
@@ -860,8 +889,10 @@ def build(reply: Mapping[str, Any], *, source: str) -> BashResult:
     ``loose`` / ``parse_errors`` or has them in the wrong type is gray (``ps-internal-error``); one
     with more than ``MAX_COMMANDS`` commands, ``MAX_ELEMENTS`` elements or a string over
     ``MAX_STRING`` characters is gray (``ps-too-large``); the commands built before the limit are
-    kept. A line with more than ``MAX_REASONS`` gray reasons is ``ps-too-large`` as well: the
-    reasons that did not fit are not recorded, and one of them may be why the line is not sent.
+    kept. A line with more than ``MAX_REASONS`` gray reasons, or with more than ``MAX_REASONS``
+    entries in ``compound`` / ``dynamic`` / ``loose``, is ``ps-too-large`` as well: what did not
+    fit is not recorded, and it may be why the line is not sent. So is a line with a string the
+    helper cut short (``TooLongString``, its first 200 characters).
     """
     st = _State(source if isinstance(source, str) else "")
     try:
@@ -873,4 +904,4 @@ def build(reply: Mapping[str, Any], *, source: str) -> BashResult:
     gray = tuple(st.gray)
     if st.overflow and _TOO_LARGE not in st.gray:
         gray = (_TOO_LARGE, *gray)  # first: it is what decides that the line is not sent
-    return BashResult(tuple(st.cmds), gray, tuple(st.exec_))
+    return BashResult(tuple(st.cmds), gray, tuple(st.exec_), tuple(st.unshown))

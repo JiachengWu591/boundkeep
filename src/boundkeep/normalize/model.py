@@ -63,6 +63,11 @@ class BashResult:
     commands: tuple[SimpleCmd, ...]
     gray: tuple[str, ...] = ()  # reasons the line as a whole is not fully understood
     exec_reasons: tuple[str, ...] = ()  # why the line gets the "exec" tag (eval, python -c, ...)
+    # What the line binds to a variable that no command carries, so a request to the LLM audit
+    # could not show it (spec revision 28): "for-words" for the words of a Bash ``for`` /
+    # ``select``, "ps-bound-value:<where>" for a known PowerShell value in a binding place. It
+    # goes into every action's ``unshown``: no rule looks at it, a gray call with it is not sent.
+    unshown: tuple[str, ...] = ()
 
 
 class PathRef(BaseModel):

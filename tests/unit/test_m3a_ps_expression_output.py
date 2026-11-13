@@ -371,7 +371,11 @@ def test_the_entry_has_the_shape_of_a_command() -> None:
     kinds = [c["name"]["kind"] for c in reply["commands"]]
     assert kinds == ["bare", "output", "bare", "output"]
     head, _, inner = reply["commands"][1:]
-    assert set(head) == {"pos", "invoke", "name", "elements", "redirects", "stage", "nested"}
+    # the head of a pipeline binds its value to the next stage (spec revision 28)
+    shape = {"pos", "invoke", "name", "elements", "redirects", "stage", "nested", "bind"}
+    assert set(head) == shape
+    assert head["bind"] == "head"
+    assert "bind" not in inner
     assert head["name"] == {"kind": "output", "v": ""}
     assert (head["pos"], head["invoke"], head["redirects"]) == ([10, 12], "", [])
     assert (head["stage"], head["nested"]) == ({"index": 0, "of": 2}, False)

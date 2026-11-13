@@ -19,7 +19,7 @@
 # below). A drive-qualified variable (${C:\x\y}) is a command of its own, with the name kind
 # "file-read" or "file-write" and the path as the name's value. An expression whose value goes
 # somewhere (Test-Output) is a command with the name kind "output" and the expression as its
-# only element.
+# only element; where the value is bound rather than printed it has "bind" (Get-Binding).
 #
 # Speed note: a PowerShell function call costs ~20 microseconds and a StringBuilder call ~1, so the
 # serializer builds whole JSON fragments per call instead of one call per token.
@@ -261,6 +261,7 @@ function Add-Command($c, $root) {
     }
     [void]$sb.Append('{"pos":[' + $c.Extent.StartOffset + ',' + $c.Extent.EndOffset + '],"invoke":"' + $invoke + '","name":')
     $elems = @()
+    $bind = ''
     if ($isCmd) {
         $elems = $c.CommandElements
         if ($elems.Count -gt 0) { Add-Name $elems[0] } else { [void]$sb.Append('{"kind":"expr","v":""}') }
@@ -269,6 +270,7 @@ function Add-Command($c, $root) {
         # An expression whose value goes somewhere: the consumer reads it as Write-Output <expr>
         [void]$sb.Append('{"kind":"output","v":""},"elements":[')
         Add-Elem $c.Expression 0
+        $bind = Get-Binding $c
     } else {
         [void]$sb.Append('{"kind":"expr","v":' + (JClip $c.Extent.Text $script:MaxOtherText) + '},"elements":[')
     }
@@ -310,7 +312,9 @@ function Add-Command($c, $root) {
     } else {
         [void]$sb.Append('null')
     }
-    [void]$sb.Append(',"nested":' + $nested + '}')
+    [void]$sb.Append(',"nested":' + $nested)
+    if ($bind) { [void]$sb.Append(',"bind":"' + $bind + '"') }
+    [void]$sb.Append('}')
 }
 
 # Is the node in no command's arguments? A redirection target is not an argument either.
@@ -377,6 +381,33 @@ function Test-Output($e) {
     return (Test-Loose $e)
 }
 
+# Is the value of this expression whose value goes somewhere bound rather than printed (spec
+# revision 28)? The head of a pipeline flows into the next stage, the collection of a foreach and
+# the condition of a switch go into a variable, and what a function, filter, class method, script
+# block or data section outputs goes to its caller, who may run it: `function f { 'code' };
+# Invoke-Expression (f)`. A statement elsewhere, `return` and `throw` print to the host. The
+# consumer keeps a known value so bound out of the request to the LLM audit.
+function Get-Binding($c) {
+    $p = $c.Parent
+    if ($p.PipelineElements.Count -gt 1) { return 'head' }
+    $q = $p.Parent
+    while (($null -ne $q) -and $q.PSObject.TypeNames[0].EndsWith('.PipelineChainAst')) { $q = $q.Parent }
+    if ($q -is [ForEachStatementAst]) { return 'foreach' }
+    # `switch -File path` binds the lines of a file, not a value of the line: it is in loose
+    if ($q -is [SwitchStatementAst]) {
+        if (($q.Flags -band [SwitchFlags]::File) -ne 0) { return '' }
+        return 'switch'
+    }
+    while ($null -ne $q) {
+        $script:Steps++
+        if ($script:Steps -gt $script:MaxSteps) { throw 'too-large' }
+        if (($q -is [FunctionDefinitionAst]) -or ($q -is [FunctionMemberAst]) -or
+            ($q -is [ScriptBlockExpressionAst]) -or ($q -is [DataStatementAst])) { return 'body' }
+        $q = $q.Parent
+    }
+    return ''
+}
+
 # The default value of a parameter is bound to the parameter's variable, like the collection of a
 # foreach: `param($x = $env:TOKEN) Get-Date; $x` prints it. The consumer reads it as Write-Output
 # <default> (spec revision 24).
@@ -386,7 +417,7 @@ function Add-Default($p) {
     $d = $p.DefaultValue
     [void]$sb.Append('{"pos":[' + $d.Extent.StartOffset + ',' + $d.Extent.EndOffset + '],"invoke":"","name":{"kind":"output","v":""},"elements":[')
     Add-Elem $d 0
-    [void]$sb.Append('],"redirects":[],"stage":{"index":0,"of":1},"nested":true}')
+    [void]$sb.Append('],"redirects":[],"stage":{"index":0,"of":1},"nested":true,"bind":"default"}')
 }
 
 # What a drive-qualified variable does to its file: an assignment writes it (also through a type

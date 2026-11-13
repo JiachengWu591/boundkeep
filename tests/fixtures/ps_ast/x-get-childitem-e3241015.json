@@ -24,7 +24,8 @@
     "index": 0,
     "of": 2
    },
-   "nested": false
+   "nested": false,
+   "bind": "head"
   },
   {
    "pos": [
