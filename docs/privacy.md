@@ -10,16 +10,17 @@
 |---|---|
 | `task_intent` | 用户最近几条提示（`llm_audit.intent_prompts`，默认 3），每条最多 `intent_chars` 字（默认 300）。宿主拼进提示的 `<ide_opened_file>`、`<ide_selection>`（含选中的文件内容）等块整段去掉；用户粘贴的文字（`<pasted_content>`）不取，只留"粘贴了 N 个字符"的标记；先脱敏再截断。`send_task_intent: false` 时这个字段是 `null` |
 | `tool` | 工具名（`Bash`、`PowerShell`、`Write`、`mcp__服务__工具` ……） |
+| `command` | 只有 Bash、PowerShell 的调用才有（规格修订 30，2026-11-14）：这次调用的命令全文，包括注释，一字不改，只把主目录写成 `~`。原因是脚本读得到自己的全文（Claude Code 把它留在 `$__claudeCodeScript`、`$BASH_EXECUTION_STRING` 里），注释和不在任何命令里的文字也可能被拿去当路径或代码，模型必须看得到 |
 | `actions` | 每个简单命令一项：程序名、子命令、选项、命令的词（主目录写成 `~`）、路径（项目内写成 `<project>/…`，主目录下写成 `~/…`，附访问方式与是否在项目内；用守护进程的环境展开过变量的路径按原文，如 `$GITHUB_TOKEN/x`）、主机名、风险标签、包装器、规则判不了的原因 |
 | `cwd_inside_project`、`tainted`、`taint_sources`、`read_untrusted` | 工作目录是否在项目内；会话是否刚读过不可信内容，以及来源**工具名**（不含内容） |
 
-**不发**：文件内容（`Write` 的 `content`、`Edit` 的新旧文本）、工具输出（`tool_response`）、原始命令行、工作目录、`session_id`、`transcript_path`、环境变量、hook 事件里白名单之外的任何字段。
+**不发**：文件内容（`Write` 的 `content`、`Edit` 的新旧文本）、工具输出（`tool_response`）、工作目录、`session_id`、`transcript_path`、环境变量、hook 事件里白名单之外的任何字段。原始命令行在修订 30 之前不发，现在作为 `command` 发送（见上表）。
 
-**不发的情形**：动作太多、词太多或太长、请求超过 16000 字符、词或路径里有控制字符或格式字符、秘密要几个词连起来才看得出（`--password X`、`curl -u user:pw`）、序列化后再脱敏一遍会变、请求里出现守护进程环境里名字像秘密（KEY、TOKEN、SECRET、PASSW、CREDENTIAL、AUTH、COOKIE）的变量的值（至少 8 个字符，不分大小写，含 API 密钥本身）时，什么都不发，直接按 `on_failure` 处理；调用没有被完整分析时（解析器的预算用完、内部错误等）也不发，直接 ask（`docs/threat-model.md`）。调用里有请求装不下的代码或参数时同样不发、直接 ask：here-document 与 here-string 的正文、`NAME=value` 赋值的值、PowerShell 管道进解释器的字符串与赋值、MCP 调用（它的参数从来不发，所以 MCP 调用整个不送审；M3a 的 X1 审查 F3、F4）。
+**不发的情形**：动作太多、词太多或太长、命令全文超过 4000 字符、请求超过 16000 字符、词、路径或命令全文里有控制字符或格式字符、shell 命令的全文或任何一个词经过脱敏会变（带着像秘密的文字：这样的命令整条不发，而不是把脱敏过的全文发出去，修订 30）、秘密要几个词连起来才看得出（`--password X`、`curl -u user:pw`）、序列化后再脱敏一遍会变、请求里出现守护进程环境里名字像秘密（KEY、TOKEN、SECRET、PASSW、CREDENTIAL、AUTH、COOKIE）的变量的值（至少 8 个字符，不分大小写，含 API 密钥本身）时，什么都不发，直接按 `on_failure` 处理；调用没有被完整分析时（解析器的预算用完、内部错误等）也不发，直接 ask（`docs/threat-model.md`）。调用里有请求装不下的代码或参数时同样不发、直接 ask：here-document 与 here-string 的正文、`NAME=value` 赋值的值、PowerShell 管道进解释器的字符串与赋值、MCP 调用（它的参数从来不发，所以 MCP 调用整个不送审；M3a 的 X1 审查 F3、F4）。
 
 **系统提示词**固定在 `src/boundkeep/audit/prompts/audit_system.md`，不含任何用户数据；它的版本与哈希写进每条审计记录。
 
-**脱敏是尽力而为**（规格 §11）：`sk-*`、`AKIA*`、`ghp_*`、私钥块、`Bearer *`、名字里有 KEY / TOKEN / SECRET / PASSWORD 的赋值（含 PowerShell 与 cmd 的写法）等形态会被替换为 `[REDACTED]`；脱敏器认得的"选项 + 值"写法（`--password X`、`curl -u user:pw`）整条命令不发；不带任何可识别形态的口令（一个裸的位置参数）认不出来。所以发送内容先走白名单，不只靠脱敏。
+**脱敏是尽力而为**（规格 §11）：`sk-*`、`AKIA*`、`ghp_*`、私钥块、`Bearer *`、名字里有 KEY / TOKEN / SECRET / PASSWORD 的赋值（含 PowerShell 与 cmd 的写法）等形态会被替换为 `[REDACTED]`（修订 30 起，这些形态出现在 shell 命令里时整条不发）；脱敏器认得的"选项 + 值"写法（`--password X`、`curl -u user:pw`）整条命令不发；不带任何可识别形态的口令（一个裸的位置参数）认不出来。所以发送内容先走白名单，不只靠脱敏。
 
 **密钥**：只从 `api_key_env` 指定的环境变量（默认 `BOUNDKEEP_LLM_API_KEY`）读，每次调用时读，只放在 `Authorization` 请求头里；不写进策略、日志、缓存、会话状态、错误信息或报告。boundkeep 不读 `ANTHROPIC_API_KEY`。
 
