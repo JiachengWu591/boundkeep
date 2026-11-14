@@ -17,6 +17,8 @@ from typing import Final
 PROMPT_PATH: Final = Path(__file__).with_name("prompts") / "audit_system.md"
 VERSIONS: Final[dict[str, str]] = {
     "6af800076bda27df09348dea0e4f21751a8cb142ac90f13c493ce70d26ddf99d": "1",
+    # spec revision 30: the request carries the command text of a shell call ("command")
+    "00d3f2c69cece9b36246d2d234360819a32adb73bb945515a527bcb215bd3daf": "2",
 }
 UNVERSIONED: Final = "unversioned"
 

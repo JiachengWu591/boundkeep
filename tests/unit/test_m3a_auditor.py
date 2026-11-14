@@ -27,6 +27,7 @@ def llm(**changes: Any) -> LlmAudit:
 
 
 def action(*tags: str, **fields: Any) -> Action:
+    fields.setdefault("command_text", "make")  # a shell call carries its text (spec revision 30)
     return Action(
         tool="Bash",
         platform="posix",
@@ -106,7 +107,7 @@ def test_a_valid_verdict_is_ruled_on_and_logged() -> None:
     assert record["risk"] == 2
     assert record["steps"] == ["risk>=2"]
     assert record["tokens"] == {"prompt": 100, "completion": 20, "total": 120}
-    assert record["prompt"].startswith("v1:")
+    assert record["prompt"].startswith("v2:")  # spec revision 30
     assert record["cache"] == "miss"
 
 

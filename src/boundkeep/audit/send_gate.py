@@ -6,20 +6,32 @@ the tool name, per action the program, subcommand, flags, words, paths (shown re
 tags, wrappers and the short reasons the rules could not decide; whether the working directory is
 inside the project; the taint bits and the names of the source tools; the task intent (already
 stripped of IDE blocks and pasted text, redacted and cut when it was stored). Never a file's
-content, a tool's output, the raw command line, the working directory or a hook field the list
-does not name. A path whose key came from expanding an environment variable is shown in its
-unexpanded form (the daemon's environment holds secrets, the API key among them). ``redact_obj``
-runs over the whole payload.
+content, a tool's output, the working directory or a hook field the list does not name. A path
+whose key came from expanding an environment variable is shown in its unexpanded form (the
+daemon's environment holds secrets, the API key among them). ``redact_obj`` runs over the whole
+payload.
+
+A Bash or PowerShell call also carries its whole command text (``command``, spec revision 30),
+with the home directory written as ``~``. A script can read its own text (Claude Code leaves it in
+``$__claudeCodeScript`` and ``$BASH_EXECUTION_STRING``), so a comment, a constant that is only
+printed or the text of a condition can become a path or code: the actions alone hid that from the
+model (review of revision 29, O-7).
 
 Refused (nothing is sent; the audit fails to ``on_failure``):
 
 * too much to show whole: more than ``MAX_ACTIONS`` actions, an action with more than
   ``MAX_WORDS`` words, ``MAX_PATHS`` paths or ``MAX_DOMAINS`` hosts, a word longer than
   ``MAX_WORD_CHARS``, a program name longer than ``MAX_NAME_CHARS`` (in PowerShell the name can
-  be an expression: ``& $(...; 'Get-Date')``), a payload above ``MAX_CONTENT_CHARS``. A cut view
-  could hide the part that matters behind padding, and a model can only allow what it was shown;
-* a word or path with a control or format character other than tab, CR and LF (bidi overrides,
-  zero-width characters, terminal escapes): such text reads differently from what runs;
+  be an expression: ``& $(...; 'Get-Date')``), a command text longer than ``MAX_COMMAND_CHARS``,
+  a payload above ``MAX_CONTENT_CHARS``. A cut view could hide the part that matters behind
+  padding, and a model can only allow what it was shown;
+* a word, path or command text with a control or format character other than tab, CR and LF (bidi
+  overrides, zero-width characters, terminal escapes, NUL): such text reads differently from what
+  runs;
+* a command text that the redactor would change: its patterns can swallow a whole span (a private
+  key block from BEGIN to END), and what they swallow the model would not see; a command that
+  carries a secret is the user's to decide about;
+* a shell call without its command text;
 * a secret that only shows across words (``--password X``, ``-Password 'X'``, ``curl -u u:pw``):
   redacting the command's words one by one would miss it, so the words are redacted as one line
   as well, and a difference means the command carries a secret (the user decides about that);
@@ -40,12 +52,13 @@ from typing import Any, Final
 
 from boundkeep.audit.backends.base import _SEAL, GatedRequest
 from boundkeep.audit.prompt import system_prompt
+from boundkeep.normalize.event import SHELL_TOOLS
 from boundkeep.normalize.model import Action, PathRef
 from boundkeep.normalize.paths import key_of_home
 from boundkeep.redact import redact_obj, redact_text
 from boundkeep.session.facts import SessionFacts
 
-SCHEMA_TAG: Final = "boundkeep.audit-request/1"
+SCHEMA_TAG: Final = "boundkeep.audit-request/2"
 MAX_ACTIONS: Final = 8
 MAX_WORDS: Final = 32
 MAX_WORD_CHARS: Final = 400
@@ -56,6 +69,7 @@ MAX_UNCLEAR: Final = 6
 MAX_UNCLEAR_CHARS: Final = 120
 MAX_NAME_CHARS: Final = 128
 MAX_INTENT_CHARS: Final = 2000
+MAX_COMMAND_CHARS: Final = 4000
 MAX_CONTENT_CHARS: Final = 16_000
 MIN_SECRET_CHARS: Final = 8  # shorter values of secret-looking variables are not looked for
 _ALLOWED_CONTROLS: Final = frozenset("\t\r\n")
@@ -82,9 +96,9 @@ def _clean_name(value: object) -> str | None:
     return "".join(ch if ch.isprintable() else "?" for ch in value[:MAX_NAME_CHARS])
 
 
-def _checked_text(value: str, what: str) -> str:
-    if len(value) > MAX_WORD_CHARS:
-        raise _Refused(f"{what} is longer than {MAX_WORD_CHARS} characters")
+def _checked_text(value: str, what: str, limit: int = MAX_WORD_CHARS) -> str:
+    if len(value) > limit:
+        raise _Refused(f"{what} is longer than {limit} characters")
     if any(not ch.isprintable() and ch not in _ALLOWED_CONTROLS for ch in value):
         raise _Refused(f"{what} holds a control or format character")
     return value
@@ -140,6 +154,21 @@ def _secret_across_words(words: Sequence[str]) -> bool:
         return False
     quoted = [shlex.quote(w) for w in words]
     return redact_text(" ".join(quoted)) != " ".join(redact_text(q) for q in quoted)
+
+
+def _command(actions: Sequence[Action], places: _Places) -> str:
+    """The command text of a shell call as it is sent: whole, the home directory as ``~`` (spec
+    revision 30). Every action of the call carries the same text (``Action.command_text``)."""
+    texts = {a.command_text for a in actions}
+    if len(texts) != 1:
+        raise _Refused("the command text of a shell call is missing")
+    (command,) = texts
+    if not isinstance(command, str):
+        raise _Refused("the command text of a shell call is missing")
+    shown = places.word(_checked_text(command, "the command text", MAX_COMMAND_CHARS))
+    if redact_text(shown) != shown:
+        raise _Refused("the command text carries text that looks like a secret")
+    return shown
 
 
 def _action(action: Action, places: _Places) -> dict[str, Any]:
@@ -245,11 +274,25 @@ def _gate(
             for text in facts.intents[-max(1, intent_prompts) :]
             if isinstance(text, str) and text
         ]
+    shown = [_action(action, places) for action in actions]
     payload: dict[str, Any] = {
         "schema": SCHEMA_TAG,
         "task_intent": intent,
         "tool": _clean_name(tool) or "?",
-        "actions": [_action(action, places) for action in actions],
+    }
+    # only shell actions carry a command text; either sign is enough
+    shell = (isinstance(tool, str) and tool in SHELL_TOOLS) or any(
+        a.command_text is not None for a in actions
+    )
+    if shell:
+        payload["command"] = _command(actions, places)
+        if redact_obj(shown) != shown:
+            # A word the redactor changes is in the command text as well, where the text's own
+            # redaction need not find it (its patterns read words and lines differently): the
+            # command carries a secret, and the text must not take it along in clear
+            raise _Refused("a command carries text that looks like a secret")
+    payload |= {
+        "actions": shown,
         "cwd_inside_project": True if project else None,
         "tainted": facts.tainted,
         "taint_sources": [s for s in (_clean_name(x) for x in facts.sources) if s],

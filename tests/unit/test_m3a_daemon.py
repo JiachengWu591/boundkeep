@@ -206,7 +206,7 @@ def test_a_gray_call_is_audited_and_logged(
     assert llm["backend"] == "openai_compatible"
     assert llm["model"] == "daemon-test-model"
     assert llm["transport"] == "tool_call"
-    assert llm["prompt"].startswith("v1:")
+    assert llm["prompt"].startswith("v2:")  # spec revision 30
     assert llm["outcome"] == "ok"
     assert llm["final"] == "allow"
     assert llm["cache"] == "miss"
@@ -324,26 +324,34 @@ def test_secrets_never_reach_the_body_the_log_or_an_error(
     with FakeLLMServer(echo) as server:
         h = Harness(tmp_path / "home", policy_text(base_url=server.base_url))
         h.send("prompt", prompt(f"deploy with {secrets['openai']} and {secrets['aws']}"))
+        # the secrets are in the intent only: the command is sent, whole (spec revision 30)
+        response = h.send("pre", bash(project, "python deploy.py --env staging"))
+        bodies = [seen.body.decode("utf-8") for seen in server.requests]
+        headers = [json.dumps(seen.headers) for seen in server.requests]
+        # a command that carries them is not sent at all (spec revision 30)
         command = (
             f"python deploy.py --token {secrets['github']} --aws {secrets['aws']} "
             f"--note '{secrets['pem']}' --api {secrets['openai']}"
         )
-        response = h.send("pre", bash(project, command))
-        bodies = [seen.body.decode("utf-8") for seen in server.requests]
-        headers = [json.dumps(seen.headers) for seen in server.requests]
+        refused = h.send("pre", bash(project, command))
+        sent_after = len(server.requests)
     assert response.decision == "ask"  # the 400 failed the audit: on_failure
     assert bodies, "the audit was sent"
+    assert "python deploy.py --env staging" in bodies[0]
     for body in bodies:
         for fragment in fragments:
             assert fragment not in body
         assert KEY not in body
     assert all(KEY in header for header in headers)  # it travelled in the header only
+    assert refused.decision == "ask"
+    assert sent_after == len(bodies)
     log = h.log_text()
     for fragment in (*fragments, KEY):
         assert fragment not in log
-    record = h.records()[-1]
-    assert KEY not in json.dumps(record)
-    assert record["llm"]["outcome"] == "http_4xx"
+    first, second = h.records()[-2:]
+    assert KEY not in json.dumps(first)
+    assert first["llm"]["outcome"] == "http_4xx"
+    assert second["llm"]["outcome"] == "refused"
     assert all(KEY not in m for m in h.messages)
 
 
