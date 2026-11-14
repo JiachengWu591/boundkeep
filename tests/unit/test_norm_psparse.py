@@ -1203,7 +1203,16 @@ def test_fixture_index_is_complete_and_consistent() -> None:
             keys = {"pos", "invoke", "name", "elements", "redirects", "stage", "nested"}
             if "bind" in item:  # where an expression's value is bound (spec revision 28)
                 assert item["name"]["kind"] == "output", command
-                assert item["bind"] in ("default", "foreach", "switch", "head", "body"), command
+                assert item["bind"] in (
+                    "default",
+                    "foreach",
+                    "switch",
+                    "head",
+                    "body",
+                    "property",  # spec revision 29
+                    "throw",
+                    "match",
+                ), command
                 keys.add("bind")
             assert set(item) == keys, command
             start, end = item["pos"]

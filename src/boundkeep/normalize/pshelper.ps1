@@ -19,7 +19,10 @@
 # below). A drive-qualified variable (${C:\x\y}) is a command of its own, with the name kind
 # "file-read" or "file-write" and the path as the name's value. An expression whose value goes
 # somewhere (Test-Output) is a command with the name kind "output" and the expression as its
-# only element; where the value is bound rather than printed it has "bind" (Get-Binding).
+# only element; where the value is bound rather than printed it has "bind" (Get-Binding). A value
+# bound where no expression goes anywhere is reported the same way, with its "bind": a parameter's
+# default ("default"), a class property's initial value ("property") and the left side of -match
+# outside command arguments ("match").
 #
 # Speed note: a PowerShell function call costs ~20 microseconds and a StringBuilder call ~1, so the
 # serializer builds whole JSON fragments per call instead of one call per token.
@@ -134,6 +137,8 @@ $script:NoFileDrive = @{ 'env' = $true; 'function' = $true; 'alias' = $true; 'va
 # `param($LASTEXITCODE = $env:X)`, `foreach ($LASTEXITCODE in $env:X)`), so such a line is reported
 # in "loose" as AutomaticVariable. An assignment is a statement the consumer does not let through.
 $script:AutomaticName = @{ 'lastexitcode' = $true; '?' = $true }
+# Spec revision 29: these fill $Matches with what they matched (TokenKind names).
+$script:MatchOperator = @{ 'Imatch' = $true; 'Cmatch' = $true; 'Inotmatch' = $true; 'Cnotmatch' = $true }
 $script:MaxSteps = 1000000          # parent links followed for one request
 $script:Steps = 0
 
@@ -385,8 +390,12 @@ function Test-Output($e) {
 # revision 28)? The head of a pipeline flows into the next stage, the collection of a foreach and
 # the condition of a switch go into a variable, and what a function, filter, class method, script
 # block or data section outputs goes to its caller, who may run it: `function f { 'code' };
-# Invoke-Expression (f)`. A statement elsewhere, `return` and `throw` print to the host. The
-# consumer keeps a known value so bound out of the request to the LLM audit.
+# Invoke-Expression (f)`. A statement elsewhere and `return` print to the host. What `throw` throws
+# goes into $Error, and into $_ of a catch clause or a trap (spec revision 29: `try { throw 'code' }
+# catch { Invoke-Expression $_.Exception.Message }`). Not only then: in `try { throw 'code' } finally
+# { ... }` the finally block reads it from $Error, and after `Set-Variable ErrorActionPreference
+# SilentlyContinue` a throw does not end the script (both measured, PowerShell 5.1). The consumer
+# keeps a known value so bound out of the request to the LLM audit.
 function Get-Binding($c) {
     $p = $c.Parent
     if ($p.PipelineElements.Count -gt 1) { return 'head' }
@@ -398,6 +407,7 @@ function Get-Binding($c) {
         if (($q.Flags -band [SwitchFlags]::File) -ne 0) { return '' }
         return 'switch'
     }
+    $thrown = $q -is [ThrowStatementAst]
     while ($null -ne $q) {
         $script:Steps++
         if ($script:Steps -gt $script:MaxSteps) { throw 'too-large' }
@@ -405,19 +415,24 @@ function Get-Binding($c) {
             ($q -is [ScriptBlockExpressionAst]) -or ($q -is [DataStatementAst])) { return 'body' }
         $q = $q.Parent
     }
+    if ($thrown) { return 'throw' }
     return ''
 }
 
-# The default value of a parameter is bound to the parameter's variable, like the collection of a
-# foreach: `param($x = $env:TOKEN) Get-Date; $x` prints it. The consumer reads it as Write-Output
-# <default> (spec revision 24).
-function Add-Default($p) {
+# A value bound where no expression goes anywhere, reported like one whose value does (the consumer
+# reads it as Write-Output <value>, or keeps a known value out of the request):
+# - "default": a parameter's default value goes into the parameter's variable, like the collection
+#   of a foreach: `param($x = $env:TOKEN) Get-Date; $x` prints it (spec revision 24);
+# - "property": a class property's initial value, `class C { static [string]$p = 'code' };
+#   Invoke-Expression ([C]::p)` (spec revision 29);
+# - "match": the left side of -match / -notmatch, what it matched goes into $Matches, `if ('code'
+#   -match '.*') { Invoke-Expression $Matches[0] }` (spec revision 29).
+function Add-Bound($d, [string]$bind) {
     $sb = $script:Sb
     if ($sb.Length -gt $script:MaxOutChars) { throw 'too-large' }
-    $d = $p.DefaultValue
     [void]$sb.Append('{"pos":[' + $d.Extent.StartOffset + ',' + $d.Extent.EndOffset + '],"invoke":"","name":{"kind":"output","v":""},"elements":[')
     Add-Elem $d 0
-    [void]$sb.Append('],"redirects":[],"stage":{"index":0,"of":1},"nested":true,"bind":"default"}')
+    [void]$sb.Append('],"redirects":[],"stage":{"index":0,"of":1},"nested":true,"bind":"' + $bind + '"}')
 }
 
 # What a drive-qualified variable does to its file: an assignment writes it (also through a type
@@ -493,6 +508,10 @@ function New-Reply([string]$b64) {
         if ($a -is [ParameterAst]) {
             return (($a.Attributes.Count -gt 0) -or ($null -ne $a.DefaultValue) -or (Test-Automatic $a.Name))
         }
+        # a class property's initial value goes into the property (an enum member's is a number)
+        if ($a -is [PropertyMemberAst]) {
+            return (($null -ne $a.InitialValue) -and -not $a.Parent.IsEnum)
+        }
         if ($a -is [ExpressionAst]) {
             return -not (($a -is [ConstantExpressionAst]) -or ($a -is [VariableExpressionAst]) -or
                 ($a -is [ExpandableStringExpressionAst]) -or ($a -is [ArrayLiteralAst]))
@@ -512,6 +531,9 @@ function New-Reply([string]$b64) {
             if (($n.Redirections.Count -gt 0) -or (Test-Output $n)) { $cmds.Add($n) }
         } elseif (($n -is [CommandAst]) -or ($n -is [VariableExpressionAst])) {
             $cmds.Add($n)
+        } elseif ($n -is [PropertyMemberAst]) {
+            # no statement and no expression: nothing to add to compound, dynamic or loose
+            if ((-not (Test-Carried $n.InitialValue)) -and (Test-Loose $n)) { $cmds.Add($n) }
         } else {
             $short = TypeShort $n
             # wherever it stands: a script block in a command's arguments binds it just the same
@@ -523,6 +545,10 @@ function New-Reply([string]$b64) {
                 (-not (Test-Carried $n.DefaultValue)) -and (Test-Loose $n)) { $cmds.Add($n) }
             if ($n -is [ExpressionAst]) {
                 if ($script:DynamicTypes.ContainsKey($short) -and -not $dynamic.Contains($short)) { $dynamic.Add($short) }
+                # -match outside a command's arguments: its text is in no command, what it matched
+                # is in $Matches (in an argument, the text is in that command's words)
+                if (($n -is [BinaryExpressionAst]) -and $script:MatchOperator.ContainsKey($n.Operator.ToString()) -and
+                    (-not (Test-Carried $n.Left)) -and (Test-Loose $n)) { $cmds.Add($n) }
                 $inert = $script:InertExpr.ContainsKey($short)
                 if (-not $inert) {
                     if ($n -is [BinaryExpressionAst]) {
@@ -571,7 +597,9 @@ function New-Reply([string]$b64) {
         }
         if (-not $first) { [void]$sb.Append(',') }
         $first = $false
-        if ($c -is [ParameterAst]) { Add-Default $c; continue }
+        if ($c -is [ParameterAst]) { Add-Bound $c.DefaultValue 'default'; continue }
+        if ($c -is [PropertyMemberAst]) { Add-Bound $c.InitialValue 'property'; continue }
+        if ($c -is [BinaryExpressionAst]) { Add-Bound $c.Left 'match'; continue }
         Add-Command $c $root
     }
     [void]$sb.Append('],"compound":')

@@ -619,6 +619,14 @@ _UNANALYSED_PREFIXES: Final = (
     "normalize-budget",
     "recursive-scan-",
     "internal-error",
+    # The Bash parser stopped part way: what follows is in no command, so neither the rules nor the
+    # request see it. `pytest -q; { { ... cat ~/.ssh/id_rsa; }; ... }` 33 levels deep showed the
+    # model `pytest -q` alone (review O-6, spec revision 29).
+    "nesting-too-deep",
+    "too-many-words",
+    "too-many-tokens",
+    "too-long",
+    "depth-exceeded",
     "classify-internal-error",
     "ps-internal-error",
     "ps-helper-",

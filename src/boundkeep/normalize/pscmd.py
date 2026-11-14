@@ -56,9 +56,11 @@ RUNNER_VALUE_GRAY = "ps-runner-value"
 # A known value (a constant, ``$true``, ...) makes no command, and printing one shows nothing the
 # line does not. Where the helper says it is BOUND (``"bind"``: a parameter default, the collection
 # of a foreach, the condition of a switch, the head of a pipeline, a statement in a function or
-# script block, whose output goes to a caller), it is not printed but kept: ``param($p =
-# '~\.ssh\id_rsa') Get-Content $p`` shows ``Get-Content $p``. Recorded as ``unshown`` with
-# ``:<where>`` (spec revision 28): no rule looks at it, a gray line with it is not sent.
+# script block, whose output goes to a caller; spec revision 29 adds a class property's initial
+# value, what is thrown (it goes into $Error) and the left side of -match outside command
+# arguments), it is not printed but kept: ``param($p = '~\.ssh\id_rsa') Get-Content $p`` shows
+# ``Get-Content $p``. Recorded as ``unshown`` with ``:<where>`` (spec revision 28): no rule looks
+# at it, a gray line with it is not sent.
 BOUND_VALUE_UNSHOWN = "ps-bound-value"
 # The name kind of an expression whose value goes somewhere (a statement of its own, after
 # ``return`` / ``throw``, the start of a pipeline, the collection of a ``foreach``, the condition
