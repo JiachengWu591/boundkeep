@@ -133,6 +133,11 @@ Claude Code 的 PowerShell 工具调用
 5d. **（修订 24）参数的默认值、记不下的原因**：参数的默认值也按 `Write-Output <默认值>` 记成一条命令（`param($x = $env:SECRET_TOKEN) Get-Date; $x` 的请求里原来只有 `Write-Output $x`）；值已经知道的、写在脚本块参数里的、带盘符的变量本身、只包着命令的括号不记。代价：`param($x = $env:USERNAME) Get-Date` 是灰色。一行的灰色原因最多记 64 条，记满之后又来新的，这一行加上 `ps-too-large`，不送 LLM 审计：原来多出来的原因直接丢掉，`ps-switch-value` 这样决定"不送审"的原因可能正好在里面。记录 `docs/reports/M3a-rev21-22-review-fixes.md`。
 5e. **（修订 27）被截短的字符串**：辅助进程把超过 32768 个字符的字符串（管道开头的超过 4096 个）只报前 200 个字符。这样的一行加上 `ps-too-large`，不送 LLM 审计：`Invoke-Expression '<很长的填充>…'`、`Add-Type -TypeDefinition '…'` 会执行或编译请求里看不到的尾部（实测 PowerShell 5.1）。没有后端时本来就是灰色，不变。记录 `docs/reports/M3a-rev23-26-review-fixes.md`。
 5f. **（修订 28）绑到变量上的常量**：值已经知道的表达式（常量，`$true`、`$false`、`$null`）不建 `Write-Output`（修订 22），但在参数默认值、`foreach` 的集合、`switch` 的条件、管道开头，以及函数、`filter`、类的方法、脚本块表达式、`data` 段里，它被绑到变量上或交给调用者。`param($p = '~\.ssh\id_rsa') Get-Content $p` 的请求里只有 `Get-Content $p`。现在这样的一行在动作的 `unshown` 里记 `ps-bound-value:<位置>`，灰色时不送 LLM 审计；规则不看它，判决不变（`param($n = 5) Get-Date` 照旧放行）。`switch -File <路径>` 的路径不算（修订 21 已经不送审）。Bash 的 `for` / `select` 词表同样记 `for-words`。记录同上。
+5g. **（修订 29）另外三种绑定**：复审 `docs/reviews/M3a-rev27-28-review.md` 查到修订 28 漏了三种，实测（PowerShell 5.1）都读出了编出来的文件，`Invoke-Expression` 都执行了。现在和 5f 一样，值已经知道的记 `ps-bound-value:<位置>`，不是已知的记成 `Write-Output <值>`：
+   - `property`：类的属性初值（`class C { static [string]$p = '…' }; Invoke-Expression ([C]::p)`）。`enum` 的成员值是整数，不算。
+   - `throw`：函数之外 `throw` 后面的值。它进 `$Error`，被 `catch` / `trap` 接住时还在 `$_` 里；没有 `catch` / `trap` 也拿得到：`try { throw '…' } finally { … }` 的 `finally` 里、`Set-Variable ErrorActionPreference SilentlyContinue` 之后（`throw` 不再结束脚本）都能从 `$Error` 读出它（实测）。代价：有后端时 `pytest; if (-not $?) { throw 'failed' }` 直接问。
+   - `match`：命令参数之外的 `-match`、`-notmatch`（含 `i`、`c` 变体）的左边（匹配到的部分进 `$Matches`），例如写在 `if` / `while` 的条件里。写在命令参数里的（`Where-Object { $_ -match 'x' }`）文字在请求里，不算。
+   记录 `docs/reports/M3a-rev27-28-review-fixes.md`。
 6. **`$PROFILE` 假定默认的 Documents 位置。** Documents 被 OneDrive 重定向时，`$PROFILE` 指向的真实路径不会被跟随；直接写出真实路径时被 `**/documents/...` 规则覆盖。
 7. **UNC / 网络路径不算联网**：`\\host\share` 被当作普通（项目外）路径，不进 `domains`，`net-allowlist` 看不到。
 8. **祖先目录的递归读取**：`Get-ChildItem ~ -Recurse -Filter id_rsa | Get-Content` 灰色（规则按具体路径匹配，不认"递归读祖先"；与 M1 报告的同一设计缺口）。

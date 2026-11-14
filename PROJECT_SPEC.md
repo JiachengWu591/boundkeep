@@ -173,8 +173,32 @@
 >   - PowerShell：值已经知道的表达式（常量，`$true`、`$false`、`$null`，安静的一行里的 `$LASTEXITCODE`、`$?`）在绑定的位置上：参数默认值、`foreach` 的集合、`switch` 的条件、管道开头，以及函数、`filter`、类的方法、脚本块表达式、`data` 段里的语句（它们的输出交给调用者，可能被拿去执行）。修订 22、24 让这些值不建 `Write-Output`（打印它们不多给什么），这一点不变，只多记一项 `ps-bound-value:<位置>`。值不是已知的，照旧记成 `Write-Output`，请求里有它。`switch -File <路径>` 的路径不算：它绑的是文件的各行，修订 21 已经让它不送审（`ps-outside-command:SwitchStatementAst`）。
 >   - Bash：`for NAME in 词…`、`select NAME in 词…` 的词表（`for-words`）。词表不是命令，请求里没有它；词里的命令替换照旧解析成命令。
 >   - 原来 `param($p = '~\.ssh\id_rsa') Get-Content $p`、`foreach ($p in '~\.ssh\id_rsa') { Get-Content $p }`、`for p in ~/.ssh/id_rsa; do cat "$p"; done` 送审，请求里只有读 `$p`，直接写路径是 deny；`param($x = '<代码>') Invoke-Expression $x`、`function f { '<代码>' }; Invoke-Expression (f)`、`data v { '<代码>' }; Invoke-Expression $v`、`for c in '<代码>'; do eval "$c"; done` 送审，请求里没有代码。写成赋值（`$x = '…'`、`x=…`）的本来就不送审（修订 7）。
->   - 打印的位置不算：函数和脚本块之外单独成句、`return`、`throw` 后面的值进的是输出，不进变量（`Get-Date; 'done'` 照旧由规则放行）。
+>   - 打印的位置不算：函数和脚本块之外单独成句、`return`、`throw` 后面的值进的是输出，不进变量（`Get-Date; 'done'` 照旧由规则放行）。（`throw` 修订 29 改为绑定：它的值进 `$Error`。）
 > - 代价：有后端时，带这些绑定的灰色调用直接问，不再送审：`foreach ($f in 'a.py', 'b.py') { ruff check $f }`、`for f in *.py; do ruff check "$f"; done`、`'a.py' | ForEach-Object { … }`、定义了带常量输出的函数的一行。没有后端时不变；由规则放行的（`param($n = 5) Get-Date`）不变。
+
+> **修订 29（2026-11-13，使用者说"按建议顺序修"）**：复审 `docs/reviews/M3a-rev27-28-review.md` 的 O-6、R28-1、R28-2、R28-3，记录在 `docs/reports/M3a-rev27-28-review-fixes.md`。四条都是"请求里少了一段，调用却照常送审"，都只在有后端时起作用。
+> - §7（O-6）：Bash 解析器中途停下时，剩下的文字不再解析。这样的一行算没看全，不送审。停下的情况有五种：
+>   - 结构嵌套超过 32 层（`nesting-too-deep`）；
+>   - 词数超过上限（`too-many-words`）；
+>   - 记号数超过上限（`too-many-tokens`）；
+>   - 超过 1 MiB，只读前 1 MiB（`too-long`）；
+>   - `bash -c` / `eval` 递归超过 8 层（`depth-exceeded`）。
+>   - 原来已经找到的命令照常返回，这一行只多一条灰色原因，照常送审。`pytest -q; { { …（40 层）cat ~/.ssh/id_rsa; }; … }` 的请求里只有 `pytest -q`。
+>   - 实测 Git Bash 照样运行嵌套 40 层的命令。Claude Code 把 Bash 命令放在 `bash -c` 的参数里，Windows 上命令行最长 32767 个字符，所以这台机器上碰得到的是嵌套，约 100 个字符就够。
+>   - 停下之后的命令规则也看不到，没有后端时这一行是灰色，问（那条命令单独写是 deny）。这一点不变，按"解析失败降级为 ask"处理。
+> - §7（R28-1 到 R28-3）：修订 28 的绑定位置再加三种。值已经知道的照旧只记 `unshown`（`ps-bound-value:<位置>`）；值不是已知的照旧记成 `Write-Output`，请求里有它。
+>   - 类的属性初值（`property`）：`class C { static [string]$p = '<代码>' }; Invoke-Expression ([C]::p)`。原来整个类定义只进 `compound`，请求里没有初值。`enum` 的成员值是整数，不算。
+>   - `throw` 后面的值（`throw`）：函数之外的 `throw` 后面原来算打印，但它的值会进 `$Error`，被 `catch` / `trap` 接住时还在 `$_` 里，例如 `try { throw '<代码>' } catch { Invoke-Expression $_.Exception.Message }`。复审建议只在一行里有 `catch` / `trap` 时才算；实测（PowerShell 5.1）不够：`try { throw '<代码>' } finally { … }` 的 `finally` 里 `$Error[0]` 就是它；`Set-Variable ErrorActionPreference SilentlyContinue` 之后 `throw` 不结束脚本，后面的代码照样从 `$Error` 拿到它。所以 `throw` 后面一律算绑定。
+>   - 命令参数之外的 `-match`、`-notmatch`（含 `-imatch`、`-cmatch`、`-inotmatch`、`-cnotmatch`）的左边（`match`）：匹配到的部分进 `$Matches`，例如 `if ('<代码>' -match '.*') { Invoke-Expression $Matches[0] }`。条件的文字本来就不在请求里。
+>     - 左边不是已知值时记成 `Write-Output <左边>`，请求里多了它。
+>     - 写在命令参数里的（`Where-Object { $_ -match 'x' }`）文字就在请求里，不算。
+>   - 实测（PowerShell 5.1）三种写法都读出了编出来的文件，`Invoke-Expression` 都执行了。
+> - 规则层不变，判决级别不变。
+> - 代价：有后端时，下面这些灰色调用直接问，不再送审：
+>   - 嵌套超过 32 层的 Bash 命令；
+>   - PowerShell 里带常量属性初值的类；
+>   - `throw` 一个常量，包括常见的 `pytest; if (-not $?) { throw 'failed' }`；
+>   - 命令参数之外拿常量做 `-match`。
 
 > **当前进度（2026-11-11）**
 >
@@ -259,7 +283,8 @@
 >   - 规则条目与策略文件没变，Bash 没变。手头语料 1146 条 PowerShell 命令的级别没有一条变化。
 >   - 测试：新测试 190 条，变异 35 个全部抓到；原有差分全部相同，评测指标相同。全量（和修订 24 到 26 一起）分六段跑，不是一个进程：29659 通过、169 跳过、0 失败（合计与收集到的 29828 条相同）。真实宿主（2026-11-12，`scripts/smoke_claude_m3a.py --only readings`，修订 10 到 24 各一条代表写法）：23 项 0 失败。
 > - **修订 21 和 22 的复审**（已提交并推送，在 `ced7a87` 里；`docs/reviews/M3a-rev21-22-review.md`，不是独立的）：目标达到，没有回退，没有不需要后端的放行。中危 1 条（R21-1：灰色原因 64 条的上限会把"不送审"的原因挤掉）、低危 1 条（R22-1：参数默认值不在请求里）、范围外 1 条（O-2：`uv run` 等运行器自己的选项不在请求里，也不进规则）。三条都只在有后端时起作用。R21-1、R22-1 已修（修订 24，代码 `8d268d3`，记录 `docs/reports/M3a-rev21-22-review-fixes.md`；原有差分全部相同，全量和修订 23 一起跑，0 失败）；O-2 已修（修订 25，代码 `8d268d3`，记录 `docs/reports/M3a-runner-options.md`）：使用者选"带值选项就不送审"，两种 shell 都这样，规则层不变。修的时候查到同一类的 W-1（`sudo -u`、`env -C` 的值不在请求里），使用者说"也照同样的办法修"：修订 26，代码 `8d268d3`，记录 `docs/reports/M3a-wrapper-options.md`，只在 Bash 方言里。
-> - **修订 23 到 26 的复审**（已提交，在 `86a7e2f` 之后的文档提交里；`docs/reviews/M3a-rev23-26-review.md`，不是独立的）：目标达到，没有回退，没有不需要后端的放行。低危 1 条（RV26-1：包装器的长开关写成 `--名字=值` 时值被丢掉，`sudo --preserve-env=X pytest` 送审，请求里没有 X）、信息 3 条；范围外 1 条（O-4：PowerShell 里超过 32768 个字符的字符串只剩前 200 个字符，照常送审，`Invoke-Expression`、`Add-Type` 实测执行了看不到的尾部，M1b 起就有）。都要后端。O-4、RV26-1、RV24-1 已修：规格修订 27（已提交，代码 `86a7e2f`，记录 `docs/reports/M3a-rev23-26-review-fixes.md`；新测试 90 条，变异 10 个全部抓到，原有差分全部相同；全量和修订 28 一起分六段跑，不是一个进程：29866 通过、169 跳过、0 失败（合计与收集到的 30035 条相同））。修的时候查到 O-5：绑到变量上的常量（PowerShell 的参数默认值、`foreach` 的集合、`switch` 的条件、管道开头、函数体的输出，Bash 的 `for` / `select` 词表）不在请求里，照常送审；已修：规格修订 28（已提交，代码 `86a7e2f`，同一份记录），记进动作的 `unshown`，灰色时不送审，判决不变。新测试 116 条，变异 20 个，1 个等价存活，原有差分全部相同；全量见上。
+> - **修订 23 到 26 的复审**（已提交并推送，在 `4b76463` 里；`docs/reviews/M3a-rev23-26-review.md`，不是独立的）：目标达到，没有回退，没有不需要后端的放行。低危 1 条（RV26-1：包装器的长开关写成 `--名字=值` 时值被丢掉，`sudo --preserve-env=X pytest` 送审，请求里没有 X）、信息 3 条；范围外 1 条（O-4：PowerShell 里超过 32768 个字符的字符串只剩前 200 个字符，照常送审，`Invoke-Expression`、`Add-Type` 实测执行了看不到的尾部，M1b 起就有）。都要后端。O-4、RV26-1、RV24-1 已修：规格修订 27（已提交并推送，代码 `86a7e2f`，文档 `4b76463`，记录 `docs/reports/M3a-rev23-26-review-fixes.md`；新测试 90 条，变异 10 个全部抓到，原有差分全部相同；全量和修订 28 一起分六段跑，不是一个进程：29866 通过、169 跳过、0 失败（合计与收集到的 30035 条相同））。修的时候查到 O-5：绑到变量上的常量（PowerShell 的参数默认值、`foreach` 的集合、`switch` 的条件、管道开头、函数体的输出，Bash 的 `for` / `select` 词表）不在请求里，照常送审；已修：规格修订 28（已提交并推送，代码 `86a7e2f`，同一份记录），记进动作的 `unshown`，灰色时不送审，判决不变。新测试 116 条，变异 20 个，1 个等价存活，原有差分全部相同；全量见上。
+> - **修订 27 和 28 的复审**（已提交，在 `fed8930` 之后的文档提交里；`docs/reviews/M3a-rev27-28-review.md`，不是独立的）：修订 27 的目标达到；修订 28 部分达到，同一类还有三处没有覆盖，都是中危、要后端：类的属性初值（R28-1）、被 `catch` / `trap` 接住的 `throw`（R28-2）、条件里 `-match` 填进 `$Matches` 的值（R28-3）。没有回退，没有不需要后端的放行。范围外 1 条（O-6）：Bash 解析器中途停下（嵌套超过 32 层等）之后的命令规则看不到，整条照常送审。四条都已修：规格修订 29（已提交，代码 `fed8930`，文档在其后一个提交，记录 `docs/reports/M3a-rev27-28-review-fixes.md`；R28-2 按实测改成 `throw` 后面一律算绑定；新测试 126 条，变异 18 个全部抓到，原有差分全部相同，语料 0 条变化；全量分六段跑，不是一个进程：29990 通过、169 跳过、2 失败（合计与收集到的 30161 条相同），失败的两条是这次没改的模块里的计时测试，单独重跑这次的代码和 `4b76463` 的代码各 5 次都通过）。
 > - **还没开始**：M3b（真实 LLM 后端评测）、M4（策略编译）、M5、M6（Web 界面）、发布准备（R）。
 > - **规则层的实测天花板**：用户真实会话的统计显示，PowerShell 脚本味很浓的工作流，规则层最多放行约 20% 到 30%，其余灰色地带要靠 M3 的 LLM 层或用户确认（修订 5）。
 > - 各里程碑的详细状态、报告与手工验收记录见 `docs/reports/` 与 `CLAUDE.md` 的"当前状态"。
@@ -655,6 +680,7 @@ event(pre) ─> normalize ─> Action
 - **没被完整分析的灰色调用不送审**：以下情况下，模型只能看到调用的一部分，它给的 allow 会盖住没人看过的部分：
   - 归一化预算用完；
   - 解析器内部错误；
+  - Bash 解析器中途停下（修订 29，复审 O-6）：结构嵌套超过 32 层、词数或记号数超过上限、只读了前 1 MiB、`bash -c` / `eval` 递归超过 8 层。停下之后的命令规则看不到，请求里也没有；
   - PowerShell 辅助进程不可用；
   - 子树扫描超限；
   - MCP 参数没看全，或参数里带命令；
@@ -671,7 +697,7 @@ event(pre) ─> normalize ─> Action
     - 语句：`if`、循环、`switch`、`try`、`trap`、函数定义、`return`、`throw`、`exit`、`break`、`continue`、`using namespace`、`data`、类型定义本身不算，里面的内容各自再看。算的有：`using module`、`using assembly`（加载代码）、`switch -File`（读文件）、带类型或特性的参数（`function f([IO.StreamWriter]$w) { }; f C:\x` 在调用时转换），以及不认识的语句类型。
     - 在命令参数里的表达式不算：它的文字就在请求的 `args` 里（`Write-Output ([IO.File]::ReadAllText('.env'))`、`ForEach-Object { … }`）。
     - 带盘符的变量（`${C:\x\.env}`）不在这一条里：它按读写文件记路径（§5.1）。
-  - **绑到变量上的值**（修订 28，O-5）：PowerShell 里值已经知道的表达式在绑定的位置上（参数默认值、`foreach` 的集合、`switch` 的条件、管道开头、函数 / `filter` / 类的方法 / 脚本块表达式 / `data` 段里的语句）不建命令，请求里没有它，记成 `unshown` 的 `ps-bound-value:<位置>`；Bash 的 `for` / `select` 词表记成 `for-words`。规则不看 `unshown`，判决不变，只是不送审：`param($p = '~\.ssh\id_rsa') Get-Content $p` 的请求里只有 `Get-Content $p`。
+  - **绑到变量上的值**（修订 28，O-5；修订 29 加了三种）：PowerShell 里值已经知道的表达式在绑定的位置上不建命令，请求里没有它，记成 `unshown` 的 `ps-bound-value:<位置>`。位置有：参数默认值、`foreach` 的集合、`switch` 的条件、管道开头、函数 / `filter` / 类的方法 / 脚本块表达式 / `data` 段里的语句；类的属性初值、`throw` 后面的值（会进 `$Error`）、命令参数之外的 `-match` / `-notmatch` 的左边（修订 29）。Bash 的 `for` / `select` 词表记成 `for-words`。规则不看 `unshown`，判决不变，只是不送审：`param($p = '~\.ssh\id_rsa') Get-Content $p` 的请求里只有 `Get-Content $p`。
   - **PowerShell 里被截短的字符串**（修订 27，复审 O-4）：辅助进程把超过 32768 个字符的字符串（管道开头的超过 4096 个）只报前 200 个字符。这一行加上 `ps-too-large`，算没看全，不送审：`Invoke-Expression`、`Add-Type` 会执行或编译请求里看不到的尾部。
 
   这些调用直接 ask（`decided_by: gray-unanalysed`，理由里写明没有送审），不按 `on_failure`：它们不是审计失败，与没有配置后端时的灰色相同。

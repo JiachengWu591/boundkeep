@@ -248,19 +248,19 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - 测试：新测试 195 条；`tests/corpus/bash_parse.yaml` 的 23 条包装器条目补上新的灰色原因。变异 13 个，第一轮存活 1 个（缺 `env -C x -S '…' tests` 这种写法的测试），补测试后全部抓到。原有差分全部相同。全量：见修订 23 那一条（四次修订一起跑，0 失败）。
   - 代价：有后端时 `timeout 60 pytest`、`nice -n 10 make` 直接问。值仍然不进路径层：`env -C ~/.claude sh -c "echo x > settings.json"` 是问，不是 deny。
   - **看"请求里有没有"要量请求本身：带 `env -S` 的那一条从代码上看像是丢了值，实际 env 命令被整条记下了。**
-- **修订 23 到 26 的复审**（2026-11-12，已提交，在 `86a7e2f` 之后的文档提交里，未推送；`docs/reviews/M3a-rev23-26-review.md`，不是独立的，同一个会话做的）：四次修订的目标达到了，没有回退，没有不需要后端的放行。范围之内高危、中危 0，低危 1，信息 3；范围之外 1 条。O-4、RV26-1、RV24-1 已修（规格修订 27，下一条）。
+- **修订 23 到 26 的复审**（2026-11-12，已提交并推送，在 `4b76463` 里；`docs/reviews/M3a-rev23-26-review.md`，不是独立的，同一个会话做的）：四次修订的目标达到了，没有回退，没有不需要后端的放行。范围之内高危、中危 0，低危 1，信息 3；范围之外 1 条。O-4、RV26-1、RV24-1 已修（规格修订 27，下一条）。
   - RV26-1（低，要后端，Bash）：包装器的长开关写成 `--名字=值` 时，值被丢掉、不标：`sudo --preserve-env=X pytest` 送审，请求里没有 X。GNU `env`、`timeout` 拒绝这种写法（实测，命令不运行），带 `xargs` 的行由规则问；效果不超过照常送审的 `sudo -E`。
   - 信息：RV23-1 用 `ſ`、`ı`、`İ` 写的名字不是 `$LASTEXITCODE`（实测）；RV24-1 三张类型表截在 64 条，实际碰不到；RV25-1 `python -Xdev -m boundkeep` 不记带值，规则本来就问。
   - O-4（范围外，按 F3、F4 的标准是中危，要后端，只在 PowerShell）：超过 32768 个字符的字符串常量只剩前 200 个字符，整条照常送审。`Invoke-Expression`、`Add-Type` 实测执行或编译了请求里看不到的尾部；照 Claude Code 启动 PowerShell 的方式（脚本放在环境变量里），7 万个字符的脚本也能运行。M1b 起就有。建议按 `ps-too-large` 处理，不送审。
   - **找"请求里看不到的文字"时也要看截断：辅助进程截到 200 个字符，低于发送闸门 400 个字符的上限，闸门就发现不了。**
-- **复审的三条修复，规格修订 27**（2026-11-12，已提交，`86a7e2f` 代码（修订 27、28 一起），文档在其后一个提交，未推送，未打标签；记录 `docs/reports/M3a-rev23-26-review-fixes.md`）：使用者说"按建议顺序修三条"。
+- **复审的三条修复，规格修订 27**（2026-11-12，已提交并推送，`86a7e2f` 代码（修订 27、28 一起），`4b76463` 文档，未打标签；记录 `docs/reports/M3a-rev23-26-review-fixes.md`）：使用者说"按建议顺序修三条"。
   - O-4：`pscmd._convert` 遇到辅助进程截短的字符串（`TooLongString`）时，这一行加上 `ps-too-large`，不送审。辅助进程报的每个元素都经过这里，所以只改这一处；辅助进程和夹具没有改。
   - RV26-1：Bash 包装器的长开关写成 `--名字=值` 时置 `taken`，灰色 `wrapper-option-value`，不送审。包装器照旧被剥掉，里面的命令照旧由规则判。
   - RV24-1：`_type_names` 截断 `compound`、`dynamic`、`loose` 时置 `overflow`，这一行加上 `ps-too-large`。
   - 规则条目与策略文件没变，没有后端时判决级别不变。新测试 90 条（在 `ced7a87` 上 42 条失败）；专门扫描 627 行，没有一行变松，没有一行少记路径；语料 0 条变化；变异 10 个全部抓到；原有差分全部相同。全量：见修订 28 那一条（两次修订一起跑）。
   - 代价：有后端时带超长字符串的 PowerShell 命令、`sudo --preserve-env=LIST …` 直接问。
   - 修的时候查到 O-5（绑到变量上的常量不在请求里），修订 28 已修，见下一条。
-- **绑到变量上的值，规格修订 28**（2026-11-12，已提交，`86a7e2f` 代码（修订 27、28 一起），文档在其后一个提交，未推送，未打标签；记录同上，第 7 节）：使用者说"O-5 也按你的建议修"。
+- **绑到变量上的值，规格修订 28**（2026-11-12，已提交并推送，`86a7e2f` 代码（修订 27、28 一起），`4b76463` 文档，未打标签；记录同上，第 7 节）：使用者说"O-5 也按你的建议修"。
   - 原来：修订 22、24 让 PowerShell 里值已经知道的表达式（常量）不建 `Write-Output`，理由是打印它不多给什么；但参数默认值、`foreach` 的集合、`switch` 的条件、管道开头、函数体的输出是把值绑到变量上或交给调用者。`param($p = '~\.ssh\id_rsa') Get-Content $p` 送审，请求里只有 `Get-Content $p`（直接写路径是 deny）；`param($x = '<代码>') Invoke-Expression $x` 送审，请求里没有代码。Bash 的 `for p in ~/.ssh/id_rsa; do cat "$p"; done` 也一样。修订 24 只看了带变量的默认值，修订 23 到 26 的复审也没有查到；修这三条时的扫描（`rv27_scan.py`）里出现了"送审、请求里没有标记"的几行，才看出它们和打印不是一回事。
   - 现在：辅助进程给绑定位置上的这种条目加 `"bind"`（`default`、`foreach`、`switch`、`head`、`body`）；`pscmd` 遇到其中值已经知道的，照旧不建命令，另记 `ps-bound-value:<位置>`；Bash 解析器给带词表的 `for` / `select` 记 `for-words`。都进 `BashResult.unshown`，再由 `event` 放进这一行每个动作的 `unshown`：规则不看它，判决不变，灰色时不送审。
   - 修的时候查到、一起修的：`data v { '…' }` 数据段、函数体里的常量输出（`function f { '<代码>' }; Invoke-Expression (f)`）、Bash 的 `for` / `select`。
@@ -268,6 +268,22 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - 真实宿主里没有跑。PowerShell 7 上没有量。
   - 代价：有后端时 `foreach ($f in 'a.py', 'b.py') { ruff check $f }`、`for f in *.py; do ruff check "$f"; done`、`'x' | Out-File out.txt` 这类灰色调用直接问。由规则放行的（`param($n = 5) Get-Date`）不变。
   - **给已知值开豁免时要分清"打印"和"绑定"：值进了变量，之后可能被执行或当路径用，请求里就得有它，否则不送审。**
+- **修订 27 和 28 的复审**（2026-11-13，已提交，在 `fed8930` 之后的文档提交里，未推送；`docs/reviews/M3a-rev27-28-review.md`，不是独立的，同一个会话做的）：修订 27 的三个目标达到了；修订 28 部分达到，记录里列的位置都堵上了，同一类还有三处没有覆盖。没有回退，没有不需要后端的放行。范围之内中危 3，范围之外 1 条，都要后端，复审时都没有修（修订 29 已修，见下一条）。
+  - R28-1：类的属性初值不在请求里（`class C { static [string]$p = '…' }; Invoke-Expression ([C]::p)` 送审）。
+  - R28-2：被 `catch` / `trap` 接住的 `throw` 把值交给 `$_` 和 `$Error`，修订 22、28 却把它算作打印。
+  - R28-3：条件里的 `-match` / `-notmatch` 把值交给 `$Matches`。
+  - 三处实测（PowerShell 5.1）都读出了编出来的文件，`Invoke-Expression` 也执行了。
+  - O-6（范围外，M1 的解析器起就有）：Bash 解析器中途停下（嵌套超过 32 层、词数、记号数、1 MiB）时，停下之后的命令规则看不到，整条照常送审，请求里只有停下之前的命令。嵌套 40 层的 `{ }` 约 100 个字符，Git Bash 实测照样运行里面的命令。没有后端时 deny 变成问。修订 27 的记录写"Bash 的词不截"，没有核对整行的截断。
+  - 建议先修 O-6（`_UNANALYSED_PREFIXES` 一处），再一次修 R28-1 到 R28-3（都在辅助进程里）。
+  - **截断要看两层：单个值被截短，和整行在中途停下。停下之后的文字也是"请求里看不到的文字"。**
+  - **找"绑定"要从"哪些语法会给变量放值"列起（参数、循环、属性、异常、正则的自动变量），不能只在已知的输出位置里挑。**
+- **复审的四条修复，规格修订 29**（2026-11-13，已提交，`fed8930` 代码，文档在其后一个提交，未推送，未打标签；记录 `docs/reports/M3a-rev27-28-review-fixes.md`）：使用者说"按建议顺序修"。
+  - O-6：Bash 解析器中途停下的五种原因（`nesting-too-deep`、`too-many-words`、`too-many-tokens`、`too-long`、`depth-exceeded`）进了 `pipeline._UNANALYSED_PREFIXES`，这样的一行不送审、直接问。解析器没改。
+  - R28-1、R28-3：辅助进程把类的属性初值（`enum` 除外）和命令参数之外 `-match` / `-notmatch` 的左边，像参数默认值一样报成带 `bind` 的条目（`property`、`match`，新函数 `Add-Bound`）。`pscmd` 不用改。
+  - R28-2：函数之外 `throw` 后面的值一律算绑定（`throw`）。复审建议只在有 `catch` / `trap` 时算；第一轮变异里"只有 `finally` 也算"存活，追下去实测 `finally` 里、`Set-Variable ErrorActionPreference SilentlyContinue` 之后都能从 `$Error` 拿到这个值，所以改成一律算，规格同步改了。
+  - 规则条目与策略文件没变，没有后端时判决级别不变。新测试 126 条（第一版 122 条在 `4b76463` 上 66 条失败）；专门扫描没有一行变松，没有一行少记路径，"送审、请求里没有标记"由 116 行降到 16 行（都是 `-like` 对照）；语料 0 条变化；夹具 1 个只多了 `bind`；变异第二轮 18 个全部抓到。原有差分全部相同（中途按使用者的话停过一次，继续时补跑了剩下的三步）。全量分六段跑，不是一个进程：29990 通过、169 跳过、**2 失败**，六段都一次跑完，合计与收集到的 30161 条相同，各段用时合计 3:45:55（开始时是最佳能效，09:56 左右第 3 段中使用者换成最佳性能）。失败的两条都在第 1 段，是这次没改的模块里的计时测试（`test_daemon.py` 的 200 个并发请求、`test_install.py` 的钩子超时用时），那一段结束时可用内存只剩 558 MB；全量结束后单独重跑，这次的代码和 `4b76463` 的代码各 5 次都通过。
+  - 代价：有后端时，嵌套超过 32 层的 Bash 命令、带常量属性初值的类、`throw` 一个常量（含 `pytest; if (-not $?) { throw 'failed' }`）、命令参数之外拿常量做 `-match` 直接问。
+  - **复审的建议也要实测：它的前提（"没有 catch 就拿不到"）在变异测试里露了馅，量过才知道不成立。**
 - **下一步**：M3b（自备密钥、确认费用）或 M4（不依赖 M3b）；接真实后端之前，收尾记录第 5 节里还剩 `auto` 模式的实测。总览见 `PROJECT_SPEC.md` 开头的"当前进度"与 §14 的状态列。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
 - M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。
