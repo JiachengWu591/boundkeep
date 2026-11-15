@@ -45,6 +45,7 @@ The system prompt comes from ``audit.prompt`` and holds no user data.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -74,6 +75,12 @@ MAX_CONTENT_CHARS: Final = 16_000
 MIN_SECRET_CHARS: Final = 8  # shorter values of secret-looking variables are not looked for
 _ALLOWED_CONTROLS: Final = frozenset("\t\r\n")
 _EXPANDED: Final = "variable-expanded"  # normalize.paths: a variable in the word was expanded
+# Where a written home directory may end and begin (spec revision 31): anything else continues a
+# name or a path ("<home>x", "<home>.CORP", "./c/Users/...", "/x/home/me"). An option letter just
+# before it is a beginning ("-I/home/me/include", "/IC:\Users\me\include").
+_AFTER_HOME: Final = r"(?=\Z|[\s" + re.escape("\\/'\"`;|&()<>,:{}[]") + "])"
+_BEFORE_DRIVE: Final = r"(?:(?<!\w)|(?<=[-/][A-Za-z]))"
+_BEFORE_SLASH: Final = r"(?:(?<![\w./\\~])|(?<=-[A-Za-z]))"
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,16 +111,58 @@ def _checked_text(value: str, what: str, limit: int = MAX_WORD_CHARS) -> str:
     return value
 
 
+def _caseless(text: str) -> str:
+    """``text`` as a pattern that ignores the case of single characters only: the long s (U+017F)
+    is not ``s`` and the Kelvin sign is not ``k`` (a name that only folding makes equal is another
+    name)."""
+    parts = []
+    for ch in text:
+        variants = sorted({v for v in (ch, ch.lower(), ch.upper()) if len(v) == 1})
+        if len(variants) > 1:
+            parts.append("[" + "".join(re.escape(v) for v in variants) + "]")
+        else:
+            parts.append(re.escape(ch))
+    return "".join(parts)
+
+
+def _home_forms(home: str) -> list[tuple[str, bool]]:
+    """How a command may write the home directory, longest first: (text, starts with a drive).
+
+    ``C:\\Users\\me`` is also written ``C:/Users/me``, ``C:\\\\Users\\\\me`` (escaped in a string),
+    ``/c/Users/me`` (Git Bash, MSYS), ``/mnt/c/Users/me`` (WSL) and ``/cygdrive/c/Users/me``
+    (Cygwin). Any other home only as it is, with either slash."""
+    home = home.rstrip("\\/")
+    drive = re.fullmatch(r"([A-Za-z]):[\\/]+(.+)", home)
+    if drive is None:
+        forms = [(home, False), (home.replace("\\", "/"), False)]
+    else:
+        letter = drive.group(1)
+        parts = [p for p in re.split(r"[\\/]+", drive.group(2)) if p]
+        posix = "/".join(parts)
+        lower = letter.lower()
+        forms = [
+            (letter + ":\\" + "\\".join(parts), True),
+            (letter + ":/" + posix, True),
+            (letter + ":\\\\" + "\\\\".join(parts), True),
+            (f"/{lower}/{posix}", False),
+            (f"/mnt/{lower}/{posix}", False),
+            (f"/cygdrive/{lower}/{posix}", False),
+        ]
+    kept = [f for f in dict.fromkeys(forms) if len(f[0]) > 3]
+    return sorted(kept, key=lambda f: len(f[0]), reverse=True)
+
+
 class _Places:
     """Shows paths and words relative to the project and the home directory."""
 
     def __init__(self, home: str | None, project: str | None) -> None:
         self._home_key = key_of_home(home) if home else ""
         self._project_key = project or ""
-        raw_homes: list[str] = []
-        if home:
-            raw_homes = [home.rstrip("\\/"), home.rstrip("\\/").replace("\\", "/")]
-        self._raw_homes = [h for h in dict.fromkeys(raw_homes) if len(h) > 3]
+        alternatives = [
+            (_BEFORE_DRIVE if drive else _BEFORE_SLASH) + _caseless(text) + _AFTER_HOME
+            for text, drive in (_home_forms(home) if home else [])
+        ]
+        self._home_re = re.compile("|".join(alternatives)) if alternatives else None
 
     def key(self, key: str) -> str:
         project = self._project_key.rstrip("/")
@@ -125,16 +174,13 @@ class _Places:
         return key
 
     def word(self, word: str) -> str:
-        """A command word with the home directory written as ``~`` (best effort, any case)."""
-        for raw in self._raw_homes:
-            lowered = word.lower()
-            needle = raw.lower()
-            start = lowered.find(needle)
-            while start >= 0:
-                word = word[:start] + "~" + word[start + len(raw) :]
-                lowered = word.lower()
-                start = lowered.find(needle, start + 1)
-        return word
+        """A command word or text with the home directory written as ``~`` (spec revision 31).
+
+        Best effort: the forms of ``_home_forms`` in any case, only where a name ends after them
+        (review of revision 30, R30-1). The match is made on the text itself: positions found in a
+        lowercased copy are off after U+0130, whose lowercase is two characters, and the text after
+        the home directory was cut instead (R30-4)."""
+        return self._home_re.sub("~", word) if self._home_re is not None else word
 
 
 def _path(ref: PathRef, places: _Places) -> dict[str, Any]:
