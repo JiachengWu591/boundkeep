@@ -75,12 +75,23 @@ MAX_CONTENT_CHARS: Final = 16_000
 MIN_SECRET_CHARS: Final = 8  # shorter values of secret-looking variables are not looked for
 _ALLOWED_CONTROLS: Final = frozenset("\t\r\n")
 _EXPANDED: Final = "variable-expanded"  # normalize.paths: a variable in the word was expanded
-# Where a written home directory may end and begin (spec revision 31): anything else continues a
-# name or a path ("<home>x", "<home>.CORP", "./c/Users/...", "/x/home/me"). An option letter just
-# before it is a beginning ("-I/home/me/include", "/IC:\Users\me\include").
-_AFTER_HOME: Final = r"(?=\Z|[\s" + re.escape("\\/'\"`;|&()<>,:{}[]") + "])"
-_BEFORE_DRIVE: Final = r"(?:(?<!\w)|(?<=[-/][A-Za-z]))"
-_BEFORE_SLASH: Final = r"(?:(?<![\w./\\~])|(?<=-[A-Za-z]))"
+# Where a written home directory may end and begin (spec revisions 31, 32): anything else continues
+# a name or a path ("<home>x", "<home>.CORP", "<home>{2,3}", "./c/Users/...", "/x/home/me").
+# In a command text, or a word the rules did not read as one path (code, a list, a glued option):
+_ENDS: Final = re.escape("/'\"`;|&()<>,:}")
+_TEXT_AFTER_SLASH: Final = r"(?=\Z|[\s" + _ENDS + "])"  # "\" escapes in Bash: "/home/me\2"
+# A single trailing dot before an end is the home itself to Win32 ("C:\Users\me.\notes.txt").
+_TEXT_AFTER_DRIVE: Final = r"(?=\.?(?:\Z|[\s\\" + _ENDS + "]))"
+# In a word the rules read as one path: the word is split already, the rest is part of the name.
+# No Windows name holds a colon: "C:\Users\me:s" is a stream of the home itself.
+_PATH_AFTER_DRIVE: Final = r"(?=\.?(?:\Z|[\\/:]))"
+_PATH_AFTER_WINDOWS: Final = r"(?=\Z|[\\/])"  # "/c/Users/me\x" is under the home (Git Bash too)
+_PATH_AFTER_POSIX: Final = r"(?=\Z|/)"
+# An option glued to it is a beginning and is kept ("-isystem/home/me", "/FoC:\Users\me\build\"),
+# if the option itself begins a word.
+_OPTION_START: Final = r"(?<![\w./\\~-])"
+_BEFORE_DRIVE: Final = r"(?:(?P<drive_option>" + _OPTION_START + r"(?:--?|/)[A-Za-z]+)|(?<!\w))"
+_BEFORE_SLASH: Final = r"(?:(?P<slash_option>" + _OPTION_START + r"--?[A-Za-z]+)|(?<![\w./\\~]))"
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,17 +163,37 @@ def _home_forms(home: str) -> list[tuple[str, bool]]:
     return sorted(kept, key=lambda f: len(f[0]), reverse=True)
 
 
+def _home_pattern(home: str, *, path: bool) -> re.Pattern[str] | None:
+    """The forms of ``home`` with the boundaries of a command text, or of a word that is a path."""
+    forms = _home_forms(home)
+    drives = [_caseless(text) for text, drive in forms if drive]
+    slashes = [_caseless(text) for text, drive in forms if not drive]
+    parts = []
+    if drives:
+        after = _PATH_AFTER_DRIVE if path else _TEXT_AFTER_DRIVE
+        parts.append(_BEFORE_DRIVE + "(?:" + "|".join(drives) + ")" + after)
+    if slashes:
+        if not path:
+            after = _TEXT_AFTER_SLASH
+        else:
+            after = _PATH_AFTER_WINDOWS if drives else _PATH_AFTER_POSIX
+        parts.append(_BEFORE_SLASH + "(?:" + "|".join(slashes) + ")" + after)
+    return re.compile("|".join(parts)) if parts else None
+
+
+def _tilde(match: re.Match[str]) -> str:
+    groups = match.groupdict()  # a POSIX home has no drive forms, so no "drive_option"
+    return (groups.get("drive_option") or groups.get("slash_option") or "") + "~"
+
+
 class _Places:
     """Shows paths and words relative to the project and the home directory."""
 
     def __init__(self, home: str | None, project: str | None) -> None:
         self._home_key = key_of_home(home) if home else ""
         self._project_key = project or ""
-        alternatives = [
-            (_BEFORE_DRIVE if drive else _BEFORE_SLASH) + _caseless(text) + _AFTER_HOME
-            for text, drive in (_home_forms(home) if home else [])
-        ]
-        self._home_re = re.compile("|".join(alternatives)) if alternatives else None
+        self._text_re = _home_pattern(home, path=False) if home else None
+        self._path_re = _home_pattern(home, path=True) if home else None
 
     def key(self, key: str) -> str:
         project = self._project_key.rstrip("/")
@@ -173,21 +204,23 @@ class _Places:
             return "~" + key[len(home) :]
         return key
 
-    def word(self, word: str) -> str:
-        """A command word or text with the home directory written as ``~`` (spec revision 31).
+    def word(self, word: str, *, path: bool = False) -> str:
+        """A command word or text with the home directory written as ``~`` (spec revisions 31, 32).
 
-        Best effort: the forms of ``_home_forms`` in any case, only where a name ends after them
-        (review of revision 30, R30-1). The match is made on the text itself: positions found in a
-        lowercased copy are off after U+0130, whose lowercase is two characters, and the text after
-        the home directory was cut instead (R30-4)."""
-        return self._home_re.sub("~", word) if self._home_re is not None else word
+        Best effort: the forms of ``_home_forms`` in any case, only where a name may end after
+        them (review of revision 30, R30-1). ``path``: the word is one path, so only a separator
+        or its end ends the name (review of revision 31, R31-2). The match is made on the text
+        itself: positions found in a lowercased copy are off after U+0130, whose lowercase is two
+        characters, and the text after the home directory was cut instead (R30-4)."""
+        pattern = self._path_re if path else self._text_re
+        return pattern.sub(_tilde, word) if pattern is not None else word
 
 
 def _path(ref: PathRef, places: _Places) -> dict[str, Any]:
     raw = _checked_text(ref.raw, "a path")
     key = _checked_text(ref.key, "a path")
     # ``$TOKEN/x`` was expanded with the daemon's environment: its key carries the value
-    shown = places.word(raw) if _EXPANDED in ref.reasons else places.key(key)
+    shown = places.word(raw, path=True) if _EXPANDED in ref.reasons else places.key(key)
     return {"path": shown, "access": ref.access, "inside_project": ref.inside_project}
 
 
@@ -238,9 +271,14 @@ def _action(action: Action, places: _Places) -> dict[str, Any]:
     if subcommand:
         out["subcommand"] = subcommand
     if action.flags:
-        out["flags"] = [_checked_text(f, "a flag") for f in action.flags]
+        # a flag may carry a glued home directory ("-I/home/me/inc"): R31-5, spec revision 32
+        out["flags"] = [places.word(_checked_text(f, "a flag")) for f in action.flags]
     if action.args:
-        out["args"] = [places.word(_checked_text(a, "a command word")) for a in action.args]
+        whole_paths = {ref.raw for ref in action.paths}  # words the rules read as one path
+        out["args"] = [
+            places.word(_checked_text(a, "a command word"), path=a in whole_paths)
+            for a in action.args
+        ]
     if action.paths:
         out["paths"] = [_path(ref, places) for ref in action.paths]
     if action.domains:

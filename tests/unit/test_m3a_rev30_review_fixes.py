@@ -90,7 +90,8 @@ def test_a_longer_name_is_not_the_home_directory(after: str) -> None:
         ("&x", "~&x"),
         (")", "~)"),
         ("}", "~}"),
-        ("]", "~]"),
+        # "]" was here: it goes on with a wildcard since spec revision 32 (R31-2), see
+        # test_m3a_rev31_review_fixes.py
         (">x", "~>x"),
         (",x", "~,x"),
         (":x", "~:x"),
