@@ -10,7 +10,7 @@
 |---|---|
 | `task_intent` | 用户最近几条提示（`llm_audit.intent_prompts`，默认 3），每条最多 `intent_chars` 字（默认 300）。宿主拼进提示的 `<ide_opened_file>`、`<ide_selection>`（含选中的文件内容）等块整段去掉；用户粘贴的文字（`<pasted_content>`）不取，只留"粘贴了 N 个字符"的标记；先脱敏再截断。`send_task_intent: false` 时这个字段是 `null` |
 | `tool` | 工具名（`Bash`、`PowerShell`、`Write`、`mcp__服务__工具` ……） |
-| `command` | 只有 Bash、PowerShell 的调用才有（规格修订 30，2026-11-14）：这次调用的命令全文，包括注释，一字不改，只把主目录写成 `~`。主目录的替换是尽力而为（规格修订 31）：认 `C:\Users\<名字>`、`C:/Users/<名字>`、`C:\\Users\\<名字>`、`/c/Users/<名字>`、`/mnt/c/Users/<名字>`、`/cygdrive/c/Users/<名字>` 几种写法，后面是路径分隔符、空白、引号、行尾这类边界时才换；环境变量展开之后的值、URL 编码、拆开再拼起来的、8.3 短名等写法不换，其中的用户名会随请求发出。原因是脚本读得到自己的全文（Claude Code 把它留在 `$__claudeCodeScript`、`$BASH_EXECUTION_STRING` 里），注释和不在任何命令里的文字也可能被拿去当路径或代码，模型必须看得到 |
+| `command` | 只有 Bash、PowerShell 的调用才有（规格修订 30，2026-11-14）：这次调用的命令全文，包括注释，一字不改，只把主目录写成 `~`。主目录的替换是尽力而为（规格修订 31、32）：认 `C:\Users\<名字>`、`C:/Users/<名字>`、`C:\\Users\\<名字>`、`/c/Users/<名字>`、`/mnt/c/Users/<名字>`、`/cygdrive/c/Users/<名字>` 几种写法，后面是路径分隔符、空白、引号、行尾这类边界时才换（规则层读成路径的词，只认分隔符和行尾）；环境变量展开之后的值、URL 编码、拆开再拼起来的、8.3 短名等写法不换，其中的用户名会随请求发出。原因是脚本读得到自己的全文（Claude Code 把它留在 `$__claudeCodeScript`、`$BASH_EXECUTION_STRING` 里），注释和不在任何命令里的文字也可能被拿去当路径或代码，模型必须看得到 |
 | `actions` | 每个简单命令一项：程序名、子命令、选项、命令的词（主目录写成 `~`）、路径（项目内写成 `<project>/…`，主目录下写成 `~/…`，附访问方式与是否在项目内；用守护进程的环境展开过变量的路径按原文，如 `$GITHUB_TOKEN/x`）、主机名、风险标签、包装器、规则判不了的原因 |
 | `cwd_inside_project`、`tainted`、`taint_sources`、`read_untrusted` | 工作目录是否在项目内；会话是否刚读过不可信内容，以及来源**工具名**（不含内容） |
 
