@@ -383,15 +383,14 @@ def test_what_a_command_text_still_replaces_too_often(written: str, shown: str) 
         f"{WIN_HOME} Smith\\notes.txt",
         f"{WIN_HOME} - Copy\\notes.txt",
         f"{WIN_HOME}(2)\\notes.txt",
-        f"{WIN_HOME},old\\notes.txt",
         f"{WIN_HOME}'2\\notes.txt",
-        f"{WIN_HOME};x\\notes.txt",
         f"{WIN_HOME}[23]\\notes.txt",
         f"{WIN_HOME}{{2,3}}\\notes.txt",
         f"{WIN_HOME}}}\\notes.txt",
         f"{WIN_HOME}`2\\notes.txt",
         f"{GIT_BASH_HOME} Smith/notes.txt",
-        f"{GIT_BASH_HOME}:old/notes.txt",  # no stream after a slash form
+        # "," ";" and ":" after a slash form end it since spec revision 34 (a list of paths):
+        # test_m3a_rev33_review_fixes.py
     ],
 )
 def test_in_a_word_that_is_one_path_the_rest_is_part_of_the_name(written: str) -> None:
@@ -418,8 +417,9 @@ def test_in_a_word_that_is_one_path_a_separator_ends_it(written: str, shown: str
 def test_a_word_that_is_one_posix_path_ends_only_at_a_slash() -> None:
     assert _as_path(f"{HOME}/x", home=HOME)[0] == "~/x"
     assert _as_path(HOME, home=HOME)[0] == "~"
-    for written in (f"{HOME}\\x", f"{HOME} x/y", f"{HOME}:old/y", f"{HOME}'2/y"):
+    for written in (f"{HOME}\\x", f"{HOME} x/y", f"{HOME}'2/y"):
         assert _as_path(written, home=HOME)[0] == written
+    # and at a list separator since spec revision 34: test_m3a_rev33_review_fixes.py
 
 
 def test_an_expanded_path_is_shown_with_the_path_boundaries() -> None:
@@ -449,7 +449,7 @@ def test_a_sibling_profile_in_a_real_powershell_call() -> None:
         (f"{GIT_BASH_HOME}\\notes.txt", True),
         (f"{GIT_BASH_HOME} Smith/notes.txt", False),
         (f"{GIT_BASH_HOME}(2)/notes.txt", False),
-        (f"{GIT_BASH_HOME},old/notes.txt", False),
+        # "<home>,old" is shown as "~,old" since spec revision 34: test_m3a_rev33_review_fixes.py
         (f"{WIN_HOME}\\notes.txt", True),
         (f"{WIN_HOME}.\\notes.txt", True),
         (f"{WIN_HOME} Smith\\notes.txt", False),

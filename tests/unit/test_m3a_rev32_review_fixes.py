@@ -173,7 +173,7 @@ def test_other_names_are_left_as_written(written: str) -> None:
         (f"{UNC_FORWARD}/notes.txt", "~/notes.txt"),
         (f"{UNC_HOME} Smith\\notes.txt", f"{UNC_HOME} Smith\\notes.txt"),
         (f"{UNC_HOME}(2)\\x", f"{UNC_HOME}(2)\\x"),
-        (f"{UNC_FORWARD}:old/x", f"{UNC_FORWARD}:old/x"),
+        (f"{UNC_FORWARD}:old/x", "~:old/x"),  # ":" ends a slash form in a path (revision 34)
     ],
 )
 def test_a_word_that_is_a_path_under_a_unc_home(written: str, shown: str) -> None:
