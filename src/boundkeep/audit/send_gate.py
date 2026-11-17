@@ -92,6 +92,9 @@ _PATH_AFTER_POSIX: Final = r"(?=\Z|/)"
 _OPTION_START: Final = r"(?<![\w./\\~-])"
 _BEFORE_DRIVE: Final = r"(?:(?P<drive_option>" + _OPTION_START + r"(?:--?|/)[A-Za-z]+)|(?<!\w))"
 _BEFORE_SLASH: Final = r"(?:(?P<slash_option>" + _OPTION_START + r"--?[A-Za-z]+)|(?<![\w./\\~]))"
+# An option before a path the rules read in the same word ("--directory=<path>", "-isystem<path>",
+# "-Path:<path>"): the path keeps the boundaries of a path (spec revision 33, R32-2).
+_OPTION_PREFIX: Final = re.compile(r"(?:--?|/)[A-Za-z][A-Za-z0-9_-]*[=:]?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,14 +140,24 @@ def _caseless(text: str) -> str:
 
 
 def _home_forms(home: str) -> list[tuple[str, bool]]:
-    """How a command may write the home directory, longest first: (text, starts with a drive).
+    """How a command may write the home directory, longest first: (text, a Windows form that
+    starts with a drive or with backslashes, where "\\" ends the name).
 
     ``C:\\Users\\me`` is also written ``C:/Users/me``, ``C:\\\\Users\\\\me`` (escaped in a string),
     ``/c/Users/me`` (Git Bash, MSYS), ``/mnt/c/Users/me`` (WSL) and ``/cygdrive/c/Users/me``
-    (Cygwin). Any other home only as it is, with either slash."""
+    (Cygwin). A UNC home ``\\\\server\\share\\me`` also escaped and as ``//server/share/me`` (spec
+    revision 33). Any other home only as it is, with either slash."""
     home = home.rstrip("\\/")
     drive = re.fullmatch(r"([A-Za-z]):[\\/]+(.+)", home)
-    if drive is None:
+    unc = re.fullmatch(r"\\\\([^\\/].*)", home)
+    if unc is not None:
+        parts = [p for p in re.split(r"[\\/]+", unc.group(1)) if p]
+        forms = [
+            ("\\\\" + "\\".join(parts), True),
+            ("\\\\\\\\" + "\\\\".join(parts), True),
+            ("//" + "/".join(parts), False),
+        ]
+    elif drive is None:
         forms = [(home, False), (home.replace("\\", "/"), False)]
     else:
         letter = drive.group(1)
@@ -164,7 +177,9 @@ def _home_forms(home: str) -> list[tuple[str, bool]]:
 
 
 def _home_pattern(home: str, *, path: bool) -> re.Pattern[str] | None:
-    """The forms of ``home`` with the boundaries of a command text, or of a word that is a path."""
+    """The forms of ``home`` with the boundaries of a command text, or of a word that is a path.
+    A home with drive or backslashed forms is a Windows home: in a path, "\\" is a separator after
+    its slash forms too."""
     forms = _home_forms(home)
     drives = [_caseless(text) for text, drive in forms if drive]
     slashes = [_caseless(text) for text, drive in forms if not drive]
@@ -214,6 +229,18 @@ class _Places:
         characters, and the text after the home directory was cut instead (R30-4)."""
         pattern = self._path_re if path else self._text_re
         return pattern.sub(_tilde, word) if pattern is not None else word
+
+
+def _word(word: str, raws: Sequence[str], places: _Places) -> str:
+    """A command word or flag as it is sent. ``raws``: the action's path texts, longest first.
+    The whole word is one of them, or an option and then one of them: that path ends only where a
+    path ends (spec revisions 32, 33). Anything else is shown like the command text."""
+    for raw in raws:
+        if word == raw:
+            return places.word(word, path=True)
+        if raw and word.endswith(raw) and _OPTION_PREFIX.fullmatch(word[: -len(raw)]):
+            return word[: -len(raw)] + places.word(raw, path=True)
+    return places.word(word)
 
 
 def _path(ref: PathRef, places: _Places) -> dict[str, Any]:
@@ -270,15 +297,12 @@ def _action(action: Action, places: _Places) -> dict[str, Any]:
     subcommand = _clean_name(action.subcommand)
     if subcommand:
         out["subcommand"] = subcommand
+    raws = sorted({ref.raw for ref in action.paths}, key=len, reverse=True)
     if action.flags:
         # a flag may carry a glued home directory ("-I/home/me/inc"): R31-5, spec revision 32
-        out["flags"] = [places.word(_checked_text(f, "a flag")) for f in action.flags]
+        out["flags"] = [_word(_checked_text(f, "a flag"), raws, places) for f in action.flags]
     if action.args:
-        whole_paths = {ref.raw for ref in action.paths}  # words the rules read as one path
-        out["args"] = [
-            places.word(_checked_text(a, "a command word"), path=a in whole_paths)
-            for a in action.args
-        ]
+        out["args"] = [_word(_checked_text(a, "a command word"), raws, places) for a in action.args]
     if action.paths:
         out["paths"] = [_path(ref, places) for ref in action.paths]
     if action.domains:
