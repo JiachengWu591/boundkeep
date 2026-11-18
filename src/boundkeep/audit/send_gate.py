@@ -37,7 +37,9 @@ Refused (nothing is sent; the audit fails to ``on_failure``):
   as well, and a difference means the command carries a secret (the user decides about that);
 * a serialized request that the redactor would still change (a secret formed across fields):
   the redactor works on shell text, so its edits on JSON are not trusted to keep the structure;
-* a request that contains the value of a secret-looking environment variable (``secrets``).
+* a request that contains the value of a secret-looking environment variable (``secrets``), as
+  written or as the serialization writes it (``"``, ``\\`` and control characters escaped: spec
+  revision 36, R35-1).
 
 The system prompt comes from ``audit.prompt`` and holds no user data.
 """
@@ -262,9 +264,12 @@ class _Places:
         or of that option (spec revision 34, R33-2; revision 35, R34-3): "/c" in "/c/Users/me/x",
         "-C:" in "-C:\\Users\\me\\x", "/root" for the home /root, "-isyst" in "-isystem/home/me".
 
-        The boundaries of a path would find more in one case only, with the same result (spec
-        revision 35, R34-2): a "/" option that is part of a slash form's first part ("/cyg" in
-        "/cygdrive/c/Users/me\\x"), where only a path ends at "\\"."""
+        The boundaries of a path would find more only where a slash form of a Windows or UNC home
+        is followed by "\\", which ends it in a path only (spec revision 36, R35-3): a "/" option
+        that is part of its first part ("/cyg" in "/cygdrive/c/Users/me\\x"), or a cut inside a
+        "-" option glued to it ("-isyst" in "-isystem/c/Users/me\\x"). That home is kept as
+        written either way: the path text after the cut holds no written home there, and a text
+        does not end it at "\\"."""
         pattern = self._text_re
         if pattern is None:
             return False
@@ -316,6 +321,16 @@ def _secret_across_words(words: Sequence[str]) -> bool:
         return False
     quoted = [shlex.quote(w) for w in words]
     return redact_text(" ".join(quoted)) != " ".join(redact_text(q) for q in quoted)
+
+
+def _carries(folded: str, secret: str) -> bool:
+    """The casefolded serialized request ``folded`` holds ``secret``, as written or as the
+    serialization writes it: ``json.dumps`` escapes ``"``, ``\\`` and control characters, so a
+    value with one of them is not there as written (spec revision 36, R35-1)."""
+    if len(secret) < MIN_SECRET_CHARS:
+        return False
+    escaped = json.dumps(secret, ensure_ascii=False)[1:-1]
+    return secret.casefold() in folded or escaped.casefold() in folded
 
 
 def _command(actions: Sequence[Action], places: _Places) -> str:
@@ -398,7 +413,7 @@ def gate(
 
     ``secrets``: values that must never be sent (the auditor passes the values of the daemon's
     secret-looking environment variables, the API key's among them); compared without case, since
-    Windows path keys are casefolded."""
+    Windows path keys are casefolded, as written and as the serialization escapes them."""
     try:
         return _gate(
             actions,
@@ -476,7 +491,7 @@ def _gate(
         # actions while the result still parses (self-review of M3a), so nothing is sent.
         raise _Refused("the request would carry text that looks like a secret across its fields")
     folded = content.casefold()
-    if any(len(s) >= MIN_SECRET_CHARS and s.casefold() in folded for s in secrets):
+    if any(_carries(folded, s) for s in secrets):
         raise _Refused("the request would carry the value of a secret environment variable")
     prompt = system_prompt()
     request = GatedRequest(
