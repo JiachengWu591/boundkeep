@@ -40,7 +40,7 @@ import re
 import shlex
 import time
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Final
 
@@ -273,6 +273,9 @@ class _Line:
     """What is known about the command line so far (one per shell tool call)."""
 
     cwds: tuple[str | None, ...]  # possible working directories; None = unknown
+    # those that came from expanding a variable (``Set-Location $env:X``): a path resolved
+    # against one is marked as expanded, or its key would carry the value (spec revision 37)
+    expanded_cwds: set[str] = field(default_factory=set)
     written: set[str] = field(default_factory=set)  # keys written by earlier commands
     last_find: list[tuple[Word, Access]] = field(default_factory=list)
     line_gray: list[str] = field(default_factory=list)
@@ -386,7 +389,16 @@ def _add_may_stage_protected(
         # (X1 review R5-1): the project root is looked at too, not only the working directory
         targets.append(ctx.root.raw)
     for target in targets:
-        refs = _refs(ctx, notes, target, "read", cwds=st.cwds, dialect=st.shell, dynamic=False)
+        refs = _refs(
+            ctx,
+            notes,
+            target,
+            "read",
+            cwds=st.cwds,
+            expanded_cwds=st.expanded_cwds,
+            dialect=st.shell,
+            dynamic=False,
+        )
         directories = [
             r for r in refs if (native := _native_dir(r)) is not None and os.path.isdir(native)
         ]
@@ -814,6 +826,17 @@ def _with(reasons: Sequence[str], *more: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys([*reasons, *more]))
 
 
+_EXPANDED: Final = "variable-expanded"  # paths: a variable in the text was expanded
+
+
+def _expanded(ref: PathRef) -> PathRef:
+    """``ref`` marked as coming from an expanded variable: the send gate shows it as written,
+    never its key (spec revision 37, R36-1). Only a note: it makes nothing uncertain."""
+    if _EXPANDED in ref.reasons:
+        return ref
+    return ref.model_copy(update={"reasons": _with(ref.reasons, _EXPANDED)})
+
+
 def _make_ref(
     ctx: _Ctx,
     raw: str,
@@ -1123,8 +1146,14 @@ def _refs(
     dialect: str = "bash",
     dynamic: bool = False,
     glob_literal: bool = False,
+    expanded_cwds: Collection[str] = frozenset(),
 ) -> list[PathRef]:
-    """All PathRefs of one path word: per brace result, per possible working directory."""
+    """All PathRefs of one path word: per brace result, per possible working directory.
+
+    ``expanded_cwds``: the working directories that came from expanding a variable (spec revision
+    37, R36-1). A relative path resolved against one is marked as expanded; so is every form the
+    disk gives a path whose own text was expanded (a link's target, an 8.3 name, a kept reading,
+    ``..`` after a link, a glob's matches), whose keys carry the value just the same."""
     ctx.budget.check()
     texts = [raw]
     if dialect == "bash" and "{" in raw:
@@ -1142,7 +1171,7 @@ def _refs(
         for cwd in cwds if relative else cwds[:1]:
             if relative and cwd is None:
                 notes.append("cwd-unknown")
-            for ref in _refs_one(
+            refs = _refs_one(
                 ctx,
                 notes,
                 text,
@@ -1151,7 +1180,14 @@ def _refs(
                 dialect=dialect,
                 dynamic=dynamic,
                 glob_literal=glob_literal,
+            )
+            # the first one is the path as written (``_refs_one``)
+            if refs and (
+                (relative and cwd is not None and cwd in expanded_cwds)
+                or _EXPANDED in refs[0].reasons
             ):
+                refs = [_expanded(ref) for ref in refs]
+            for ref in refs:
                 out.setdefault((ref.raw, ref.key, ref.access, ref.uncertain, ref.reasons), ref)
     ctx.budget.add_refs(len(out))
     return list(out.values())
@@ -1318,8 +1354,11 @@ def _scan_refs(
 # --------------------------------------------------------------------------------------------
 
 
-def _cd_target(ctx: _Ctx, text: str, cwd: str | None, dialect: str = "bash") -> str | None:
-    """The key of the directory ``cd text`` leads to from ``cwd``, or None when unknowable."""
+def _cd_target(
+    ctx: _Ctx, text: str, cwd: str | None, dialect: str = "bash"
+) -> tuple[str | None, bool]:
+    """The key of the directory ``cd text`` leads to from ``cwd`` (None when unknowable), and
+    whether a variable in ``text`` was expanded to find it (spec revision 37, R36-1)."""
     norm = paths.normalize_path(
         text,
         cwd=cwd,
@@ -1327,23 +1366,25 @@ def _cd_target(ctx: _Ctx, text: str, cwd: str | None, dialect: str = "bash") -> 
         env=ctx.env,
         dialect=dialect,  # type: ignore[arg-type]
     )
+    expanded = _EXPANDED in norm.reasons
     if not norm.absolute or norm.is_device or not norm.key:
-        return None
+        return None, expanded
     if norm.key.count("/") > MAX_KEY_DEPTH:
-        return None
+        return None, expanded
     if not norm.uncertain:
-        return norm.key
+        return norm.key, expanded
     if not paths.reading_only(norm.reasons):
-        return None
+        return None, expanded
     # Unsure of the reading, not of the place: what is below it is looked at, and stays uncertain
     # because this text keeps its dots ("cd keys." leads to .ssh when keys is a link to it)
-    return paths.reading_text(
+    kept = paths.reading_text(
         text,
         cwd=cwd,
         home=ctx.home,
         env=ctx.env,
         dialect=dialect,  # type: ignore[arg-type]
     )
+    return kept, expanded
 
 
 def _merge_cwds(old: Sequence[str | None], new: Sequence[str | None]) -> tuple[str | None, ...]:
@@ -1385,7 +1426,16 @@ def _after_cd(ctx: _Ctx, st: _Line, cmd: SimpleCmd, program: str) -> None:
         return
     else:
         text = words[0].text
-    st.cwds = _merge_cwds(st.cwds, [_cd_target(ctx, text, cwd, st.shell) for cwd in st.cwds])
+    relative = _relative_text(text) or _uses_pwd(text, st.shell)
+    targets: list[str | None] = []
+    for cwd in st.cwds:
+        target, expanded = _cd_target(ctx, text, cwd, st.shell)
+        # ``Set-Location $env:X``, or a relative step from such a directory: a path resolved
+        # against it would carry the value (spec revision 37, R36-1)
+        if target is not None and (expanded or (relative and cwd in st.expanded_cwds)):
+            st.expanded_cwds.add(target)
+        targets.append(target)
+    st.cwds = _merge_cwds(st.cwds, targets)
 
 
 def _domains_of(urls: Sequence[str]) -> tuple[tuple[str, ...], bool]:
@@ -1488,7 +1538,16 @@ def _canonical_program(ctx: _Ctx, word: Word, shell: str = "bash") -> tuple[str,
 
 def _expanded_names(ctx: _Ctx, notes: list[str], st: _Line, text: str) -> set[str]:
     """The last segments of ``text`` as the disk layer expands it (its 8.3 short names gone)."""
-    refs = _refs(ctx, notes, text, "read", cwds=st.cwds, dialect=st.shell, dynamic=False)
+    refs = _refs(
+        ctx,
+        notes,
+        text,
+        "read",
+        cwds=st.cwds,
+        expanded_cwds=st.expanded_cwds,
+        dialect=st.shell,
+        dynamic=False,
+    )
     return {
         ref.key.rsplit("/", 1)[-1]
         for ref in refs
@@ -1622,6 +1681,7 @@ def _placeholder_refs(
                 word.text.replace("{}", start.text),
                 access,
                 cwds=st.cwds,
+                expanded_cwds=st.expanded_cwds,
                 dynamic=_dynamic(start, globs=False),
             )
     refs.append(_synthetic_ref(ctx, "{}", access))
@@ -1753,7 +1813,14 @@ def _command_action(
     refs: list[PathRef] = []
     if "program-path-qualified" in gray_reasons:
         refs += _refs(
-            ctx, notes, cmd.argv[0].text, "read", cwds=st.cwds, dialect=st.shell, dynamic=False
+            ctx,
+            notes,
+            cmd.argv[0].text,
+            "read",
+            cwds=st.cwds,
+            expanded_cwds=st.expanded_cwds,
+            dialect=st.shell,
+            dynamic=False,
         )
     recursive = bool(getattr(info, "recursive", False))  # reads the whole subtree of a directory
     for word, access in (*info.paths, *_top_words(ctx, st, info)):
@@ -1766,6 +1833,7 @@ def _command_action(
                 word.text,
                 access,
                 cwds=st.cwds,
+                expanded_cwds=st.expanded_cwds,
                 dialect=st.shell,
                 dynamic=_dynamic(word, globs=False, shell=st.shell),
                 glob_literal=_ps_literal_glob(ctx, word) if st.shell == "powershell" else False,

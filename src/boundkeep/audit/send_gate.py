@@ -8,7 +8,9 @@ inside the project; the taint bits and the names of the source tools; the task i
 stripped of IDE blocks and pasted text, redacted and cut when it was stored). Never a file's
 content, a tool's output, the working directory or a hook field the list does not name. A path
 whose key came from expanding an environment variable is shown in its unexpanded form (the
-daemon's environment holds secrets, the API key among them). ``redact_obj`` runs over the whole
+daemon's environment holds secrets, the API key among them); the rule layer marks so a relative
+path resolved against a working directory that came from one (``Set-Location $env:X``) and the
+forms the disk gives such a path (spec revision 37, R36-1). ``redact_obj`` runs over the whole
 payload.
 
 A Bash or PowerShell call also carries its whole command text (``command``, spec revision 30),
@@ -39,7 +41,7 @@ Refused (nothing is sent; the audit fails to ``on_failure``):
   the redactor works on shell text, so its edits on JSON are not trusted to keep the structure;
 * a request that contains the value of a secret-looking environment variable (``secrets``), as
   written or as the serialization writes it (``"``, ``\\`` and control characters escaped: spec
-  revision 36, R35-1).
+  revision 36, R35-1), also without the whitespace at either end (spec revision 37, R36-2).
 
 The system prompt comes from ``audit.prompt`` and holds no user data.
 """
@@ -77,6 +79,7 @@ MAX_CONTENT_CHARS: Final = 16_000
 MIN_SECRET_CHARS: Final = 8  # shorter values of secret-looking variables are not looked for
 _ALLOWED_CONTROLS: Final = frozenset("\t\r\n")
 _EXPANDED: Final = "variable-expanded"  # normalize.paths: a variable in the word was expanded
+_GLOB_MATCH: Final = "glob-match"  # normalize.event: a file a glob matched on disk
 # Where a written home directory may end and begin (spec revisions 31, 32): anything else continues
 # a name or a path ("<home>x", "<home>.CORP", "<home>{2,3}", "./c/Users/...", "/x/home/me").
 # In a command text, or a word the rules did not read as one path (code, a list, a glued option):
@@ -312,6 +315,18 @@ def _path(ref: PathRef, places: _Places) -> dict[str, Any]:
     return {"path": shown, "access": ref.access, "inside_project": ref.inside_project}
 
 
+def _hidden_match(ref: PathRef) -> bool:
+    """A file a glob matched under an expanded variable is left out of the request (spec revision
+    37, R36-1): its text is where the disk found it, which holds the variable's value; the glob
+    as written is shown instead. Its texts are still checked, so a name that refuses the request
+    still does."""
+    if _EXPANDED not in ref.reasons or _GLOB_MATCH not in ref.reasons:
+        return False
+    _checked_text(ref.raw, "a path")
+    _checked_text(ref.key, "a path")
+    return True
+
+
 def _secret_across_words(words: Sequence[str]) -> bool:
     """The words, redacted as one command line, hide more than redacted one by one.
 
@@ -326,11 +341,17 @@ def _secret_across_words(words: Sequence[str]) -> bool:
 def _carries(folded: str, secret: str) -> bool:
     """The casefolded serialized request ``folded`` holds ``secret``, as written or as the
     serialization writes it: ``json.dumps`` escapes ``"``, ``\\`` and control characters, so a
-    value with one of them is not there as written (spec revision 36, R35-1)."""
-    if len(secret) < MIN_SECRET_CHARS:
-        return False
-    escaped = json.dumps(secret, ensure_ascii=False)[1:-1]
-    return secret.casefold() in folded or escaped.casefold() in folded
+    value with one of them is not there as written (spec revision 36, R35-1).
+
+    A value with whitespace at either end is looked for without it as well (spec revision 37,
+    R36-2): ``Get-Content -Raw`` keeps a file's last line feed, a command does not."""
+    for value in dict.fromkeys((secret, secret.strip())):
+        if len(value) < MIN_SECRET_CHARS:
+            continue
+        escaped = json.dumps(value, ensure_ascii=False)[1:-1]
+        if value.casefold() in folded or escaped.casefold() in folded:
+            return True
+    return False
 
 
 def _command(actions: Sequence[Action], places: _Places) -> str:
@@ -375,7 +396,7 @@ def _action(action: Action, places: _Places) -> dict[str, Any]:
     if action.args:
         out["args"] = [_word(_checked_text(a, "a command word"), raws, places) for a in action.args]
     if action.paths:
-        out["paths"] = [_path(ref, places) for ref in action.paths]
+        out["paths"] = [_path(ref, places) for ref in action.paths if not _hidden_match(ref)]
     if action.domains:
         out["domains"] = [_checked_text(d, "a host") for d in action.domains]
     out["network"] = action.network
@@ -413,7 +434,8 @@ def gate(
 
     ``secrets``: values that must never be sent (the auditor passes the values of the daemon's
     secret-looking environment variables, the API key's among them); compared without case, since
-    Windows path keys are casefolded, as written and as the serialization escapes them."""
+    Windows path keys are casefolded, as written and as the serialization escapes them, and
+    without the whitespace at either end."""
     try:
         return _gate(
             actions,

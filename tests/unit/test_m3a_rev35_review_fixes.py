@@ -109,9 +109,11 @@ def test_a_secret_value_the_rules_wrote_with_other_separators_is_not_found() -> 
 
 
 def test_a_secret_value_written_with_escapes_in_the_command_is_not_found() -> None:
-    # Spec revision 36: the command text holds 'pa\"ss1234wd', which is not the value
+    # Spec revision 36: the command text holds 'pa\"ss1234wd', which is not the value. Spec
+    # revision 37 (R36-4): Windows PowerShell 5.1 takes no '\"' escape, so the rules split the
+    # word in two there, and neither holds the value
     code = "print('pa\\\"ss1234wd')"
-    action = _ps(f'python -c "{code}"', "-c", code)
+    action = _ps(f'python -c "{code}"', "-c", "print('pa\\", 'ss1234wd)"')
     result = gate((action,), tool="PowerShell", home=WIN_HOME, secrets=('pa"ss1234wd',))
     assert result.request is not None
 
