@@ -94,9 +94,18 @@ _PATH_AFTER_POSIX: Final = r"(?=\Z|[/:,;])"
 _OPTION_START: Final = r"(?<![\w./\\~-])"
 _BEFORE_DRIVE: Final = r"(?:(?P<drive_option>" + _OPTION_START + r"(?:--?|/)[A-Za-z]+)|(?<!\w))"
 _BEFORE_SLASH: Final = r"(?:(?P<slash_option>" + _OPTION_START + r"--?[A-Za-z]+)|(?<![\w./\\~]))"
-# A UNC form after ":", ".", "\", "/" or "~" is another path ("C:\\server\..." is a folder on C:,
-# ".\\server\..." a relative path): spec revision 34, R33-3.
-_BEFORE_UNC: Final = r"(?:(?P<unc_option>" + _OPTION_START + r"(?:--?|/)[A-Za-z]+)|(?<![\w./\\~:]))"
+# A UNC form after ".", "\", "/", "~" or a drive's colon is another path ("C:\\server\..." is a
+# folder on C:, ".\\server\..." a relative path): spec revision 34, R33-3. Another colon is a
+# beginning ("FileSystem::\\server\..."), and a glued option may end with one ("/OUT:\\server\...",
+# "/F:"): spec revision 35, R34-1.
+_DRIVE_COLON: Final = r"(?<!(?<!\w)[A-Za-z]:)"
+_BEFORE_UNC: Final = (
+    r"(?:(?P<unc_option>"
+    + _OPTION_START
+    + r"(?:--?|/)[A-Za-z]+:?)|(?<![\w./\\~])"
+    + _DRIVE_COLON
+    + ")"
+)
 # An option before a path the rules read in the same word ("--directory=<path>", "-isystem<path>",
 # "-Path:<path>"): the path keeps the boundaries of a path (spec revision 33, R32-2).
 _OPTION_PREFIX: Final = re.compile(r"(?:--?|/)[A-Za-z][A-Za-z0-9_-]*[=:]?")
@@ -185,8 +194,8 @@ def _home_forms(home: str) -> list[tuple[str, bool]]:
 def _home_pattern(home: str, *, path: bool) -> re.Pattern[str] | None:
     """The forms of ``home`` with the boundaries of a command text, or of a word that is a path.
     A home with drive or backslashed forms is a Windows home: in a path, "\\" is a separator after
-    its slash forms too. Backslashed UNC forms begin like a drive form but not after ":", ".",
-    "\\", "/" or "~" (spec revision 34)."""
+    its slash forms too. Backslashed UNC forms begin like a drive form but not after ".", "\\",
+    "/", "~" or a drive's colon (spec revisions 34, 35)."""
     forms = _home_forms(home)
     windows = [text for text, drive in forms if drive]
     drives = [_caseless(text) for text in windows if not text.startswith("\\\\")]
@@ -237,7 +246,7 @@ class _Places:
         return key
 
     def word(self, word: str, *, path: bool = False) -> str:
-        """A command word or text with the home directory written as ``~`` (spec revisions 31-34).
+        """A command word or text with the home directory written as ``~`` (spec revisions 31-35).
 
         Best effort: the forms of ``_home_forms`` in any case, only where a name may end after
         them (review of revision 30, R30-1). ``path``: the word is one path, so only a separator
@@ -248,26 +257,32 @@ class _Places:
         return pattern.sub(_tilde, word) if pattern is not None else word
 
     def home_begins_before(self, word: str, cut: int) -> bool:
-        """A written home in ``word`` (with the boundaries of a text) begins before ``cut``: the
-        text before ``cut`` is then part of a path, not an option (spec revision 34, R33-2): "/c"
-        in "/c/Users/me/x", "-C:" in "-C:\\Users\\me\\x", "/root" for the home /root.
+        """A written home in ``word`` (with the boundaries of a text) begins before ``cut``, or
+        ``cut`` falls inside the option glued to it: the text before ``cut`` is then part of a path
+        or of that option (spec revision 34, R33-2; revision 35, R34-3): "/c" in "/c/Users/me/x",
+        "-C:" in "-C:\\Users\\me\\x", "/root" for the home /root, "-isyst" in "-isystem/home/me".
 
-        The boundaries of a path would find no more: after a drive or UNC form they end where a
-        text ends too, and a slash form can begin before ``cut`` only in a "/" option, which
-        ``_word`` does not cut off before a path that begins with "/"."""
+        The boundaries of a path would find more in one case only, with the same result (spec
+        revision 35, R34-2): a "/" option that is part of a slash form's first part ("/cyg" in
+        "/cygdrive/c/Users/me\\x"), where only a path ends at "\\"."""
         pattern = self._text_re
-        return pattern is not None and any(
-            m.start() + len(_option_of(m)) < cut for m in pattern.finditer(word)
-        )
+        if pattern is None:
+            return False
+        for m in pattern.finditer(word):
+            begins = m.start() + len(_option_of(m))
+            if m.start() < cut and begins != cut:
+                return True
+        return False
 
 
 def _word(word: str, raws: Sequence[str], places: _Places) -> str:
     """A command word or flag as it is sent. ``raws``: the action's path texts, longest first.
     The whole word is one of them, or an option and then one of them: that path ends only where a
-    path ends (spec revisions 32 to 34). Anything else is shown like the command text.
+    path ends (spec revisions 32 to 35). Anything else is shown like the command text.
 
-    An option is cut off only if no written home begins inside it, and a "/" option only before a
-    path that does not begin with "/" ("/srv/home/me" is another path): spec revision 34, R33-2."""
+    An option is cut off only if no written home begins inside it and the cut is not inside an
+    option glued to one, and a "/" option only before a path that does not begin with "/"
+    ("/srv/home/me" is another path): spec revisions 34 (R33-2) and 35 (R34-3)."""
     for raw in raws:
         if word == raw:
             return places.word(word, path=True)

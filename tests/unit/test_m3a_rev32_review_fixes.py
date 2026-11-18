@@ -243,10 +243,12 @@ def test_anything_else_before_a_path_is_shown_like_the_command_text(word: str, r
 
 
 def test_the_longest_path_text_that_fits_is_taken() -> None:
-    """``--o`` and the relative ``x/c/Users/<name>/y``, not ``--ox`` and the home: the path the
-    rules read with more of the word wins."""
-    word = f"--ox{GIT_BASH_HOME}/y"
-    raws = (f"{GIT_BASH_HOME}/y", f"x{GIT_BASH_HOME}/y")
+    """``--o`` and the relative ``x1/c/Users/<name>/y``, not ``--ox1`` and the home: the path the
+    rules read with more of the word wins. (``--ox`` before the home is an option glued to it in
+    the command text, and the cut may not fall inside it since spec revision 35:
+    test_m3a_rev34_review_fixes.py.)"""
+    word = f"--ox1{GIT_BASH_HOME}/y"
+    raws = (f"{GIT_BASH_HOME}/y", f"x1{GIT_BASH_HOME}/y")
     assert _with_paths(args=(word,), raws=raws)["args"] == [word]
 
 
