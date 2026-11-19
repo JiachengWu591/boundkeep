@@ -317,9 +317,9 @@ def _path(ref: PathRef, places: _Places) -> dict[str, Any]:
 
 def _hidden_match(ref: PathRef) -> bool:
     """A file a glob matched under an expanded variable is left out of the request (spec revision
-    37, R36-1): its text is where the disk found it, which holds the variable's value; the glob
-    as written is shown instead. Its texts are still checked, so a name that refuses the request
-    still does."""
+    37, R36-1), its form on disk through a link too (revision 38, R37-1): its text is where the
+    disk found it, which holds the variable's value; the glob as written is shown instead. Its
+    texts are still checked, so a name that refuses the request still does."""
     if _EXPANDED not in ref.reasons or _GLOB_MATCH not in ref.reasons:
         return False
     _checked_text(ref.raw, "a path")

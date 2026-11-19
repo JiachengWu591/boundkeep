@@ -827,6 +827,8 @@ def _with(reasons: Sequence[str], *more: str) -> tuple[str, ...]:
 
 
 _EXPANDED: Final = "variable-expanded"  # paths: a variable in the text was expanded
+# paths: not relative, yet the key took the working directory's drive or path (``C:x``, ``\x``)
+_CWD_READINGS: Final = frozenset({"drive-relative", "rooted-current-drive"})
 
 
 def _expanded(ref: PathRef) -> PathRef:
@@ -958,7 +960,9 @@ def _resolved_forms(
     access: Access,
     extra_reasons: Sequence[str],
 ) -> list[PathRef]:
-    """A certain path as a PathRef, plus its on-disk resolved form when that differs."""
+    """A certain path as a PathRef, plus its on-disk resolved form when that differs; both carry
+    ``extra_reasons`` ("glob-match": the send gate leaves out an expanded match's disk form too,
+    whose text is the match all the same, spec revision 38, R37-1)."""
     refs = [
         _make_ref(
             ctx,
@@ -980,7 +984,7 @@ def _resolved_forms(
                 resolved,
                 access,
                 uncertain=resolved.uncertain,
-                reasons=_with(resolved.reasons, "resolved-on-disk"),
+                reasons=_with(resolved.reasons, "resolved-on-disk", *extra_reasons),
                 resolved=True,
             )
         )
@@ -1151,9 +1155,12 @@ def _refs(
     """All PathRefs of one path word: per brace result, per possible working directory.
 
     ``expanded_cwds``: the working directories that came from expanding a variable (spec revision
-    37, R36-1). A relative path resolved against one is marked as expanded; so is every form the
-    disk gives a path whose own text was expanded (a link's target, an 8.3 name, a kept reading,
-    ``..`` after a link, a glob's matches), whose keys carry the value just the same."""
+    37, R36-1). A relative path resolved against one is marked as expanded, and so are ``C:x``
+    and ``\\x`` when the first working directory is one (revision 38); so is every form the disk
+    gives a path whose own text was expanded (a link's target, an 8.3 name, a kept reading, ``..``
+    after a link, a glob's matches and their targets), whose keys carry the value just the same.
+    The same path from two working directories that are one directory, one of them expanded, is
+    kept once, marked (revision 38)."""
     ctx.budget.check()
     texts = [raw]
     if dialect == "bash" and "{" in raw:
@@ -1181,14 +1188,30 @@ def _refs(
                 dynamic=dynamic,
                 glob_literal=glob_literal,
             )
-            # the first one is the path as written (``_refs_one``)
+            # the first one is the path as written (``_refs_one``); ``C:x`` and ``\x`` take the
+            # first working directory's path or drive as well (spec revision 38, R37-3)
             if refs and (
-                (relative and cwd is not None and cwd in expanded_cwds)
+                (
+                    (relative or not _CWD_READINGS.isdisjoint(refs[0].reasons))
+                    and cwd is not None
+                    and cwd in expanded_cwds
+                )
                 or _EXPANDED in refs[0].reasons
             ):
                 refs = [_expanded(ref) for ref in refs]
             for ref in refs:
-                out.setdefault((ref.raw, ref.key, ref.access, ref.uncertain, ref.reasons), ref)
+                # one directory can be two working directories (the event's cwd is its text, a
+                # cd target its key): the same path from both, one marked, is one ref, marked
+                # (spec revision 38, R37-2)
+                slot = (
+                    ref.raw,
+                    ref.key,
+                    ref.access,
+                    ref.uncertain,
+                    tuple(r for r in ref.reasons if r != _EXPANDED),
+                )
+                if slot not in out or _EXPANDED in ref.reasons:
+                    out[slot] = ref
     ctx.budget.add_refs(len(out))
     return list(out.values())
 
