@@ -962,7 +962,9 @@ def _resolved_forms(
 ) -> list[PathRef]:
     """A certain path as a PathRef, plus its on-disk resolved form when that differs; both carry
     ``extra_reasons`` ("glob-match": the send gate leaves out an expanded match's disk form too,
-    whose text is the match all the same, spec revision 38, R37-1)."""
+    whose text is the match all the same, spec revision 38, R37-1). "glob-match" only describes
+    the path (``paths._INFO_REASONS``): a recursive read still walks a match that is unsure only
+    of its reading, and its disk form (spec revision 39, R38-1)."""
     refs = [
         _make_ref(
             ctx,

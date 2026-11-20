@@ -138,7 +138,10 @@ def windows_fold(text: str) -> str:
     return "".join(c if c in _NTFS_KEEPS_APART or ord(c) > 0xFFFF else c.casefold() for c in text)
 
 
-# Reasons that only describe what was done to the path and do not make it uncertain.
+# Reasons that only describe what was done to the path and do not make it uncertain. ``glob-match``
+# (event.py: a file a glob matched on disk, and its resolved form) says where the path came from;
+# without it here a match that is unsure only of its reading is not walked by a recursive read
+# (spec revision 39, R38-1, R38-2).
 _INFO_REASONS = frozenset(
     {
         "ads-stripped",
@@ -155,6 +158,7 @@ _INFO_REASONS = frozenset(
         "home-expanded",
         "resolved-on-disk",
         "hard-linked",
+        "glob-match",
     }
 )
 
