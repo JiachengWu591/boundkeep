@@ -159,8 +159,13 @@ _INFO_REASONS = frozenset(
         "resolved-on-disk",
         "hard-linked",
         "glob-match",
+        "extra-reading",
     }
 )
+# event.py: a PathRef only revision 40's readings find (a glob's match with its name as on disk, the
+# second expansion's matches, a recursive read's hits under the key without the dots or on the
+# second walk). Walked after the others and counted apart; it says nothing of the path itself.
+EXTRA_READING = "extra-reading"
 
 HARD_LINKED = "hard-linked"  # the file has more than one name (see ``_hard_linked``)
 
@@ -1534,6 +1539,14 @@ def _drive_type(letter: str) -> int:
     return int(ctypes.windll.kernel32.GetDriveTypeW(f"{letter.upper()}:\\"))
 
 
+def is_fixed_drive(letter: str) -> bool:
+    """Is the drive ``letter`` a local, fixed disk? (True on other platforms; never raises.)"""
+    try:
+        return letter.isascii() and letter.isalpha() and _drive_type(letter) == _DRIVE_FIXED
+    except Exception:  # noqa: BLE001 - a guard that raises would be worse than saying no
+        return False
+
+
 def is_local_disk(path: NormPath) -> bool:
     """May this path be looked up on disk without risking a hang on a network or odd device?
 
@@ -1566,10 +1579,14 @@ class GlobResult:
 
     matches: tuple[str, ...]
     status: GlobStatus
+    # a name a wildcard matched ends in a dot or a space (Windows flavor): a Win32 call reads it
+    # as another name, so the names as on disk need an expansion of their own (spec revision 40)
+    dotted: bool = False
 
 
 _GLOB_CHARS = "*?["
 _MAX_GLOB_DEPTH = 64
+_EXTENDED = "\\\\?\\"
 
 
 def expand_glob(
@@ -1579,6 +1596,7 @@ def expand_glob(
     max_entries: int = 4096,
     deadline: float | None = None,
     dotfiles: bool = False,
+    literal: bool = False,
 ) -> GlobResult:
     """File system layer: the existing paths a glob-carrying ``path`` can stand for (bash rules).
 
@@ -1591,10 +1609,14 @@ def expand_glob(
     ``none`` means nothing matched or a directory does not exist; ``unsupported`` means the path is
     not one we may enumerate (relative, UNC, device, network drive, foreign flavor, unresolved
     variable, too deep). The caller keeps the unexpanded text as an uncertain path in every case.
+    ``literal`` (Windows host, Windows flavor): every directory is listed and every match checked
+    through ``\\\\?\\`` paths, so the names are read as they are on disk (``kq.`` is not ``kq``);
+    the key's own segments are taken as written (a text that keeps its trailing dots can be
+    passed as the key). The matches are returned without the prefix (spec revision 40).
     Never raises.
     """
     try:
-        return _expand_glob(path, limit, max_entries, deadline, dotfiles)
+        return _expand_glob(path, limit, max_entries, deadline, dotfiles, literal)
     except Exception:  # noqa: BLE001 - never raise; "unsupported" keeps the caller cautious
         return GlobResult((), "unsupported")
 
@@ -1603,8 +1625,18 @@ def _glob_pattern(segment: str) -> str:
     return segment.replace("[^", "[!") if "[^" in segment else segment
 
 
+def _plain(native: str) -> str:
+    """``native`` without a leading ``\\\\?\\``."""
+    return native[len(_EXTENDED) :] if native.startswith(_EXTENDED) else native
+
+
 def _expand_glob(
-    path: NormPath, limit: int, max_entries: int, deadline: float | None, dotfiles: bool = False
+    path: NormPath,
+    limit: int,
+    max_entries: int,
+    deadline: float | None,
+    dotfiles: bool = False,
+    literal: bool = False,
 ) -> GlobResult:
     blocking = [
         r
@@ -1618,10 +1650,14 @@ def _expand_glob(
         return GlobResult((), "unsupported")
     anchor, parts = split
     windows = path.flavor == "windows"
+    extended = literal and windows and os.name == "nt"
     current = [anchor.replace("/", "\\") if windows else anchor]
+    if extended:
+        current = [_EXTENDED + current[0]]
+    dotted = False
     for segment in parts:
         if deadline is not None and time.monotonic() >= deadline:
-            return GlobResult((), "budget")
+            return GlobResult((), "budget", dotted)
         if not any(c in segment for c in _GLOB_CHARS):
             current = [os.path.join(base, segment) for base in current]
             continue
@@ -1632,21 +1668,33 @@ def _expand_glob(
                 with os.scandir(base) as entries:
                     for count, entry in enumerate(entries):
                         if count >= max_entries:
-                            return GlobResult(tuple(nxt), "too-many")
+                            return GlobResult(tuple(map(_plain, nxt)), "too-many", dotted)
+                        # (the literal expansion is revision 40's: it reads the clock within a
+                        # listing too; the Win32 one reads it per segment, as before)
+                        if (
+                            extended
+                            and deadline is not None
+                            and not count & 63
+                            and time.monotonic() >= deadline
+                        ):
+                            return GlobResult((), "budget", dotted)
                         name = entry.name
                         if name.startswith(".") and not segment.startswith(".") and not dotfiles:
                             continue
                         if fnmatch.fnmatchcase(windows_fold(name) if windows else name, pattern):
+                            dotted = dotted or (windows and name[-1:] in (".", " "))
                             nxt.append(os.path.join(base, name))
                             if len(nxt) > limit:
-                                return GlobResult(tuple(nxt[:limit]), "too-many")
+                                return GlobResult(
+                                    tuple(map(_plain, nxt[:limit])), "too-many", dotted
+                                )
             except OSError:
                 continue
         current = nxt
         if not current:
-            return GlobResult((), "none")
-    found = tuple(p for p in current if os.path.lexists(p))
-    return GlobResult(found, "ok" if found else "none")
+            return GlobResult((), "none", dotted)
+    found = tuple(_plain(p) for p in current if os.path.lexists(p))
+    return GlobResult(found, "ok" if found else "none", dotted)
 
 
 def _hard_linked(native: str) -> bool:

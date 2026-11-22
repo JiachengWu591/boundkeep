@@ -75,6 +75,15 @@ TIME_BUDGET_S = 0.25  # normalize_event runs on the daemon's event loop
 MAX_ACTIONS = 256  # simple commands handled per command line
 MAX_DISK_KEYS = 64  # distinct paths looked up on disk per request
 MAX_GLOB_DISK_KEYS = 256  # ... for the files a glob matched (a budget of their own)
+# ... for the names as they are on disk that revision 40 adds (a glob match's own spelling, the
+# matches only the second expansion finds): counted apart, and running out never raises
+MAX_READING_DISK_KEYS = 64
+# PathRefs only revision 40 finds, per request (apart from MAX_REFS; each costs rule time, about a
+# millisecond, so the cap is small)
+MAX_EXTRA_REFS = 128
+# wall time of revision 40's second glob expansions and its disk lookups, per request: given back
+# to the request's deadline, so it is not charged to the normalize budget
+EXTRA_TIME_S = 0.25
 # After the budget above ran out, ALL remaining commands are still classified, lexically only (no
 # glob expansion, no disk lookups, no subtree scans), so a deny rule still sees their paths. There
 # is no cap on how many: the pass is bounded by the size of the input (``MAX_PARSE_WORDS``), by the
@@ -227,6 +236,36 @@ class _Budget:
             subtree.MAX_SCAN_ENTRIES, subtree.SCAN_TIME_BUDGET_S
         )
     )
+    # Spec revision 40. ``kept_dirs``: (raw, key) of a PathRef -> the ``\\?\`` directories its
+    # reading that keeps the names as on disk leads to, when a walk from the key does not get
+    # there; walked after the operand's other roots, on ``late_scan``, as are the PathRefs marked
+    # ``paths.EXTRA_READING``, so the walks revision 39 made keep their budget. ``extra_refs``:
+    # those PathRefs so far (``MAX_EXTRA_REFS``); ``extra_s``: the time of revision 40's second
+    # expansions and disk lookups (``EXTRA_TIME_S``).
+    reading_lookups: dict[Any, Any] = field(default_factory=dict)
+    kept_dirs: dict[tuple[str, str], list[str]] = field(default_factory=dict)
+    extra_refs: int = 0
+    extra_s: float = 0.0
+    late_scan: subtree.ScanBudget = field(
+        default_factory=lambda: subtree.ScanBudget(
+            subtree.MAX_SCAN_ENTRIES, subtree.SCAN_TIME_BUDGET_S
+        )
+    )
+
+    def reading_slot(self) -> bool:
+        """May revision 40 look one more name up on disk? (``MAX_READING_DISK_KEYS``,
+        ``EXTRA_TIME_S``, the request's deadline; never raises)"""
+        return (
+            len(self.reading_lookups) < MAX_READING_DISK_KEYS
+            and self.extra_s < EXTRA_TIME_S
+            and time.monotonic() < self.deadline
+        )
+
+    def extra_time(self, started: float) -> None:
+        """Book the time since ``started`` as revision 40's own: given back to the deadline."""
+        took = time.monotonic() - started
+        self.extra_s += took
+        self.deadline += took
 
     def check(self) -> None:
         if time.monotonic() >= self.deadline:
@@ -399,8 +438,13 @@ def _add_may_stage_protected(
             dialect=st.shell,
             dynamic=False,
         )
+        # (a directory that only the reading keeping the dots finds, ``kq.`` without ``kq``, is
+        # looked at as well: spec revision 40, R39-4)
         directories = [
-            r for r in refs if (native := _native_dir(r)) is not None and os.path.isdir(native)
+            r
+            for r in refs
+            if (native := _native_dir(r)) is not None
+            and (os.path.isdir(native) or (r.raw, r.key) in ctx.budget.kept_dirs)
         ]
         if directories and _scan_refs(ctx, notes, directories, "read", skip_names=_STAGE_SCAN_SKIP):
             return True
@@ -924,6 +968,82 @@ def _disk_realpath(ctx: _Ctx, text: str) -> str:
     return result
 
 
+_READING_LOOKUPS_SPENT: Final = "budget:reading-lookups"
+_EXTRA_PATHS_SPENT: Final = "budget:extra-paths"
+# A reading's disk lookup failed (``realpath`` of a junction that leads to a file raises): this
+# action is not analysed whole, the rest of the line is (an "internal-error" is never sent)
+_LOOKUP_FAILED: Final = "internal-error:reading-lookup"
+_FAILED: Final = object()  # (a memoized lookup that failed)
+
+
+def _note(notes: list[str], note: str) -> None:
+    if note not in notes:
+        notes.append(note)
+
+
+def _reading_lookup(ctx: _Ctx, notes: list[str], memo_key: Any, compute: Any) -> Any:
+    """A disk lookup revision 40 adds, memoized; None when ``MAX_READING_DISK_KEYS`` (or the
+    request's time) is spent, or when it fails. Either leaves a gray, unanalysed note and nothing
+    raises: the lookups revision 39 made keep their count, and nothing here sends the line into
+    lexical mode or makes the whole call one gray action."""
+    memo = ctx.budget.reading_lookups
+    if memo_key in memo:
+        value = memo[memo_key]
+        if value is _FAILED:
+            _note(notes, _LOOKUP_FAILED)
+            return None
+        return value
+    if not ctx.budget.reading_slot():
+        _note(notes, _READING_LOOKUPS_SPENT)
+        return None
+    started = time.monotonic()
+    try:
+        value = compute()
+    except (OSError, ValueError):
+        _note(notes, _LOOKUP_FAILED)
+        value = _FAILED
+    finally:
+        ctx.budget.extra_time(started)
+    memo[memo_key] = value
+    return None if value is _FAILED else value
+
+
+def _admit_extra(ctx: _Ctx, notes: list[str], refs: Sequence[PathRef]) -> list[PathRef]:
+    """The PathRefs only revision 40 finds that fit in ``MAX_EXTRA_REFS``; the rest are left out
+    with a gray, unanalysed note. Never raises: they cannot push revision 39's own PathRefs over
+    ``MAX_REFS`` (spec revision 40)."""
+    room = max(0, MAX_EXTRA_REFS - ctx.budget.extra_refs)
+    kept = list(refs[:room])
+    ctx.budget.extra_refs += len(kept)
+    if len(kept) < len(refs):
+        _note(notes, _EXTRA_PATHS_SPENT)
+    return kept
+
+
+def _extended_native(text: str) -> str | None:
+    """``text`` as a ``\\\\?\\`` path, when it is a path on a fixed local drive (else None)."""
+    body = text[4:] if text.startswith("\\\\?\\") else text
+    if len(body) < 3 or body[1] != ":" or body[2] != "\\" or "/" in body or "\x00" in body:
+        return None
+    if any(part in (".", "..") for part in body[3:].split("\\")):
+        return None
+    return "\\\\?\\" + body if paths.is_fixed_drive(body[0]) else None
+
+
+def _record_kept_dir(ctx: _Ctx, owner: tuple[str, str], resolved: str) -> None:
+    """Remember where the reading that keeps the names as on disk leads (``resolved``, a real
+    path), for the PathRef ``owner`` (raw, key), when a walk from the key does not get there:
+    a name on the way ends in a dot or a space (spec revision 40, R39-2)."""
+    native = _extended_native(resolved)
+    if native is None:
+        return
+    if not any(part.endswith((".", " ")) for part in native[7:].split("\\")):
+        return
+    dirs = ctx.budget.kept_dirs.setdefault(owner, [])
+    if native not in dirs:
+        dirs.append(native)
+
+
 def _glob_refs(
     ctx: _Ctx,
     norm: paths.NormPath,
@@ -931,10 +1051,15 @@ def _glob_refs(
     notes: list[str],
     *,
     dotfiles: bool = False,
+    kept_text: str | None = None,
 ) -> list[PathRef]:
     """PathRefs for the files an unquoted glob matches on disk (the text itself stays uncertain).
 
     ``dotfiles``: the wildcard also matches names that start with a dot (PowerShell, unlike Bash).
+    ``kept_text``: the glob as a program that keeps trailing dots reads it (``paths.reading_text``),
+    when that differs from the key. The expansion is the Win32 one first, as before; a match whose
+    name ends in a dot or a space, or such a ``kept_text``, makes a second one with the names read
+    as they are on disk (spec revision 40, R39-1).
     """
     ctx.budget.check()
     found = paths.expand_glob(
@@ -947,10 +1072,137 @@ def _glob_refs(
     elif found.status != "ok":
         notes.append("glob-not-expanded")
     refs: list[PathRef] = []
-    for match in found.matches[:MAX_GLOB_MATCHES]:
+    matches = found.matches[:MAX_GLOB_MATCHES]
+    for match in matches:
         found_norm = paths.normalize_path(match, cwd=None, home=None, dialect="tool", literal=True)
-        refs += _resolved_forms(ctx, match, found_norm, access, ("glob-match",))
+        forms = _resolved_forms(ctx, match, found_norm, access, ("glob-match",))
+        refs += forms + _match_kept_forms(ctx, notes, match, found_norm, access, forms)
+    if (
+        norm.flavor == "windows"
+        and os.name == "nt"
+        and found.status != "unsupported"
+        and (found.dotted or kept_text is not None)
+    ):
+        refs += _literal_glob_refs(ctx, norm, access, notes, dotfiles, kept_text, matches)
     return refs
+
+
+def _literal_glob_refs(
+    ctx: _Ctx,
+    norm: paths.NormPath,
+    access: Access,
+    notes: list[str],
+    dotfiles: bool,
+    kept_text: str | None,
+    earlier: Sequence[str],
+) -> list[PathRef]:
+    """The glob again with the names read as they are on disk (``\\\\?\\`` paths), its literal
+    part as ``kept_text`` keeps it: ``kq./.e*`` looks in ``kq.``, ``???`` keeps ``kq.`` when there
+    is no ``kq`` (spec revision 40). Only the matches the Win32 expansion did not find, after
+    those, up to ``MAX_GLOB_MATCHES`` in all; marked ``paths.EXTRA_READING``, so they are walked
+    after the operand's other roots. Its time is its own (``EXTRA_TIME_S``, given back to
+    the request's deadline); when that is spent the expansion stops with a gray, unanalysed note
+    and nothing raises."""
+    source = norm
+    if kept_text is not None:
+        source = paths.NormPath(
+            kept_text,
+            paths.windows_fold(kept_text),
+            "windows",
+            True,
+            True,
+            ("glob", paths.KEPT_READING),
+        )
+    started = time.monotonic()
+    left = EXTRA_TIME_S - ctx.budget.extra_s
+    if left <= 0 or started >= ctx.budget.deadline:
+        # (its own time is spent, or the request's is: then revision 39 is about to stop too)
+        _note(notes, _READING_LOOKUPS_SPENT)
+        return []
+    again = paths.expand_glob(
+        source,
+        limit=MAX_GLOB_MATCHES,
+        deadline=started + left,
+        dotfiles=dotfiles,
+        literal=True,
+    )
+    ctx.budget.extra_time(started)  # not charged to the request
+    if again.status == "budget":
+        _note(notes, _READING_LOOKUPS_SPENT)
+        return []
+    incomplete = again.status == "too-many"
+    if again.status == "unsupported" and "glob-not-expanded" not in notes:
+        notes.append("glob-not-expanded")
+    seen = {paths.windows_fold(m) for m in earlier}
+    fresh: list[str] = []
+    for match in again.matches:
+        folded = paths.windows_fold(match)
+        if folded not in seen:
+            seen.add(folded)
+            fresh.append(match)
+    room = max(0, MAX_GLOB_MATCHES - len(earlier))
+    if len(fresh) > room:
+        fresh, incomplete = fresh[:room], True
+    if incomplete:
+        _note(notes, "glob-too-many-matches")
+    refs: list[PathRef] = []
+    for match in fresh:
+        found_norm = paths.normalize_path(match, cwd=None, home=None, dialect="tool", literal=True)
+        forms = _resolved_forms(
+            ctx, match, found_norm, access, ("glob-match", paths.EXTRA_READING), notes=notes
+        )
+        refs += forms + _match_kept_forms(ctx, notes, match, found_norm, access, forms)
+    return refs
+
+
+def _match_kept_forms(
+    ctx: _Ctx,
+    notes: list[str],
+    match: str,
+    found_norm: paths.NormPath,
+    access: Access,
+    existing: Sequence[PathRef],
+) -> list[PathRef]:
+    """Where a glob match that is unsure only of its reading leads with its name as on disk
+    (``\\\\?\\`` and the match: Git Bash and Node read ``kq.``, not ``kq``; spec revision 40,
+    R39-1, R39-2). The match is its spelling on disk, never expanded again: a ``$`` or ``%`` in a
+    name is a character. A place other than the key's is a PathRef of its own ("glob-match",
+    ``paths.EXTRA_READING``); the same key is remembered for the walk."""
+    if not (found_norm.uncertain and paths.reading_only(found_norm.reasons)):
+        return []
+    if found_norm.flavor != "windows" or os.name != "nt" or not paths.is_local_disk(found_norm):
+        return []
+    if found_norm.key.count("/") > MAX_KEY_DEPTH:
+        return []
+    native = _extended_native(match)
+    if native is None:
+        return []
+    resolved = _reading_lookup(ctx, notes, ("realpath", native), lambda: _realpath(native))
+    if resolved is None:
+        return []
+    real = paths.normalize_path(resolved, cwd=None, home=None, dialect="tool", literal=True)
+    if real.is_device or not paths.is_local_disk(real):
+        return []
+    _record_kept_dir(ctx, (match, real.key), resolved)
+    if any(ref.key == real.key for ref in existing):
+        return []
+    return [
+        _make_ref(
+            ctx,
+            match,
+            real,
+            access,
+            uncertain=True,
+            reasons=_with(
+                real.reasons,
+                "resolved-on-disk",
+                paths.KEPT_READING,
+                "glob-match",
+                paths.EXTRA_READING,
+            ),
+            resolved=True,
+        )
+    ]
 
 
 def _resolved_forms(
@@ -959,12 +1211,15 @@ def _resolved_forms(
     norm: paths.NormPath,
     access: Access,
     extra_reasons: Sequence[str],
+    *,
+    notes: list[str] | None = None,
 ) -> list[PathRef]:
     """A certain path as a PathRef, plus its on-disk resolved form when that differs; both carry
     ``extra_reasons`` ("glob-match": the send gate leaves out an expanded match's disk form too,
     whose text is the match all the same, spec revision 38, R37-1). "glob-match" only describes
     the path (``paths._INFO_REASONS``): a recursive read still walks a match that is unsure only
-    of its reading, and its disk form (spec revision 39, R38-1)."""
+    of its reading, and its disk form (spec revision 39, R38-1). ``notes`` given: the lookup is
+    one revision 40 adds (``_reading_lookup``), not counted with the earlier ones."""
     refs = [
         _make_ref(
             ctx,
@@ -977,7 +1232,16 @@ def _resolved_forms(
     ]
     if norm.key.count("/") > MAX_KEY_DEPTH:
         return refs
-    resolved = _disk_resolve(ctx, norm, glob="glob-match" in extra_reasons)
+    if notes is None:
+        resolved = _disk_resolve(ctx, norm, glob="glob-match" in extra_reasons)
+    else:
+        memo_key = (norm.key, norm.reasons)
+        known = ctx.budget.resolved.get(memo_key) or ctx.budget.glob_resolved.get(memo_key)
+        resolved = known or _reading_lookup(
+            ctx, notes, ("resolve", memo_key), lambda: paths.resolve_on_disk(norm)
+        )
+        if resolved is None:
+            return refs
     if resolved.key != norm.key:
         refs.append(
             _make_ref(
@@ -1028,7 +1292,18 @@ def _refs_one(
     if dynamic or deep or ctx.budget.lexical:
         return refs  # (lexical mode: the budget ran out; no glob expansion, no disk lookups)
     if "glob" in norm.reasons and not glob_literal:
-        return refs + _glob_refs(ctx, norm, access, notes, dotfiles=dialect == "powershell")
+        kept_text = None
+        if norm.flavor == "windows" and os.name == "nt":
+            kept_text = paths.reading_text(
+                text,
+                cwd=cwd,
+                home=ctx.home,
+                env=ctx.env,
+                dialect=dialect,  # type: ignore[arg-type]
+            )
+        return refs + _glob_refs(
+            ctx, norm, access, notes, dotfiles=dialect == "powershell", kept_text=kept_text
+        )
     if "brace" in norm.reasons:
         return refs
     # Disk forms: a symlink / junction / 8.3 name that leads somewhere else (paths.resolve_on_disk
@@ -1055,7 +1330,7 @@ def _refs_one(
             )
         refs = _mark_hard_linked(refs, resolved)
         if reading:
-            refs += _kept_forms(ctx, text, access, cwd, dialect, refs)
+            refs += _kept_forms(ctx, notes, text, access, cwd, dialect, refs)
     if not uncertain and norm.flavor == "posix" and _posix_host() and _has_dotdot(text):
         refs += _dotdot_forms(ctx, text, norm, access, cwd, dialect, refs)
     return refs
@@ -1063,6 +1338,7 @@ def _refs_one(
 
 def _kept_forms(
     ctx: _Ctx,
+    notes: list[str],
     text: str,
     access: Access,
     cwd: str | None,
@@ -1072,7 +1348,9 @@ def _kept_forms(
     """``keys./x``: where the reading that keeps the dots goes (Git Bash, Node's file reads).
 
     The key has them stripped, so ``resolve_on_disk`` follows the other reading. ``keys.`` next to
-    ``keys`` can be a link of its own. The path stays uncertain whatever this finds.
+    ``keys`` can be a link of its own. The path stays uncertain whatever this finds. A real
+    folder ``keys.`` has the key of ``keys``: no PathRef of its own, but a recursive read walks it
+    all the same (``_record_kept_dir``, spec revision 40, R39-2).
     """
     kept = paths.reading_text(
         text,
@@ -1083,13 +1361,16 @@ def _kept_forms(
     )
     if kept is None:
         return []
-    real = paths.normalize_path(
-        _disk_realpath(ctx, "\\\\?\\" + kept.replace("/", "\\")),
-        cwd=None,
-        home=None,
-        dialect="tool",
-        literal=True,
-    )
+    try:
+        resolved = _disk_realpath(ctx, "\\\\?\\" + kept.replace("/", "\\"))
+    except (OSError, ValueError):
+        # (a junction that leads to a file: up to revision 39 this made the whole call one gray
+        # action; now only this action is not analysed whole, spec revision 40)
+        _note(notes, _LOOKUP_FAILED)
+        return []
+    real = paths.normalize_path(resolved, cwd=None, home=None, dialect="tool", literal=True)
+    if not real.is_device and paths.is_local_disk(real):
+        _record_kept_dir(ctx, (text, real.key), resolved)
     if any(ref.key == real.key for ref in existing):
         return []
     return [
@@ -1214,8 +1495,13 @@ def _refs(
                 )
                 if slot not in out or _EXPANDED in ref.reasons:
                     out[slot] = ref
-    ctx.budget.add_refs(len(out))
-    return list(out.values())
+    refs = list(out.values())
+    extra = [r for r in refs if paths.EXTRA_READING in r.reasons]
+    ctx.budget.add_refs(len(refs) - len(extra))
+    if not extra:
+        return refs
+    admitted = {id(r) for r in _admit_extra(ctx, notes, extra)}
+    return [r for r in refs if paths.EXTRA_READING not in r.reasons or id(r) in admitted]
 
 
 def _synthetic_ref(ctx: _Ctx, raw: str, access: Access) -> PathRef:
@@ -1323,55 +1609,151 @@ def _scan_refs(
     ``follow_links``: the command may follow a link to a directory (``Get-ChildItem -Recurse``,
     ``grep -R``): one that is met makes the action gray; ripgrep never follows them.
     ``skip_names``: entry names the reader is known not to read (``subtree.VCS_DIR_NAMES``).
+
+    Two passes (spec revision 40): the first walks what revision 39 walked, the same roots in the
+    same order on the shared budget, asking what it asked (a directory whose name on disk a Win32
+    call does not open, and the link count of ``x.`` as named on disk, are put off); the second,
+    on a budget of its own, walks what only revision 40 looks at: the directories the names as on
+    disk lead to (``_Budget.kept_dirs``), the PathRefs marked ``paths.EXTRA_READING`` and what the
+    first pass put off. The hits revision 39 did not report are marked too and counted apart
+    (``_admit_extra``), so a deny the first pass finds stays whatever the second one meets.
     """
     if ctx.budget.lexical or ctx.protected.empty:
         return []
-    out: list[PathRef] = []
+    out: list[PathRef] = []  # the hits revision 39 reported too
+    extra: list[PathRef] = []
     seen: set[str] = set()
+    walked: set[tuple[str, str]] = set()
+    later: list[tuple[str, PathRef, subtree.ScanResult | None, bool]] = []
+    stopped = False
     for ref in refs:
         root = _native_dir(ref)
-        if root is None or ref.key in seen:
+        if root is None:
             continue
-        seen.add(ref.key)
-        if ctx.budget.scan.spent:
+        if paths.EXTRA_READING in ref.reasons:
+            later.append((root, ref, None, False))
+        elif ref.key not in seen and not stopped:
+            seen.add(ref.key)
+            if ctx.budget.scan.spent:
+                notes.append("recursive-scan-budget")
+                stopped = True  # (revision 39 stopped here; the second pass still runs)
+            else:
+                walked.add((_fold_root(ref, root), ref.key))
+                result = _scan_one(
+                    ctx,
+                    notes,
+                    root,
+                    ref,
+                    access,
+                    ctx.budget.scan,
+                    out,
+                    extra,
+                    select=select,
+                    follow_links=follow_links,
+                    skip_names=skip_names,
+                    defer=True,
+                )
+                if result.left:
+                    later.append(("", ref, result, False))
+        later.extend(
+            (kept, ref, None, True) for kept in ctx.budget.kept_dirs.get((ref.raw, ref.key), ())
+        )
+    for root, ref, resume, kept in later:
+        if resume is None:
+            slot = (_fold_root(ref, root), ref.key)
+            if slot in walked:
+                continue
+            walked.add(slot)
+        if ctx.budget.late_scan.spent:
             notes.append("recursive-scan-budget")
             break
-        before = ctx.budget.scan.elapsed
-        result = subtree.scan(
+        _scan_one(
+            ctx,
+            notes,
             root,
-            [ref.key],
-            windows=ref.flavor == "windows",
-            matcher=ctx.protected,
-            budget=ctx.budget.scan,
+            ref,
+            access,
+            ctx.budget.late_scan,
+            extra,
+            extra,
             select=select,
+            follow_links=follow_links,
             skip_names=skip_names,
+            late=True,
+            kept=kept,
+            resume=resume,
         )
-        ctx.budget.deadline += ctx.budget.scan.elapsed - before  # not charged to the request
-        if result.status == "budget":
-            notes.append("recursive-scan-budget")
-        elif result.status == "unreadable":
-            notes.append("recursive-scan-unreadable")
-        if result.dir_links and follow_links:
-            notes.append("recursive-scan-link")
-        if result.hard_links:
-            notes.append("recursive-scan-hardlink")  # R-3: a name proves nothing about the file
-        for hit in result.hits:
-            norm = paths.NormPath(
-                f"{ref.raw}/{hit.rel}"[:512], hit.key, ref.flavor, True, False, ()
-            )
-            out.append(
-                _make_ref(
-                    ctx,
-                    norm.raw,
-                    norm,
-                    access,
-                    uncertain=False,
-                    reasons=("recursive-scan",),
-                    resolved="resolved-on-disk" in ref.reasons,
-                )
-            )
     ctx.budget.add_refs(len(out))
-    return list(dict.fromkeys(out))
+    return list(dict.fromkeys(out + _admit_extra(ctx, notes, list(dict.fromkeys(extra)))))
+
+
+def _fold_root(ref: PathRef, root: str) -> str:
+    return paths.windows_fold(root) if ref.flavor == "windows" else root
+
+
+def _scan_one(
+    ctx: _Ctx,
+    notes: list[str],
+    root: str,
+    ref: PathRef,
+    access: Access,
+    budget: subtree.ScanBudget,
+    out: list[PathRef],
+    extra: list[PathRef],
+    *,
+    select: subtree.Selector | None,
+    follow_links: bool,
+    skip_names: frozenset[str],
+    defer: bool = False,
+    late: bool = False,
+    kept: bool = False,
+    resume: subtree.ScanResult | None = None,
+) -> subtree.ScanResult:
+    """One walk of ``_scan_refs``: its notes, and its hits as PathRefs, appended to ``out`` (what
+    revision 39 reported too) or ``extra`` (marked ``paths.EXTRA_READING``)."""
+    before = budget.elapsed
+    result = subtree.scan(
+        root,
+        [ref.key],
+        windows=ref.flavor == "windows",
+        matcher=ctx.protected,
+        budget=budget,
+        select=select,
+        skip_names=skip_names,
+        defer=defer,
+        late=late,
+        kept=kept,
+        resume=resume,
+    )
+    ctx.budget.deadline += budget.elapsed - before  # not charged to the request
+    if result.status == "budget":
+        notes.append("recursive-scan-budget")
+    elif result.status == "unreadable":
+        notes.append("recursive-scan-unreadable")
+    if result.dir_links and follow_links:
+        notes.append("recursive-scan-link")
+    if result.hard_links:
+        notes.append("recursive-scan-hardlink")  # R-3: a name proves nothing about the file
+    # Below a root whose text was expanded, a hit's key holds the value too: it carries the
+    # root's markers, so the send gate shows it as written or leaves it out (spec revision 40)
+    carried: tuple[str, ...] = ()
+    if _EXPANDED in ref.reasons:
+        carried = (_EXPANDED, *(("glob-match",) if "glob-match" in ref.reasons else ()))
+    for hit in result.hits:
+        norm = paths.NormPath(f"{ref.raw}/{hit.rel}"[:512], hit.key, ref.flavor, True, False, ())
+        reasons = ("recursive-scan", *carried, *((paths.EXTRA_READING,) if hit.extra else ()))
+        (extra if hit.extra else out).append(
+            _make_ref(
+                ctx,
+                norm.raw,
+                norm,
+                access,
+                uncertain=False,
+                reasons=reasons,
+                resolved="resolved-on-disk" in ref.reasons,
+            )
+        )
+    return result
 
 
 # --------------------------------------------------------------------------------------------
