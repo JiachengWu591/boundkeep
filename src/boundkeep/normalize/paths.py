@@ -326,6 +326,15 @@ def reading_only(reasons: Sequence[str]) -> bool:
     )
 
 
+def short_reading_only(reasons: Sequence[str]) -> bool:
+    """Is a path with these ``reasons`` uncertain only because an 8.3 short name was not expanded,
+    and maybe of which reading a program takes (``PLAINL~1``, ``VAULTS~1.``, ``notes~1.``)? The
+    disk can tell where such a path leads (spec revision 42, R41-3)."""
+    return "short-name-unresolved" in reasons and all(
+        r == "short-name-unresolved" or r in _READING_REASONS or r in _INFO_REASONS for r in reasons
+    )
+
+
 def reading_text(
     raw: str,
     *,
@@ -1638,10 +1647,15 @@ def _expand_glob(
     dotfiles: bool = False,
     literal: bool = False,
 ) -> GlobResult:
+    # (an unexpanded 8.3 name in the written part does not stop it: listing a directory, Win32 and
+    # ``\\?\`` paths alike, takes it on disk, and every match is a name the disk listed; spec
+    # revision 42, R41-4)
     blocking = [
         r
         for r in path.reasons
-        if r not in _INFO_REASONS and r not in _READING_REASONS and r not in ("glob", "brace")
+        if r not in _INFO_REASONS
+        and r not in _READING_REASONS
+        and r not in ("glob", "brace", "short-name-unresolved")
     ]
     if blocking or not is_local_disk(path):
         return GlobResult((), "unsupported")

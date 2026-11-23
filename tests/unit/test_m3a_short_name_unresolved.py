@@ -7,6 +7,10 @@ yet Git Bash runs ``./LONGPR~1`` and ``./LONGPR~1.EXE`` there, and PowerShell 5.
 ``.\\LONGPR~1.EXE`` after ``Set-Location``. Before, these were gray ``cwd-unknown`` and sent to
 the model, while the same command in the long-named directory was denied.
 
+Since spec revision 42 (R41-3) a ``cd`` into a short-named directory is looked up on disk, so the
+program there is known and denied as in the long-named directory; only when that lookup cannot be
+made (the reading lookups spent) is it the unresolved gray above.
+
 The tests use made-up files under ``tmp_path``; nothing is run.
 """
 
@@ -58,20 +62,31 @@ def _check_unresolved(result: pipeline.Review, command: str) -> None:
 @pytest.mark.windows
 @pytest.mark.parametrize("program", ["./BOUNDK~1", "./BOUNDK~1.EXE"])
 def test_git_bash_in_a_short_named_directory_is_not_sent_to_the_model(
-    tmp_path: Path, tools: tuple[Path, str], program: str
+    tmp_path: Path, tools: tuple[Path, str], program: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _long, short_dir = tools
     command = f"cd '{_msys(short_dir)}' && {program} mode audit-only"
-    _check_unresolved(_result(tmp_path / "w", CLEAN, command, tool="Bash"), command)
+    # since spec revision 42 (R41-3) the cd target is looked up on disk: the program is known
+    # and denied, as in the long-named directory (below); without that lookup, unresolved
+    _check_denied(_result(tmp_path / "w", CLEAN, command, tool="Bash"), command)
+    monkeypatch.setattr(event, "MAX_READING_DISK_KEYS", 0)
+    _check_unresolved(_result(tmp_path / "w2", CLEAN, command, tool="Bash"), command)
 
 
 @pytest.mark.windows
 def test_powershell_in_a_short_named_directory_is_not_sent_to_the_model(
-    tmp_path: Path, tools: tuple[Path, str]
+    tmp_path: Path, tools: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _long, short_dir = tools
     command = f"Set-Location '{short_dir}'; .\\BOUNDK~1.EXE mode audit-only"
-    _check_unresolved(_result(tmp_path / "w", CLEAN, command, tool="PowerShell"), command)
+    _check_denied(_result(tmp_path / "w", CLEAN, command, tool="PowerShell"), command)
+    monkeypatch.setattr(event, "MAX_READING_DISK_KEYS", 0)
+    _check_unresolved(_result(tmp_path / "w2", CLEAN, command, tool="PowerShell"), command)
+
+
+def _check_denied(result: pipeline.Review, command: str) -> None:
+    assert str(result.verdict.decision) == "deny", (command, _grays(result))
+    assert "deny-boundkeep-state-commands" in result.verdict.rule_ids
 
 
 @pytest.mark.windows

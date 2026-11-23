@@ -85,15 +85,20 @@ def test_a_slow_disk_is_not_charged_for_dotted_folders_while_their_parent_is_lis
     assert result.status == "ok"
     assert {h.rel for h in result.hits} == {"zz/.env"}
     assert budget.entries == 202
-    assert clock[0] == 0.0  # no lstat at all: nothing here is a symbolic link
+    # one lstat per folder since spec revision 42 (R41-1: NTFS may open a name the listing does
+    # not show), made when each folder's turn comes, where revision 39 opened it: none of it
+    # while "sub" was listed, so "zz" is still reached
+    assert clock[0] == pytest.approx(2.0)
 
 
 @windows_only
-def test_no_disk_call_asks_for_a_sibling_the_parent_did_not_list(
+def test_a_sibling_the_parent_did_not_list_is_asked_once_when_its_turn_comes(
     tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # no sibling ("d0." .. "d4."), or a plain file of that name ("e"): nothing to open. Revision
-    # 39 opened each once and failed; revision 40 asked lstat for each; now nothing is asked.
+    # no sibling ("d0." .. "d4."), or a plain file of that name ("e"; the listing keeps only
+    # folders and links): revision 39 opened each once and failed; revision 40 asked lstat for
+    # each while listing "sub"; revision 41 asked nothing, and missed the folders NTFS opens by
+    # an 8.3 name; since revision 42 each is asked once, when its turn comes (R41-1)
     for i in range(5):
         _mkdir(tree / "sub" / f"d{i}.")
     _mkdir(tree / "sub" / "e.")
@@ -114,7 +119,8 @@ def test_no_disk_call_asks_for_a_sibling_the_parent_did_not_list(
     monkeypatch.setattr(os, "scandir", scandir)
     monkeypatch.setattr(subtree, "_alias_state", alias_state)
     result, _ = _scan(tree / "sub", defer=True)
-    assert (opened, asked) == (["sub", "zz"], [])
+    assert opened == ["sub", "zz"]
+    assert sorted(os.path.basename(p) for p in asked) == ["d0", "d1", "d2", "d3", "d4", "e"]
     assert {h.rel for h in result.hits} == {"zz/.env"}
     assert len(result.deferred) == 6  # the names as on disk: for the second walk, as before
 
@@ -227,9 +233,9 @@ def test_what_the_listing_says_of_a_sibling(monkeypatch: pytest.MonkeyPatch) -> 
         "odd": subtree._REFUSE,  # could not be classified: asked too
         "UPPER": subtree._ENTER,
         "upper": subtree._ENTER,  # the name NTFS compares equal
-        "absent": subtree._MISSING,
+        "absent": subtree._REFUSE,  # not listed: asked of the disk (revision 42, R41-1)
     }
-    assert asked == ["P:link", "P:odd"]
+    assert asked == ["P:link", "P:odd", "P:absent"]
 
 
 @windows_only

@@ -32,7 +32,9 @@ globs select, so the normal rule evaluation sees them as read paths of the actio
   walk did not report is marked ``ScanHit.extra`` and counted apart. Whether a directory has
   such a sibling is read off its parent's listing when its turn comes (spec revision 41): a disk
   call for each, made while the parent is listed, was charged to the walk's time, and thousands
-  of dotted directories without a sibling ended the first budget early (R40-1).
+  of dotted directories without a sibling ended the first budget early (R40-1). A name the
+  listing does not show is asked of the disk then, out of that loop: NTFS also opens a
+  directory by its 8.3 name or by a case its table merges (revision 42, R41-1).
 
 Nothing here decides anything: it only finds names. Never raises.
 """
@@ -429,7 +431,8 @@ def _alias_state(path: str) -> int:
     opening a share sends the user's credentials to the server before any verdict, so the link
     is read as text (``readlink``) and not opened to find out. A missing one: nothing to open.
     Since revision 41 the walk asks this only of a sibling its parent listed as a symbolic link
-    or could not classify (``_sibling_state``); the rest is read off the listing."""
+    or could not classify, and (revision 42) of one its parent's listing does not show by that
+    name (``_sibling_state``); the rest is read off the listing."""
     try:
         info = os.lstat(path)
     except FileNotFoundError:
@@ -465,7 +468,8 @@ def _alias_enterable(path: str) -> bool:
 
 class _Listed:
     """The directories and links one directory lists, by name (spec revision 41, R40-1): which
-    sibling a Win32 call opens for a dotted name is looked up here, so the disk is not asked."""
+    sibling a Win32 call opens for a dotted name is looked up here, so the disk is not asked
+    for the names the listing shows (revision 42: the others still are, ``_sibling_state``)."""
 
     __slots__ = ("folded", "names")
 
@@ -486,13 +490,18 @@ class _Listed:
 
 def _sibling_state(listed: _Listed, name: str, path: str) -> int:
     """``_alias_state`` for the sibling ``name`` (at ``path``) of a dotted directory, from what
-    its parent listed: nothing of that name, or a plain file, is nothing to open, and no disk
-    call says so (revision 39 opened it once and failed); a directory or a junction is entered
-    as revision 39 entered it; a symbolic link, or an entry that could not be classified, is
-    asked of the disk as revision 40 asked (``_alias_state``)."""
+    its parent listed: a plain file is nothing to open; a directory or a junction is entered as
+    revision 39 entered it; a symbolic link, or an entry that could not be classified, is asked
+    of the disk as revision 40 asked (``_alias_state``).
+
+    A name the listing does not show is asked of the disk too (spec revision 42, R41-1): NTFS
+    also opens a directory by its 8.3 name (``JLONGN~1.`` next to the junction ``jlongname``)
+    and compares case by the volume's table, which merges more than ``windows_fold`` (that one is
+    made for keys and keeps apart what NTFS may merge). This is where revision 39 opened it, out
+    of the listing loop that reads the clock, so R40-1 stays fixed."""
     entry = listed.find(name)
     if entry is None:
-        return _MISSING
+        return _alias_state(path)
     try:
         if entry.is_symlink():
             return _alias_state(path)
