@@ -341,7 +341,8 @@ def test_a_sibling_the_walk_may_not_open_makes_the_walk_unreadable(
 ) -> None:
     _mkdir(tree / "sub" / "inner.")
     _mkdir(tree / "sub" / "inner")
-    monkeypatch.setattr(subtree, "_alias_state", lambda path: subtree._REFUSE)
+    # (revision 41: the walk reads a plain sibling off the listing; the stand-in is at that seam)
+    monkeypatch.setattr(subtree, "_sibling_state", lambda listed, name, path: subtree._REFUSE)
     result, _ = _scan(tree / "sub", defer=True)
     assert result.status == "unreadable"
 

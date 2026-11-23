@@ -29,7 +29,10 @@ globs select, so the normal rule evaluation sees them as read paths of the actio
   well, at the place the old walk read it; the name as it is on disk is left for later
   (``ScanResult.deferred``), so the old walk's entries, order and stats stay as they were. A name
   that ends in dots or spaces is also matched with them removed, as a key has them. What the old
-  walk did not report is marked ``ScanHit.extra`` and counted apart.
+  walk did not report is marked ``ScanHit.extra`` and counted apart. Whether a directory has
+  such a sibling is read off its parent's listing when its turn comes (spec revision 41): a disk
+  call for each, made while the parent is listed, was charged to the walk's time, and thousands
+  of dotted directories without a sibling ended the first budget early (R40-1).
 
 Nothing here decides anything: it only finds names. Never raises.
 """
@@ -424,8 +427,9 @@ def _alias_state(path: str) -> int:
     directory or a junction, yes (a junction always leads to a local volume); a symbolic link
     only when its text names a fixed local drive and what it names is no symbolic link itself:
     opening a share sends the user's credentials to the server before any verdict, so the link
-    is read as text (``readlink``) and not opened to find out. A missing one: nothing to open
-    (revision 39's walk opened it and found nothing; this asks once, as that did)."""
+    is read as text (``readlink``) and not opened to find out. A missing one: nothing to open.
+    Since revision 41 the walk asks this only of a sibling its parent listed as a symbolic link
+    or could not classify (``_sibling_state``); the rest is read off the listing."""
     try:
         info = os.lstat(path)
     except FileNotFoundError:
@@ -457,6 +461,46 @@ def _alias_state(path: str) -> int:
 
 def _alias_enterable(path: str) -> bool:
     return _alias_state(path) != _REFUSE
+
+
+class _Listed:
+    """The directories and links one directory lists, by name (spec revision 41, R40-1): which
+    sibling a Win32 call opens for a dotted name is looked up here, so the disk is not asked."""
+
+    __slots__ = ("folded", "names")
+
+    def __init__(self) -> None:
+        self.names: dict[str, os.DirEntry[str]] = {}
+        self.folded: dict[str, os.DirEntry[str]] | None = None
+
+    def find(self, name: str) -> os.DirEntry[str] | None:
+        """The entry a Win32 call opens for ``name``: that spelling, else the one NTFS compares
+        equal to it (None: no directory or link of that name is listed)."""
+        entry = self.names.get(name)
+        if entry is None:
+            if self.folded is None:
+                self.folded = {paths.windows_fold(n): e for n, e in self.names.items()}
+            entry = self.folded.get(paths.windows_fold(name))
+        return entry
+
+
+def _sibling_state(listed: _Listed, name: str, path: str) -> int:
+    """``_alias_state`` for the sibling ``name`` (at ``path``) of a dotted directory, from what
+    its parent listed: nothing of that name, or a plain file, is nothing to open, and no disk
+    call says so (revision 39 opened it once and failed); a directory or a junction is entered
+    as revision 39 entered it; a symbolic link, or an entry that could not be classified, is
+    asked of the disk as revision 40 asked (``_alias_state``)."""
+    entry = listed.find(name)
+    if entry is None:
+        return _MISSING
+    try:
+        if entry.is_symlink():
+            return _alias_state(path)
+        if entry.is_dir(follow_symlinks=False) or _is_link(entry):
+            return _ENTER
+    except OSError:
+        return _alias_state(path)
+    return _MISSING
 
 
 def scan(
@@ -601,19 +645,32 @@ def _walk(
     # (os dir, rel, inside, reading, dotted rel): ``native`` (a Windows walk through ``\\?\``
     # paths) opens the names as they are on disk and walks what a Win32 call lists for a dotted
     # directory too; "dotted rel": a name on the way there ends in a dot or a space.
-    stack: deque[tuple[str, str, bool, int, bool]]
+    # The last item: (what the parent listed, the name) when the directory is the sibling a Win32
+    # call opens for a dotted name; whether there is one is looked up when its turn comes, where
+    # revision 39 opened it (spec revision 41).
+    stack: deque[tuple[str, str, bool, int, bool, tuple[_Listed, str] | None]]
     if resume is not None:
-        stack = deque((path, rel, inside, _KEPT, True) for path, rel, inside in resume.deferred)
+        stack = deque(
+            (path, rel, inside, _KEPT, True, None) for path, rel, inside in resume.deferred
+        )
     else:
-        stack = deque([(os_root, "", False, reading, False)])
+        stack = deque([(os_root, "", False, reading, False, None)])
     first = resume is None
     while stack:
-        current, rel, inside, reading, dotted_rel = stack.popleft()
+        current, rel, inside, reading, dotted_rel, sibling = stack.popleft()
         # (a directory that lists nothing costs no entry: revision 39 read the clock only at
         # entries, and its walk keeps doing so; a late walk reads it at every directory too)
         if late and _out_of_time(budget, started):
             result.status = "budget"
             return
+        if sibling is not None:
+            state = _sibling_state(sibling[0], sibling[1], current)
+            if state == _REFUSE:
+                result.status = "unreadable"
+            if state != _ENTER:
+                continue
+        # (only a walk that reads names the Win32 way needs the names of this level)
+        listed = _Listed() if native and reading != _KEPT else None
         try:
             iterator = os.scandir(current)
         except (FileNotFoundError, NotADirectoryError):
@@ -631,6 +688,8 @@ def _walk(
         with iterator:
             for entry in iterator:
                 if skip_names and entry.name in skip_names:
+                    if listed is not None:  # not read, but a Win32 call may open it for ".git."
+                        listed.names[entry.name] = entry
                     continue
                 budget.entries += 1
                 if budget.entries > budget.max_entries or (
@@ -642,10 +701,13 @@ def _walk(
                 try:
                     is_dir = entry.is_dir(follow_symlinks=False)
                     link = _is_link(entry)
+                    openable = is_dir or link
                 except OSError:
                     result.status = "unreadable"
-                    is_dir, link = False, False
+                    is_dir, link, openable = False, False, True
                     # an entry we cannot even classify: treat it as a file, still name-tested
+                if openable and listed is not None:
+                    listed.names[name] = entry
                 rel_path = f"{rel}/{name}" if rel else name
                 dotted = windows and name[-1:] in (".", " ")
                 # a Win32 reader of this directory opens this entry under another name (revision
@@ -704,22 +766,20 @@ def _walk(
                     below = inside or as_written
                     below_dotted = dotted_rel or dotted
                     alias = win32_list_name(name) if win32 else name
-                    if alias == name:
-                        stack.append((entry.path, rel_path, below, reading, below_dotted))
+                    if alias == name or listed is None:
+                        stack.append((entry.path, rel_path, below, reading, below_dotted, None))
                         continue
-                    # what a Win32 call lists for this name, at the place revision 39 read it
+                    # what a Win32 call lists for this name, at the place revision 39 read it;
+                    # whether this level lists such a sibling is looked up when its turn comes
+                    # (no disk call here: this loop is where the clock is read, R40-1)
                     alias_path = os.path.join(current, alias)
-                    state = _alias_state(alias_path)
-                    if state == _ENTER:
-                        stack.append((alias_path, rel_path, below, _WIN32, True))
-                    elif state == _REFUSE:
-                        result.status = "unreadable"
+                    stack.append((alias_path, rel_path, below, _WIN32, True, (listed, alias)))
                     if reading == _BOTH:  # the name as on disk: later, or on the next budget
                         kept_dir = (entry.path, rel_path, below)
                         if defer:
                             result.deferred.append(kept_dir)
                         else:
-                            stack.append((*kept_dir, _KEPT, True))
+                            stack.append((*kept_dir, _KEPT, True, None))
                     continue
                 if read and not result.hard_links:
                     if not win32:

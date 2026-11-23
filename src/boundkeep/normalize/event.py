@@ -1331,9 +1331,73 @@ def _refs_one(
         refs = _mark_hard_linked(refs, resolved)
         if reading:
             refs += _kept_forms(ctx, notes, text, access, cwd, dialect, refs)
+        elif norm.uncertain and resolved.key != norm.key:
+            refs += _resolved_kept_forms(
+                ctx, notes, text, norm, resolved, access, cwd, dialect, refs
+            )
     if not uncertain and norm.flavor == "posix" and _posix_host() and _has_dotdot(text):
         refs += _dotdot_forms(ctx, text, norm, access, cwd, dialect, refs)
     return refs
+
+
+def _resolved_kept_forms(
+    ctx: _Ctx,
+    notes: list[str],
+    text: str,
+    norm: paths.NormPath,
+    resolved: paths.NormPath,
+    access: Access,
+    cwd: str | None,
+    dialect: str,
+    existing: Sequence[PathRef],
+) -> list[PathRef]:
+    """A path written with an 8.3 short name whose form on disk is unsure only of its reading
+    (``SECRET~1`` is ``secretstorage.`` there, ``DEEPER~1/k9.``; spec revision 41, R40-3).
+
+    The written form is not walked (an unresolved short name is not a reading), and the walk from
+    the resolved key opens the names without their dots. So the names as on disk are resolved once
+    more: ``\\\\?\\`` and the text that keeps the written dots (``paths.reading_text``), or the key
+    when the text has none. It is one of revision 40's own lookups (``_reading_lookup``). The
+    place is remembered for the second walk (``_record_kept_dir``); a place other than every
+    PathRef so far (``k9.`` is a junction) is a PathRef of its own, marked
+    ``paths.EXTRA_READING``.
+    """
+    if not (resolved.uncertain and paths.reading_only(resolved.reasons)):
+        return []
+    if norm.flavor != "windows" or os.name != "nt" or not paths.is_local_disk(resolved):
+        return []
+    kept = paths.reading_text(
+        text,
+        cwd=cwd,
+        home=ctx.home,
+        env=ctx.env,
+        dialect=dialect,  # type: ignore[arg-type]
+    )
+    native = _extended_native((kept or norm.key).replace("/", "\\"))
+    if native is None:
+        return []
+    found = _reading_lookup(ctx, notes, ("realpath", native), lambda: _realpath(native))
+    if found is None:
+        return []
+    real = paths.normalize_path(found, cwd=None, home=None, dialect="tool", literal=True)
+    if real.is_device or not paths.is_local_disk(real):
+        return []
+    _record_kept_dir(ctx, (text, real.key), found)
+    if any(ref.key == real.key for ref in existing):
+        return []
+    return [
+        _make_ref(
+            ctx,
+            text,
+            real,
+            access,
+            uncertain=True,
+            reasons=_with(
+                real.reasons, "resolved-on-disk", paths.KEPT_READING, paths.EXTRA_READING
+            ),
+            resolved=True,
+        )
+    ]
 
 
 def _kept_forms(
