@@ -244,6 +244,10 @@ class _Budget:
     # expansions and disk lookups (``EXTRA_TIME_S``).
     reading_lookups: dict[Any, Any] = field(default_factory=dict)
     kept_dirs: dict[tuple[str, str], list[str]] = field(default_factory=dict)
+    # those of ``kept_dirs`` an 8.3 name's Win32 reading leads to: Win32 programs get inside and
+    # read the names there their own way, so they are walked with both readings (spec revision
+    # 43, R42-6)
+    kept_win32: set[str] = field(default_factory=set)
     extra_refs: int = 0
     extra_s: float = 0.0
     late_scan: subtree.ScanBudget = field(
@@ -1014,11 +1018,20 @@ def _existing_realpath(native: str) -> str | None:
     return found if os.path.lexists(found) else None
 
 
-def _first_on_disk(ctx: _Ctx, notes: list[str], candidates: Sequence[str | None]) -> str | None:
-    """The first of ``candidates`` (texts of drive paths) that leads to something on disk, as
-    ``realpath`` gives it through ``\\\\?\\``; each one asked is one of revision 40's lookups
-    (``_reading_lookup``). None when none does, or the lookups are spent (a gray note then)."""
-    for candidate in dict.fromkeys(c for c in candidates if c):
+def _all_on_disk(
+    ctx: _Ctx, notes: list[str], candidates: Sequence[str | None]
+) -> list[tuple[str, int]]:
+    """Each of ``candidates`` (texts of drive paths) that leads to something on disk, as
+    ``realpath`` gives it through ``\\\\?\\``, with its index; each one asked is one of revision
+    40's lookups (``_reading_lookup``; spent: a gray note). Every candidate is asked: revision 42
+    stopped at the first that existed, and a clean folder named ``VAULTS~1.`` then hid where
+    Win32 reads ``VAULTS~1`` (spec revision 43, R42-4)."""
+    out: list[tuple[str, int]] = []
+    asked: set[str] = set()
+    for index, candidate in enumerate(candidates):
+        if not candidate or candidate in asked:
+            continue
+        asked.add(candidate)
         native = _extended_native(candidate.replace("/", "\\"))
         if native is None:
             continue
@@ -1026,8 +1039,8 @@ def _first_on_disk(ctx: _Ctx, notes: list[str], candidates: Sequence[str | None]
             ctx, notes, ("on-disk", native), lambda native=native: _existing_realpath(native)
         )
         if found is not None:
-            return str(found)
-    return None
+            out.append((str(found), index))
+    return out
 
 
 def _short_and_reading(reasons: Sequence[str]) -> bool:
@@ -1060,10 +1073,13 @@ def _extended_native(text: str) -> str | None:
     return "\\\\?\\" + body if paths.is_fixed_drive(body[0]) else None
 
 
-def _record_kept_dir(ctx: _Ctx, owner: tuple[str, str], resolved: str) -> None:
+def _record_kept_dir(
+    ctx: _Ctx, owner: tuple[str, str], resolved: str, *, win32: bool = False
+) -> None:
     """Remember where the reading that keeps the names as on disk leads (``resolved``, a real
     path), for the PathRef ``owner`` (raw, key), when a walk from the key does not get there:
-    a name on the way ends in a dot or a space (spec revision 40, R39-2)."""
+    a name on the way ends in a dot or a space (spec revision 40, R39-2). ``win32``: the place is
+    where the Win32 reading of an 8.3 name leads; it is walked with both readings (R42-6)."""
     native = _extended_native(resolved)
     if native is None:
         return
@@ -1072,6 +1088,8 @@ def _record_kept_dir(ctx: _Ctx, owner: tuple[str, str], resolved: str) -> None:
     dirs = ctx.budget.kept_dirs.setdefault(owner, [])
     if native not in dirs:
         dirs.append(native)
+    if win32:
+        ctx.budget.kept_win32.add(native)
 
 
 def _glob_refs(
@@ -1105,7 +1123,10 @@ def _glob_refs(
     matches = found.matches[:MAX_GLOB_MATCHES]
     for match in matches:
         found_norm = paths.normalize_path(match, cwd=None, home=None, dialect="tool", literal=True)
-        forms = _resolved_forms(ctx, match, found_norm, access, ("glob-match",))
+        # (``data~1`` or what is below it, a long name like an 8.3 one: walked as when written,
+        # spec revision 43, R42-5. The second expansion's matches have a name ending in a dot or
+        # a space on the way, so they are unsure of their reading too: ``_match_kept_forms``)
+        forms = _resolved_forms(ctx, match, found_norm, access, ("glob-match",), long_notes=notes)
         refs += forms + _match_kept_forms(ctx, notes, match, found_norm, access, forms)
     if (
         norm.flavor == "windows"
@@ -1248,13 +1269,16 @@ def _resolved_forms(
     extra_reasons: Sequence[str],
     *,
     notes: list[str] | None = None,
+    long_notes: list[str] | None = None,
 ) -> list[PathRef]:
     """A certain path as a PathRef, plus its on-disk resolved form when that differs; both carry
     ``extra_reasons`` ("glob-match": the send gate leaves out an expanded match's disk form too,
     whose text is the match all the same, spec revision 38, R37-1). "glob-match" only describes
     the path (``paths._INFO_REASONS``): a recursive read still walks a match that is unsure only
     of its reading, and its disk form (spec revision 39, R38-1). ``notes`` given: the lookup is
-    one revision 40 adds (``_reading_lookup``), not counted with the earlier ones."""
+    one revision 40 adds (``_reading_lookup``), not counted with the earlier ones.
+    ``long_notes`` given: a match named like an 8.3 name that the disk gives back as it is gets
+    the certain form a written one gets (``_long_name_forms``, spec revision 43, R42-5)."""
     refs = [
         _make_ref(
             ctx,
@@ -1289,7 +1313,10 @@ def _resolved_forms(
                 resolved=True,
             )
         )
-    return _mark_hard_linked(refs, resolved)
+    refs = _mark_hard_linked(refs, resolved)
+    if long_notes is not None:
+        refs += _long_name_forms(ctx, long_notes, raw, resolved, access, refs, extra_reasons)
+    return refs
 
 
 def _refs_one(
@@ -1371,9 +1398,60 @@ def _refs_one(
             refs += _resolved_kept_forms(
                 ctx, notes, text, norm, resolved, access, cwd, dialect, refs
             )
+        refs += _long_name_forms(ctx, notes, text, resolved, access, refs)
     if not uncertain and norm.flavor == "posix" and _posix_host() and _has_dotdot(text):
         refs += _dotdot_forms(ctx, text, norm, access, cwd, dialect, refs)
     return refs
+
+
+def _long_name_forms(
+    ctx: _Ctx,
+    notes: list[str],
+    text: str,
+    resolved: paths.NormPath,
+    access: Access,
+    existing: Sequence[PathRef],
+    extra_reasons: Sequence[str] = (),
+) -> list[PathRef]:
+    """A name that looks like an 8.3 one (``data~1``, ``notes~1``) and that the disk gives back as
+    it is: when it exists it is a long name, not a short one left unexpanded (spec revision 43,
+    R42-5). ``realpath`` keeps such a name, so the resolved form stayed unsure and was never
+    walked. One of revision 40's lookups (``_reading_lookup``) asks whether it exists; then a
+    certain PathRef of that place is added and walked. The written PathRef stays unsure, so the
+    allow side sees what it saw. Unsure for another reason, or only of a reading (that is
+    ``_resolved_kept_forms``'s): nothing. ``extra_reasons``: those of a glob match's other forms
+    ("glob-match": the request does not show it, ``_resolved_forms``)."""
+    if not (resolved.uncertain and "short-name-unresolved" in resolved.reasons):
+        return []
+    if not paths.short_reading_only(resolved.reasons) or _short_and_reading(resolved.reasons):
+        return []
+    if resolved.flavor != "windows" or os.name != "nt" or not paths.is_local_disk(resolved):
+        return []
+    if resolved.key.count("/") > MAX_KEY_DEPTH:
+        return []
+    native = _extended_native(resolved.key.replace("/", "\\"))
+    if native is None:
+        return []
+    found = _reading_lookup(ctx, notes, ("on-disk", native), lambda: _existing_realpath(native))
+    if found is None:
+        return []
+    real = paths.on_disk_names(
+        paths.normalize_path(str(found), cwd=None, home=None, dialect="tool", literal=True)
+    )
+    if real.uncertain or real.key != resolved.key or not paths.is_local_disk(real):
+        return []
+    if any(ref.key == real.key and not ref.uncertain for ref in existing):
+        return []
+    ref = _make_ref(
+        ctx,
+        text,
+        real,
+        access,
+        uncertain=False,
+        reasons=_with(real.reasons, "resolved-on-disk", *extra_reasons),
+        resolved=True,
+    )
+    return _mark_hard_linked([ref], resolved)  # (a hard link found on the way stays one)
 
 
 def _resolved_kept_forms(
@@ -1394,12 +1472,15 @@ def _resolved_kept_forms(
 
     The written form is not walked (an unresolved short name is not a reading), and the walk from
     the resolved key opens the names without their dots. So the names as on disk are resolved once
-    more through ``\\\\?\\``: the text that keeps the written dots (``paths.reading_text``) first,
-    the key when the text has none or names nothing there (``VAULTS~1.`` is not a name on disk;
-    ``VAULTS~1`` is, the one Win32 opens). Each is one of revision 40's own lookups
-    (``_reading_lookup``). The place is remembered for the second walk (``_record_kept_dir``); a
-    place other than every PathRef so far (``k9.`` is a junction) is a PathRef of its own, marked
-    ``paths.EXTRA_READING``. A short name with no dotted name behind it costs no lookup.
+    more through ``\\\\?\\``: the text that keeps the written dots (``paths.reading_text``) and
+    the key, the one Win32 opens (``VAULTS~1.`` is not a name on disk, ``VAULTS~1`` is; a clean
+    folder named ``VAULTS~1.`` beside it is, and both are looked up, spec revision 43, R42-4).
+    Each is one of revision 40's own lookups (``_reading_lookup``). Each place is remembered for
+    the second walk (``_record_kept_dir``; the key's is walked with both readings, R42-6); a place
+    other than every PathRef so far (``k9.`` is a junction) is a PathRef of its own, marked
+    ``paths.EXTRA_READING``. A name the disk gives back as it is written (``data~1``) is a long
+    name there (``paths.on_disk_names``, R42-5). A short name with no dotted name behind it costs
+    no lookup.
     """
     if not (
         (resolved.uncertain and paths.reading_only(resolved.reasons))
@@ -1415,28 +1496,34 @@ def _resolved_kept_forms(
         env=ctx.env,
         dialect=dialect,  # type: ignore[arg-type]
     )
-    found = _first_on_disk(ctx, notes, (kept, norm.key))
-    if found is None:
-        return []
-    real = paths.normalize_path(found, cwd=None, home=None, dialect="tool", literal=True)
-    if real.is_device or not paths.is_local_disk(real):
-        return []
-    _record_kept_dir(ctx, (text, real.key), found)
-    if any(ref.key == real.key for ref in existing):
-        return []
-    return [
-        _make_ref(
-            ctx,
-            text,
-            real,
-            access,
-            uncertain=True,
-            reasons=_with(
-                real.reasons, "resolved-on-disk", paths.KEPT_READING, paths.EXTRA_READING
-            ),
-            resolved=True,
+    out: list[PathRef] = []
+    # (both readings, each where it leads, spec revision 43, R42-4; index 1, the key, is what a
+    # Win32 program opens through the 8.3 name, and it reads the names inside its own way, R42-6)
+    for found, index in _all_on_disk(ctx, notes, (kept, norm.key)):
+        real = paths.on_disk_names(
+            paths.normalize_path(found, cwd=None, home=None, dialect="tool", literal=True)
         )
-    ]
+        if real.is_device or not paths.is_local_disk(real):
+            continue
+        _record_kept_dir(ctx, (text, real.key), found, win32=index == 1)
+        # (a PathRef of that place that cannot be walked does not count: ``data~1`` written
+        # has the key of the long name the disk gave back, and stays unsure, R42-5)
+        if any(ref.key == real.key and _native_dir(ref) is not None for ref in (*existing, *out)):
+            continue
+        out.append(
+            _make_ref(
+                ctx,
+                text,
+                real,
+                access,
+                uncertain=True,
+                reasons=_with(
+                    real.reasons, "resolved-on-disk", paths.KEPT_READING, paths.EXTRA_READING
+                ),
+                resolved=True,
+            )
+        )
+    return out
 
 
 def _kept_forms(
@@ -1788,7 +1875,9 @@ def _scan_refs(
             follow_links=follow_links,
             skip_names=skip_names,
             late=True,
-            kept=kept,
+            # (one an 8.3 name's Win32 reading leads to: Win32 programs read inside it their own
+            # way, so it is walked with both readings, spec revision 43, R42-6)
+            kept=kept and root not in ctx.budget.kept_win32,
             resume=resume,
         )
     ctx.budget.add_refs(len(out))
@@ -1904,15 +1993,17 @@ def _cd_target(
 
 def _cd_short_target(
     ctx: _Ctx, notes: list[str], text: str, cwd: str | None, dialect: str
-) -> str | None:
+) -> list[str]:
     """Where ``cd text`` leads on disk when ``_cd_target`` cannot say because an 8.3 name in it
     was not expanded (and maybe of its reading): ``cd PLAINL~1``, ``cd DEEPER~1/k9.`` (spec
-    revision 42, R41-3). Resolved through ``\\\\?\\`` (``_first_on_disk``: the text that keeps
-    the dots, else the key; revision 40's lookups). The key of that place, or the text that keeps
-    its dots when a name on the way ends in a dot or a space (as ``_cd_target`` gives a reading);
-    None when it is not there. The caller keeps the unknown working directory beside it."""
+    revision 42, R41-3). Resolved through ``\\\\?\\`` (``_all_on_disk``: the text that keeps the
+    dots and the key, both, revision 43, R42-4; revision 40's lookups). For each place found: its
+    key, or the text that keeps its dots when a name on the way ends in a dot or a space (as
+    ``_cd_target`` gives a reading); a name the disk gives back as written (``data~1``) is a long
+    name (``paths.on_disk_names``, R42-5). Empty when nothing is there. The caller keeps the
+    unknown working directory beside them."""
     if os.name != "nt" or ctx.budget.lexical:
-        return None
+        return []
     norm = paths.normalize_path(
         text,
         cwd=cwd,
@@ -1921,11 +2012,11 @@ def _cd_short_target(
         dialect=dialect,  # type: ignore[arg-type]
     )
     if not norm.absolute or norm.is_device or not norm.key or norm.flavor != "windows":
-        return None
+        return []
     if norm.key.count("/") > MAX_KEY_DEPTH or not paths.short_reading_only(norm.reasons):
-        return None
+        return []
     if not paths.is_local_disk(norm):
-        return None
+        return []
     kept = paths.reading_text(
         text,
         cwd=cwd,
@@ -1933,27 +2024,59 @@ def _cd_short_target(
         env=ctx.env,
         dialect=dialect,  # type: ignore[arg-type]
     )
-    found = _first_on_disk(ctx, notes, (kept, norm.key))
-    if found is None:
-        return None
-    real = paths.normalize_path(found, cwd=None, home=None, dialect="tool", literal=True)
-    if real.is_device or not real.absolute or not paths.is_local_disk(real):
-        return None
-    if not real.uncertain:
-        return real.key
-    if paths.reading_only(real.reasons):
-        return paths.reading_text(found, cwd=None, home=None, dialect="tool")
-    return None
+    targets: list[str] = []
+    for found, _index in _all_on_disk(ctx, notes, (kept, norm.key)):
+        real = paths.on_disk_names(
+            paths.normalize_path(found, cwd=None, home=None, dialect="tool", literal=True)
+        )
+        if real.is_device or not real.absolute or not paths.is_local_disk(real):
+            continue
+        if not real.uncertain:
+            targets.append(real.key)
+        elif paths.reading_only(real.reasons):
+            reading = paths.reading_text(found, cwd=None, home=None, dialect="tool")
+            if reading is not None:
+                targets.append(reading)
+    return list(dict.fromkeys(targets))
 
 
 def _merge_cwds(old: Sequence[str | None], new: Sequence[str | None]) -> tuple[str | None, ...]:
+    """The working directories after a step: the old ones (it may fail) and ``new``, in that
+    order. Over ``MAX_CWDS`` the first one stays (where the line started: every step may fail),
+    then the step's own targets (the later ones when they are more than the room), then the later
+    of the other old ones; the order stays and "unknown" is added. Revision 39 kept the first
+    ones and dropped the newest target, so after three ``cd`` a fourth one's place was never
+    looked at (spec revision 43, R42-2)."""
     merged = list(dict.fromkeys([*old, *new]))
     known = [c for c in merged if c is not None]
     unknown = None in merged
     if len(known) + int(unknown) > MAX_CWDS:
-        known = known[: MAX_CWDS - 1]
+        room = MAX_CWDS - 1
+        targets = {c for c in new if c is not None}
+        keep = [known[0]]
+        for group in ([c for c in known if c in targets], [c for c in known if c not in targets]):
+            for c in reversed(group):
+                if len(keep) < room and c not in keep:
+                    keep.append(c)
+        kept = set(keep)
+        known = [c for c in known if c in kept]
         unknown = True
     return (*known, *((None,) if unknown else ()))
+
+
+_CWDS_DROPPED: Final = "budget:working-directories"
+
+
+def _set_cwds(st: _Line, new: Sequence[str | None]) -> None:
+    """``st.cwds`` after a step (``_merge_cwds``). When the limit dropped a known directory the
+    line is not sent to the audit (a ``budget:`` gray reason): whichever one is dropped, a line can
+    be written so that it is the one that mattered. Keeping the newest targets,
+    ``cd <out>/.kube; cd q; cd r; cd s; cat config`` drops ``.kube`` (spec revision 43)."""
+    merged = _merge_cwds(st.cwds, new)
+    before = {c for c in (*st.cwds, *new) if c is not None}
+    if before - set(merged) and _CWDS_DROPPED not in st.line_gray:
+        st.line_gray.append(_CWDS_DROPPED)
+    st.cwds = merged
 
 
 def _after_cd(ctx: _Ctx, st: _Line, cmd: SimpleCmd, program: str, notes: list[str]) -> None:
@@ -1967,14 +2090,14 @@ def _after_cd(ctx: _Ctx, st: _Line, cmd: SimpleCmd, program: str, notes: list[st
     at, and the allow side still sees ``cwd-unknown``. ``notes``: the ``cd`` action's own.
     """
     if program == "popd":
-        st.cwds = _merge_cwds(st.cwds, (None,))
+        _set_cwds(st, (None,))
         return
     words = [w for w in cmd.argv[1:] if w.text not in _CD_FLAGS]
     if st.shell == "powershell":  # canonical parameters (-Path, -PassThru, ...) are not directories
         words = [w for w in words if w.quoted or not w.text.startswith("-")]
     if not words:
         if program == "pushd":  # swaps the top two directories
-            st.cwds = _merge_cwds(st.cwds, (None,))
+            _set_cwds(st, (None,))
             return
         text = "~"
     elif (
@@ -1983,7 +2106,7 @@ def _after_cd(ctx: _Ctx, st: _Line, cmd: SimpleCmd, program: str, notes: list[st
         or _dynamic(words[0], shell=st.shell)
         or (program == "pushd" and words[0].text[:1] in "+-" and words[0].text[1:].isdigit())
     ):
-        st.cwds = _merge_cwds(st.cwds, (None,))
+        _set_cwds(st, (None,))
         return
     else:
         text = words[0].text
@@ -1992,8 +2115,7 @@ def _after_cd(ctx: _Ctx, st: _Line, cmd: SimpleCmd, program: str, notes: list[st
     for cwd in st.cwds:
         target, expanded = _cd_target(ctx, text, cwd, st.shell)
         if target is None:
-            short = _cd_short_target(ctx, notes, text, cwd, st.shell)
-            if short is not None:
+            for short in _cd_short_target(ctx, notes, text, cwd, st.shell):
                 if expanded or (relative and cwd in st.expanded_cwds):
                     st.expanded_cwds.add(short)
                 targets.append(short)  # (and the unknown one, below)
@@ -2002,7 +2124,7 @@ def _after_cd(ctx: _Ctx, st: _Line, cmd: SimpleCmd, program: str, notes: list[st
         if target is not None and (expanded or (relative and cwd in st.expanded_cwds)):
             st.expanded_cwds.add(target)
         targets.append(target)
-    st.cwds = _merge_cwds(st.cwds, targets)
+    _set_cwds(st, targets)
 
 
 def _domains_of(urls: Sequence[str]) -> tuple[tuple[str, ...], bool]:
@@ -2201,7 +2323,7 @@ def _scan_assignments(st: _Line, cmd: SimpleCmd, program: str | None) -> None:
     if "CDPATH" in upper:
         if "cdpath-assigned" not in st.line_gray:
             st.line_gray.append("cdpath-assigned")
-        st.cwds = _merge_cwds(st.cwds, (None,))
+        _set_cwds(st, (None,))
 
 
 def _executes_written(

@@ -335,6 +335,20 @@ def short_reading_only(reasons: Sequence[str]) -> bool:
     )
 
 
+def on_disk_names(path: NormPath) -> NormPath:
+    """``path`` as the disk gave it back (``realpath`` of something that exists): a name in it that
+    looks like an 8.3 one (``data~1``) is the name as stored, a long name, not a short name left
+    unexpanded (spec revision 43, R42-5). Only a Windows drive path; anything else that makes it
+    uncertain stays. Pure; never raises."""
+    if "short-name-unresolved" not in path.reasons:
+        return path
+    if path.flavor != "windows" or not path.absolute or path.is_device:
+        return path
+    reasons = tuple(r for r in path.reasons if r != "short-name-unresolved")
+    still = any(r not in _INFO_REASONS for r in reasons)
+    return dataclasses.replace(path, reasons=reasons, uncertain=path.uncertain and still)
+
+
 def reading_text(
     raw: str,
     *,

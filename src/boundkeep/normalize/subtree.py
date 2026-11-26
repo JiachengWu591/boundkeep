@@ -34,7 +34,9 @@ globs select, so the normal rule evaluation sees them as read paths of the actio
   call for each, made while the parent is listed, was charged to the walk's time, and thousands
   of dotted directories without a sibling ended the first budget early (R40-1). A name the
   listing does not show is asked of the disk then, out of that loop: NTFS also opens a
-  directory by its 8.3 name or by a case its table merges (revision 42, R41-1).
+  directory by its 8.3 name or by a case its table merges (revision 42, R41-1). The listing
+  holds files too, and the time spent on siblings is booked apart from the clock, with a limit
+  of its own (revision 43, R42-1).
 
 Nothing here decides anything: it only finds names. Never raises.
 """
@@ -60,6 +62,11 @@ MAX_SCAN_ENTRIES = 30000  # entries (files and directories) looked at per reques
 SCAN_TIME_BUDGET_S = (
     0.35  # wall time of all scans of one request (0.2 before the link count: +5 us/file)
 )
+# The time asking for dotted folders' siblings may take per budget (spec revision 43, R42-1): at
+# most one ask per listed dotted folder, about 10 us each here, so 0.3 s at 30000 entries; the
+# limit only stops a disk where every ask takes far longer, and stays below the daemon's 2 s.
+# (It was ``SCAN_TIME_BUDGET_S`` at first: R40-1's layout needs 0.25 to 0.31 s and ran into it.)
+SIBLING_TIME_LIMIT_S = 1.5
 MAX_SCAN_HITS = 64  # reported entries per scan; the first few already decide the verdict
 _TIME_CHECK_MASK = 63  # the clock is read every 64 entries
 _REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT (symlinks and junctions on Windows)
@@ -296,10 +303,19 @@ class ScanBudget:
     seconds: float = SCAN_TIME_BUDGET_S
     entries: int = 0
     elapsed: float = 0.0
+    # The time spent on deciding whether a dotted directory has the sibling a Win32 call opens
+    # (spec revision 43, R42-1): part of ``elapsed`` but not charged to the clock; it has a limit
+    # of its own, ``sibling_seconds``.
+    sibling_s: float = 0.0
+    sibling_seconds: float = SIBLING_TIME_LIMIT_S
 
     @property
     def spent(self) -> bool:
-        return self.entries >= self.max_entries or self.elapsed >= self.seconds
+        return (
+            self.entries >= self.max_entries
+            or self.elapsed - self.sibling_s >= self.seconds
+            or self.sibling_s >= self.sibling_seconds
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -467,9 +483,10 @@ def _alias_enterable(path: str) -> bool:
 
 
 class _Listed:
-    """The directories and links one directory lists, by name (spec revision 41, R40-1): which
-    sibling a Win32 call opens for a dotted name is looked up here, so the disk is not asked
-    for the names the listing shows (revision 42: the others still are, ``_sibling_state``)."""
+    """The entries one directory lists, by name (spec revision 41, R40-1; files too since
+    revision 43, R42-1): which sibling a Win32 call opens for a dotted name is looked up here, so
+    the disk is not asked for the names the listing shows (revision 42: the others still are,
+    ``_sibling_state``)."""
 
     __slots__ = ("folded", "names")
 
@@ -490,9 +507,10 @@ class _Listed:
 
 def _sibling_state(listed: _Listed, name: str, path: str) -> int:
     """``_alias_state`` for the sibling ``name`` (at ``path``) of a dotted directory, from what
-    its parent listed: a plain file is nothing to open; a directory or a junction is entered as
-    revision 39 entered it; a symbolic link, or an entry that could not be classified, is asked
-    of the disk as revision 40 asked (``_alias_state``).
+    its parent listed: a plain file is nothing to open (the listing holds files too since spec
+    revision 43, R42-1: revision 42 asked the disk of each and listed it); a directory or a
+    junction is entered as revision 39 entered it; a symbolic link, or an entry that could not be
+    classified, is asked of the disk as revision 40 asked (``_alias_state``).
 
     A name the listing does not show is asked of the disk too (spec revision 42, R41-1): NTFS
     also opens a directory by its 8.3 name (``JLONGN~1.`` next to the junction ``jlongname``)
@@ -579,7 +597,8 @@ def scan(
 
 
 def _out_of_time(budget: ScanBudget, started: float) -> bool:
-    return budget.elapsed + (time.monotonic() - started) >= budget.seconds
+    # (the siblings' time is not charged here, spec revision 43, R42-1)
+    return budget.elapsed + (time.monotonic() - started) - budget.sibling_s >= budget.seconds
 
 
 def _resume_asks(
@@ -673,7 +692,14 @@ def _walk(
             result.status = "budget"
             return
         if sibling is not None:
+            # (its time is booked apart, not on the clock: a disk call for each sibling the
+            # listing lacks once ran out a first walk that then met 64 more entries, R42-1)
+            asked = time.monotonic()
             state = _sibling_state(sibling[0], sibling[1], current)
+            budget.sibling_s += time.monotonic() - asked
+            if budget.sibling_s >= budget.sibling_seconds:
+                result.status = "budget"
+                return
             if state == _REFUSE:
                 result.status = "unreadable"
             if state != _ENTER:
@@ -710,12 +736,12 @@ def _walk(
                 try:
                     is_dir = entry.is_dir(follow_symlinks=False)
                     link = _is_link(entry)
-                    openable = is_dir or link
                 except OSError:
                     result.status = "unreadable"
-                    is_dir, link, openable = False, False, True
+                    is_dir, link = False, False
                     # an entry we cannot even classify: treat it as a file, still name-tested
-                if openable and listed is not None:
+                    # (listed all the same: as a sibling it is asked of the disk, _sibling_state)
+                if listed is not None:  # (files too: a file sibling is nothing to open, R42-1)
                     listed.names[name] = entry
                 rel_path = f"{rel}/{name}" if rel else name
                 dotted = windows and name[-1:] in (".", " ")

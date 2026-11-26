@@ -66,9 +66,10 @@ def _tree(tmp_path: Path) -> Iterator[Path]:
 def test_a_slow_disk_is_not_charged_for_dotted_folders_while_their_parent_is_listed(
     tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 200 dotted folders without a sibling, then the folder that holds .env. Every lstat costs
-    # 10 ms of a made-up clock: revision 40 made one per dotted folder while it listed "sub",
-    # and the clock, read every 64 entries, ended the walk (0.35 s) before "zz" was opened.
+    # 200 dotted folders without a sibling, then the folder that holds .env; an earlier operand's
+    # walk has spent 0.2 s. Every lstat costs 1 ms of a made-up clock: revision 40 made one per
+    # dotted folder while it listed "sub", and the clock, read every 64 entries, ended the walk
+    # (0.35 s) before "zz" was opened.
     for i in range(200):
         _mkdir(tree / "sub" / f"d{i:03}.")
     _put(tree / "sub" / "zz" / ".env")
@@ -76,29 +77,40 @@ def test_a_slow_disk_is_not_charged_for_dotted_folders_while_their_parent_is_lis
     real_lstat = os.lstat
 
     def slow_lstat(path: Any, *args: Any, **kwargs: Any) -> Any:
-        clock[0] += 0.01
+        clock[0] += 0.001
         return real_lstat(path, *args, **kwargs)
 
     monkeypatch.setattr(os, "lstat", slow_lstat)
     monkeypatch.setattr(subtree, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
-    result, budget = _scan(tree / "sub", defer=True)
+    budget = subtree.ScanBudget()
+    budget.elapsed = 0.2
+    result = subtree.scan(
+        str(tree / "sub"),
+        ["c:/p"],
+        windows=True,
+        matcher=subtree.matcher_for(subtree.DEFAULT_PROTECTED_GLOBS),
+        budget=budget,
+        defer=True,
+    )
     assert result.status == "ok"
     assert {h.rel for h in result.hits} == {"zz/.env"}
     assert budget.entries == 202
     # one lstat per folder since spec revision 42 (R41-1: NTFS may open a name the listing does
     # not show), made when each folder's turn comes, where revision 39 opened it: none of it
-    # while "sub" was listed, so "zz" is still reached
-    assert clock[0] == pytest.approx(2.0)
+    # while "sub" was listed; since revision 43 (R42-1) that time is booked apart from the clock
+    assert clock[0] == pytest.approx(0.2)
+    assert budget.sibling_s == pytest.approx(0.2)
 
 
 @windows_only
 def test_a_sibling_the_parent_did_not_list_is_asked_once_when_its_turn_comes(
     tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # no sibling ("d0." .. "d4."), or a plain file of that name ("e"; the listing keeps only
-    # folders and links): revision 39 opened each once and failed; revision 40 asked lstat for
-    # each while listing "sub"; revision 41 asked nothing, and missed the folders NTFS opens by
-    # an 8.3 name; since revision 42 each is asked once, when its turn comes (R41-1)
+    # no sibling ("d0." .. "d4."), or a plain file of that name ("e"): revision 39 opened each
+    # once and failed; revision 40 asked lstat for each while listing "sub"; revision 41 asked
+    # nothing, and missed the folders NTFS opens by an 8.3 name; since revision 42 each folder
+    # without a sibling is asked once, when its turn comes (R41-1); the file is read off the
+    # listing since revision 43 (it holds files too, R42-1), as revision 41 read it
     for i in range(5):
         _mkdir(tree / "sub" / f"d{i}.")
     _mkdir(tree / "sub" / "e.")
@@ -120,7 +132,7 @@ def test_a_sibling_the_parent_did_not_list_is_asked_once_when_its_turn_comes(
     monkeypatch.setattr(subtree, "_alias_state", alias_state)
     result, _ = _scan(tree / "sub", defer=True)
     assert opened == ["sub", "zz"]
-    assert sorted(os.path.basename(p) for p in asked) == ["d0", "d1", "d2", "d3", "d4", "e"]
+    assert sorted(os.path.basename(p) for p in asked) == ["d0", "d1", "d2", "d3", "d4"]
     assert {h.rel for h in result.hits} == {"zz/.env"}
     assert len(result.deferred) == 6  # the names as on disk: for the second walk, as before
 
