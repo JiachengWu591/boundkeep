@@ -266,8 +266,8 @@
         },
         "latency_rules": {
           "n": 224,
-          "p50_ms": 2.951599999960308,
-          "p95_ms": 5.544200000031196
+          "p50_ms": 2.492500003427267,
+          "p95_ms": 3.3713000593706965
         },
         "misses": [
           {
@@ -571,8 +571,8 @@
         },
         "latency_rules": {
           "n": 85,
-          "p50_ms": 3.0444000001352833,
-          "p95_ms": 4.774300000008225
+          "p50_ms": 2.485099947080016,
+          "p95_ms": 3.064500051550567
         },
         "misses": [
           {
@@ -848,8 +848,8 @@
         },
         "latency_rules": {
           "n": 275,
-          "p50_ms": 4.61089999998876,
-          "p95_ms": 10.433200000079523
+          "p50_ms": 3.5154999932274222,
+          "p95_ms": 8.653800003230572
         },
         "misses": [
           {
@@ -1205,8 +1205,8 @@
         },
         "latency_rules": {
           "n": 106,
-          "p50_ms": 4.968899999994392,
-          "p95_ms": 10.578699999996388
+          "p50_ms": 3.867999999783933,
+          "p95_ms": 8.347099996171892
         },
         "misses": [
           {
@@ -1228,8 +1228,12 @@
             "id": "atk-exfil-032",
             "raw": "gray",
             "reasons": [
+              "ps-dynamic-arg",
               "ps-dynamic:InvokeMemberExpressionAst",
-              "ps-dynamic:TypeExpressionAst"
+              "ps-dynamic:TypeExpressionAst",
+              "ps-outside-command:InvokeMemberExpressionAst",
+              "ps-outside-command:TypeExpressionAst",
+              "ps-dynamic-value:InvokeMemberExpressionAst"
             ],
             "rule_ids": [],
             "verdict": "ask"
@@ -1282,9 +1286,9 @@
   "llm_call_share": 0.0,
   "metrics_version": 3,
   "policy": "policies/default.yaml (shipped)",
-  "policy_sha256": "7825785fd079fce5e6271b5070d934fff7a4567242bbde835eb32aa5ad3bf8b9",
+  "policy_sha256": "435ad5ec2b30a11838c9a6e409895520cfdf1fe35dcd4720ece431efa70d7083",
   "run": {
-    "date": "2026-11-04",
+    "date": "2026-11-26",
     "dev_hash": "34a1cd18e50712e5f4eea371fdea0df796724d20158f5a2e051105975b873780",
     "holdout_batches": [
       {

@@ -24,12 +24,17 @@
 
 **密钥**：只从 `api_key_env` 指定的环境变量（默认 `BOUNDKEEP_LLM_API_KEY`）读，每次调用时读，只放在 `Authorization` 请求头里；不写进策略、日志、缓存、会话状态、错误信息或报告。boundkeep 不读 `ANTHROPIC_API_KEY`。
 
+### 1a. 用一句话加规则（`boundkeep policy add`，M4，规格修订 44）
+
+只在你自己运行 `boundkeep policy add` 时才发，每次一个请求，经同一个发送出口（`gate_policy_request`）。用户消息只有：你那句话（不超过 2000 字，主目录写成 `~`，规则同上表 `command` 的替换）、当前策略的规则 id 列表、一个格式标记。不发策略的其他内容（规则的内容、受信任的项目、设置），不发文件内容、审计日志或会话状态。那句话经过脱敏会变（看起来带着秘密），或者带着守护进程环境里秘密变量的值时，什么都不发。系统提示词固定在 `src/boundkeep/compiler/prompts/propose.md`，带版本与哈希。`policy prompt` 与 `policy check` 不联网（`docs/policy-nl.md`）。
+
 ## 2. 留在本机的内容（`~/.boundkeep/`，只有当前用户能读）
 
 | 文件 | 内容 | 保留 |
 |---|---|---|
 | `logs/audit.jsonl` | 每个事件一条：判决、命中的规则、shell 命令（脱敏、截断）、工具名、会话 id；提示词只记长度；M3a 起另有污染状态（是否被污染、来源工具名），以及 LLM 审计的摘要（后端、模型、提示词版本、是否命中缓存、结果、token 数、模型写的理由，清洗并截断到 300 / 200 字） | 5 MiB 轮转，保留 5 份；`boundkeep log --purge` 删除 |
 | `session.sqlite`（及 `-wal`、`-shm`） | 每个会话：首次与最近出现的时间（修订 8 起，会话一开始就记一行，SessionStart）、上次污染来源调用之后被批准并执行了的污染询问的次数、来源名（最多 16 个：工具名，`shell-network:<程序名>`，`inherited:<SessionStart 的 source>`，或漏记 SessionStart 时的 `inherited:unknown`）、还在等 PostToolUse 的污染询问的 `tool_use_id`（每个会话最多 64 个，修订 8）；**只在配置了 LLM 后端且 `send_task_intent` 为 true 时**，另存最近几条任务意图（与上面发送的是同一份文字）。另有项目上的标记（规格修订 7、8）：读过不可信内容的会话写过的位置，即项目目录的路径，写到项目之外时那个文件的路径，或开发工具配置文件所在目录的路径（最多 1000 个），以及标记的时间、来源名与打标记的调用的类别（固定的三个词：`write`、`hidden-write`、`run`；规格修订 9）；不含文件内容，不含命令行 | 30 天没有活动的会话删除（连同它的待确认询问）；最多 5000 个会话；`boundkeep log --purge` 同时删除所有任务意图（污染标记保留：删掉它会让已读过不可信内容的会话变回"干净"）；项目上的标记不随清理与 `--purge` 删除，只由 `boundkeep taint clear` 删除（`boundkeep taint list` 查看）；库开着 `secure_delete`，删除之后截断 WAL，删掉的文字不留在文件的旧页里 |
+| `policy-history/` | `boundkeep policy` 每次写入或撤销之前的策略文件副本（最近 20 份），以及 `index.jsonl`（时间、操作、来源、前后的 SHA-256、新增的规则 id、策略文件路径）；M4 | 只保留最近 20 份副本；不随 `--purge` 删除 |
 | 内存 | LLM 结论的缓存（键是发送内容的哈希） | `cache_ttl_s`（默认 600 秒），守护进程退出即消失 |
 
 没有后端时，`session.sqlite` 里只有工具名与程序名、计数与项目上的标记（路径）。项目上的标记从不发给 LLM 后端。

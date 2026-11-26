@@ -50,6 +50,10 @@ Only do this for repositories you wrote or audited, and know what it leaves open
 - After a session reads a web page, a search result or MCP output, or runs a network command such as `curl` or `gh issue view`, these tools ask again in that session. They also ask in every session for a project it wrote to, until you run `boundkeep taint clear` yourself.
 - Untrusted text that arrives another way is not seen: a local file, `git clone`, or the output of a package run by its bare name with `npx`. See `docs/threat-model.md` and `docs/policy-reference.md`.
 
+## Adding rules from a sentence
+
+`boundkeep policy prompt "ask before docker push"` prints a prompt you can paste into any LLM tool; `boundkeep policy check <answer.yaml>` then checks what came back. With an LLM backend configured, `boundkeep policy add "..."` does both steps in one. A proposal can only add rules and tests. Before you are asked to type `yes`, deterministic code checks it, runs its tests and replays it against past calls. `boundkeep policy undo` restores the previous policy. Run these commands yourself in a terminal; the agent is not allowed to. See `docs/policy-nl.md`. The online mode has not been run against a real LLM service yet.
+
 ## Development setup
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
@@ -105,6 +109,7 @@ It is complementary to static scanners such as cc-audit, which check what you in
 - `docs/hook-behavior.md`: measured Claude Code hook behavior (versioned)
 - `docs/platforms.md`: what has been run on which platform and host
 - `docs/threat-model.md`: what is and is not defended
+- `docs/policy-nl.md`: adding rules from a sentence (`boundkeep policy`)
 - `docs/design-origin.md`: TODO
 
 ## License

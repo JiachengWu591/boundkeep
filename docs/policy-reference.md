@@ -2,7 +2,7 @@
 
 策略文件是安全配置：拼写错误必须大声失败，不能被悄悄忽略。所以所有层级都是严格模式（未知键报错、不做类型转换），错误信息带行号和字段路径。默认文件在 `policies/default.yaml`，更严的在 `policies/strict.yaml`；`boundkeep init` 把默认策略写到 `~/.boundkeep/policy.yaml`（已有的文件不会被覆盖，`--reset-policy` 才会，并保留备份与当前 mode）。
 
-规格的权威来源是 `PROJECT_SPEC.md` §7、§8；这里是字段参考。
+规格的权威来源是 `PROJECT_SPEC.md` §7、§8；这里是字段参考。用一句话生成规则与测试、检查、回放之后再追加进这个文件，见 `docs/policy-nl.md`（`boundkeep policy`，M4，规格 §8.1）；默认策略的 `deny-boundkeep-state-commands` 拒绝 agent 运行这一族命令（修订 44 起）。
 
 ## 顶层
 

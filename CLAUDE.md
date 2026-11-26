@@ -528,7 +528,23 @@ uv run python scripts/smoke_claude_m3a.py  # M3a 会话层的真实冒烟（fork
   - **给一份时间另设上限时，先量真实布局离它有多远：0.25 到 0.31 秒对 0.35 秒，第一次验证链里没到，第二次就到了。上限按次数的上界（条目数 × 每次的时间）定，留几倍的余量，并低于守护进程的期限。**
   - **上一版抓到的变异这一版存活，是修复让原来的测试绕开了那段代码：去找还有什么写法经过它。这次顺着它找到了修复漏掉的通配符写法。**
   - **判决测试的断言只报判决、不报灰色原因时，偶发失败就查不出原因：全量里一条"问、灰色"再也没再现，不知道是哪份预算还是别的。改 `_assert_denied` 一类的断言时把 `gray_reasons` 带进消息。**
-- **下一步**：M3b（自备密钥、确认费用）或 M4（不依赖 M3b）；接真实后端之前，收尾记录第 5 节里还剩 `auto` 模式的实测。总览见 `PROJECT_SPEC.md` 开头的"当前进度"与 §14 的状态列。
+- **M4：策略校验与自然语言策略编译，规格修订 44**（2026-11-25 到 11-26；记录 `docs/reports/M4.md`，用法 `docs/policy-nl.md`；已提交，`f5deb4d` 代码，文档在其后一个提交，未推送，未打标签）。使用者说"按推荐开工"（计划 D1 到 D8），做完后说"Commit both"。
+  - **命令**：`boundkeep policy prompt`（离线提示词，不联网）、`check FILE [--apply]`、`add "<一句话>"`（已配置的后端，单独 60 秒预算，只发那句话与规则 id，经 `send_gate.gate_policy_request`）、`undo`、`history`。
+  - **提议只能新增规则与测试**（`src/boundkeep/compiler/`）。唯一的例外：已有测试的判决被新规则变严时，改写它的 `expect`，给出警告 `existing-tests-changed`。新测试的判决由已有规则决定时，按实际判决写入。
+  - **检查分两级**：拒绝十种，警告七种。金丝雀 63 个，新会话与污染会话各判一次。属性测试确认新增规则削弱不了 deny / ask。回放用 dev 切分（只读 `attacks/`、`benign/`，只取标签已确认的 dev 样本）与审计日志里的 shell 调用。
+  - **写入**：文本层追加，用真实加载器核对；备份 20 份到 `~/.boundkeep/policy-history/`；原子替换，记审计日志 `event: policy`。
+  - **闸门**：每个 `policy` 子命令在 Claude Code 的进程里拒绝运行；写入另要真实控制台与 `yes`，没有 `--yes`。default 与 strict 的 `deny-boundkeep-state-commands` 加了子命令 `policy`。评测 690 次判断里 0 变化，`eval/` 已重新生成，数字不变。
+  - **后端**：协议加 `propose()`，与 `audit()` 共用传输；`GatedRequest.purpose` 让两种请求不能混用。
+  - **基准**：50 条（`eval/policy-compile/`、`eval/run_policy_bench.py`、`eval/policy-compile-report.md`），假后端，回答是手写的，50/50 与期望一致，危险提议 10/10 拦下；这些数字不说明任何模型。
+  - **审查**：实现之后请子代理做了一次只读审查，7 条全部复现并修了（记录第 6a 节，回归测试 `test_m4_review_fixes.py`）。最重的一条：`pythonw`、`py`、`python3.12` 和 PowerShell 里的 `Python` 都能被 allow，原因是检查只比一份写死的名单。现在改成把程序名交给归一化层判断，带 `exec` 标记的就拒绝。此外，allow 规则的路径必须限定在项目里，联网必须有 `domain_in`。
+  - **全量测试**：分六段跑，不是一个进程，在本会话 PowerShell 的后台跑。结果是 30970 通过、169 跳过、0 失败，合计与收集到的 31139 条相同；各段用时合计 1:49:09。
+    - 第一次跑，第 2 段有 2 条失败（见下面的教训）。测试改好之后，第 2 段整段重跑通过。
+    - 开始和结束时代码的哈希相同。
+  - **待你做**：手工验收（三句话，在线与离线）；真实后端跑一次基准与语义抽检（`--backend configured --confirm`，费用自理）；在线模式没有接过真实服务。
+  - **教训：只比名单的检查，挡不住同一个程序的另一种写法（版本号、启动器、大小写、包装器）。要问归一化层它把这个名字当成什么，而不是自己再列一份名单。**
+  - **规则语言只对一部分程序报子命令**（名单在提示词里，有测试核对）。`terraform apply`、`kubectl delete`、`make lint` 这样的规则永远命中不到，检查以 `tests-few` 拒绝。
+  - **改发行的策略文件里的规则时，先在 `tests/` 里搜这条规则的 id 和它的字段值：`test_m1c2_trusted_policy.py` 钉住了 `deny-boundkeep-state-commands` 的整个子命令集合，M4 按改动挑的测试没有选到它，到全量才失败。**
+- **下一步**：M4 的手工验收（推送与标签等使用者说）；之后是 M3b（自备密钥、确认费用）或 M5（只读 Web 日志查看器）。接真实后端之前，M3a 收尾记录第 5 节里还剩 `auto` 模式的实测。总览见 `PROJECT_SPEC.md` 开头的"当前进度"与 §14 的状态列。
 - 规格是"修订 3"加上 M0a 的 10 条已接受变更与 M1 的澄清（§7：Action 列表、`inside_project` 三值、POSIX 路径大小写、`project_dir`）；`IMPLEMENTATION_PROMPTS.md` 已对齐。hook 的实测事实在 `docs/hook-behavior.md`（带版本），平台记录在 `docs/platforms.md`：**M0 支持范围 = Windows 11 原生的 VS Code 扩展与交互式 CLI（2.1.292，PowerShell 工具）**，M1 的手工验收做完之前不扩大这个声明。
 - M1 已实现并通过自动测试：自写的保守 Bash 解析器（不用 bashlex，GPLv3+）、程序知识表、路径两层规范化、域名规范化、策略 schema 与规则引擎（`boundkeep test`、`boundkeep explain`）、判决到 hook 输出的映射（`allow` 只在 `emit_allow` 时输出）、`init` 把 home 固定进 hook 参数并支持 `--reset-policy`。设计契约在 `docs/m1-design.md`，策略字段在 `docs/policy-reference.md`。没有 LLM 后端时灰色就是 ask，所以 enforce 下大部分命令会弹确认，日常先用 `audit-only`。
 - 独立审查（四路：解析器、路径与域名、策略语义、性能与集成）共约 60 条发现，已按文件分工修复并有回归测试；真实 Claude Code 冒烟（`scripts/smoke_claude_m1.py`，11 项）全过。Linux 容器里的 M1 测试已跑（真 bash 5.2，差分测试通过）。
