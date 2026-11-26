@@ -97,7 +97,9 @@ rules:
     # too: the rule language sees the subcommand only; the user runs it in a terminal, and
     # `boundkeep doctor` shows the list), `taint clear` removes the project marks that make dev
     # tools ask after untrusted content (`taint list` is refused with it, for the same reason),
-    # and `--reset-policy`, `--purge`, `--rotate-endpoint` and `--home` replace the
+    # `policy` adds rules to the policy or undoes that (every `policy` form is refused: `check`
+    # and `add` replay the audit log, which holds other sessions' commands, and `add` sends a
+    # request to the LLM backend; spec revision 44), and `--reset-policy`, `--purge`, `--rotate-endpoint` and `--home` replace the
     # policy, delete the audit log, change the endpoint or point it all somewhere else. The
     # path rules above cannot see any of that because boundkeep itself writes the files. These
     # are for the user's own terminal, never for the agent. The subcommand rule needs the
@@ -105,9 +107,9 @@ rules:
     tool: [Bash, PowerShell]
     match:
       program: [boundkeep, boundkeep-hook]
-      subcommand: [mode, uninstall, init, serve, trust, taint]
+      subcommand: [mode, uninstall, init, serve, trust, taint, policy]
     action: deny
-    reason: "boundkeep's own mode, uninstall, init, serve, trust and taint commands change the gate and are not allowed for the agent"
+    reason: "boundkeep's own mode, uninstall, init, serve, trust, taint and policy commands change the gate and are not allowed for the agent"
   - id: deny-boundkeep-state-flags
     # The flag half of deny-boundkeep-state-commands: these options only exist on commands that
     # replace the policy, delete the audit log, rewrite the hook registration or relocate the
@@ -2706,6 +2708,11 @@ tests:
   - { tool: Bash, input: { command: "boundkeep taint list" }, expect: deny }
   - { tool: Bash, input: { command: "uv run boundkeep taint clear --project-dir ." }, expect: deny }
   - { tool: PowerShell, platform: [windows], input: { command: "boundkeep.exe taint clear --all" }, expect: deny }
+  - { tool: Bash, input: { command: "boundkeep policy check proposal.yaml --apply" }, expect: deny }
+  - { tool: Bash, input: { command: "boundkeep policy prompt 'deny curl'" }, expect: deny }
+  - { tool: Bash, input: { command: "uv run boundkeep policy undo" }, expect: deny }
+  - { tool: Bash, input: { command: "python -m boundkeep policy history" }, expect: deny }
+  - { tool: PowerShell, platform: [windows], input: { command: "boundkeep.exe policy add 'allow make'" }, expect: deny }
   # Configuration files of the dev tools that load code named in them.
   - { tool: Write, input: { file_path: "mypy.ini", content: "x" }, expect: ask }
   - { tool: Write, input: { file_path: ".mypy.ini", content: "x" }, expect: ask }

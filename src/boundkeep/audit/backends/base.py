@@ -59,6 +59,29 @@ VERDICT_TOOL_DESCRIPTION: Final = (
     "Report the audit verdict for the one tool call described in the user message."
 )
 
+# A policy proposal (M4, PROJECT_SPEC.md §8.1). The schema handed to the model is loose on purpose:
+# the rules and tests are validated by the policy schema in code (compiler.proposal), never by
+# what a service enforces.
+PROPOSAL_TOOL_NAME: Final = "report_policy_proposal"
+PROPOSAL_TOOL_DESCRIPTION: Final = (
+    "Report the proposal (new boundkeep rules and tests) for the request in the user message."
+)
+MAX_PROPOSAL_OUTPUT_CHARS: Final = 32 * 1024
+PROPOSAL_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "properties": {
+        "proposal": {"type": "integer", "enum": [1]},
+        "summary": {"type": "string"},
+        "impact": {"type": "string"},
+        "rules": {"type": "array", "items": {"type": "object"}},
+        "tests": {"type": "array", "items": {"type": "object"}},
+    },
+    "required": ["proposal", "summary", "rules", "tests"],
+    "additionalProperties": False,
+}
+
+Purpose = Literal["audit", "policy"]
+
 
 class BackendError(Exception):
     """A failed audit call. ``detail`` is safe to log: it never holds the request body, the
@@ -86,13 +109,15 @@ _SEAL: Final = object()
 
 @dataclass(frozen=True, slots=True)
 class GatedRequest:
-    """What may be sent: the user message (JSON text) and the fixed system prompt."""
+    """What may be sent: the user message (JSON text) and the fixed system prompt. ``purpose``
+    says which call takes it: ``audit`` one gray tool call, ``policy`` a proposal (M4)."""
 
     content: str
     system_prompt: str
     prompt_hash: str
     prompt_version: str
     seal: object = field(repr=False, compare=False)
+    purpose: Purpose = "audit"
 
     def __post_init__(self) -> None:
         if self.seal is not _SEAL:
@@ -131,6 +156,17 @@ class AuditResult:
     attempts: int = 1
 
 
+@dataclass(frozen=True, slots=True)
+class ProposalResult:
+    """A policy proposal as the model wrote it: a JSON object, not yet validated (that is
+    ``compiler.proposal``'s work)."""
+
+    data: dict[str, object]
+    usage: Usage = Usage()
+    latency_ms: float = 0.0
+    attempts: int = 1
+
+
 class AuditBackend(Protocol):
     """An adapter. ``name`` / ``model`` / ``transport`` go into the audit log and the cache key."""
 
@@ -146,6 +182,32 @@ class AuditBackend(Protocol):
     def audit(self, request: GatedRequest, *, deadline: float) -> AuditResult:
         """``deadline`` is a ``time.monotonic()`` value; raises ``BackendError``."""
         ...
+
+
+class ProposerBackend(Protocol):
+    """An adapter that also writes policy proposals (``boundkeep policy add``, M4)."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def model(self) -> str: ...
+
+    @property
+    def transport(self) -> str: ...
+
+    def propose(self, request: GatedRequest, *, deadline: float) -> ProposalResult:
+        """``request.purpose`` is ``policy``; raises ``BackendError``."""
+        ...
+
+
+def check_purpose(request: object, purpose: Purpose) -> GatedRequest:
+    """``request`` if it is a ``GatedRequest`` built for ``purpose``; ``TypeError`` otherwise."""
+    if not isinstance(request, GatedRequest):
+        raise TypeError("a backend only takes a GatedRequest")
+    if request.purpose != purpose:
+        raise TypeError(f"this call takes a GatedRequest built for {purpose!r}")
+    return request
 
 
 def invalid(detail: str) -> BackendError:
@@ -218,6 +280,23 @@ def parse_verdict(text: object) -> ModelVerdict:
         verdict=verdict,
         reason_for_user=reason,
     )
+
+
+def parse_proposal_output(text: object) -> dict[str, object]:
+    """The proposal object from the JSON text the model wrote; ``BackendError("invalid_output")``
+    unless it is strict JSON (no duplicate keys, no NaN) holding an object of bounded size. What
+    is inside is checked by ``compiler.proposal``, which reports problems by field and line."""
+    if not isinstance(text, str):
+        raise invalid("the proposal is not a JSON string")
+    if len(text) > MAX_PROPOSAL_OUTPUT_CHARS:
+        raise invalid(f"the proposal is longer than {MAX_PROPOSAL_OUTPUT_CHARS} characters")
+    try:
+        obj = strict_json(text)
+    except ValueError as exc:
+        raise invalid(f"the proposal is not valid JSON ({str(exc)[:60]})") from None
+    if not isinstance(obj, dict):
+        raise invalid("the proposal is not a JSON object")
+    return obj
 
 
 def verdict_json(

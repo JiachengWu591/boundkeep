@@ -713,6 +713,10 @@ def build_parser() -> argparse.ArgumentParser:
     trust.add_parser(sub)
     taintcmd.add_parser(sub)
     evalcli.add_parser(sub)
+    # imported here: the compiler imports policycli, which imports this module
+    from boundkeep.compiler import command as policy_command
+
+    policy_command.add_parser(sub)
 
     p = sub.add_parser("log", help="show the recent audit log")
     p.add_argument("--tail", type=int, default=20, help="number of records (default 20)")

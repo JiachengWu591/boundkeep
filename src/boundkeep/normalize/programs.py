@@ -98,6 +98,8 @@ _EXEC_PROGRAMS = _fs(
     "runas faketime chrt proxychains proxychains4 tsocks unbuffer eatmydata firejail fakeroot "
     "prlimit setpriv"
 )
+# Public for the policy compiler (M4): an allow rule for one of these lets anything run.
+EXEC_PROGRAMS: frozenset[str] = _EXEC_PROGRAMS
 _SECRET_DIRS = frozenset(
     {".ssh", ".aws", ".gnupg", ".azure", ".kube", ".password-store", ".gcloud", ".oci"}
 )
@@ -4579,6 +4581,13 @@ def _resolve_program(program: str) -> tuple[str, str]:
         name = name[:-4]
     name = _canon_program(name)
     return name, "ok"
+
+
+def canonical_name(program: str) -> str:
+    """The name a rule's ``program`` entry is compared with for ``program`` as written
+    (``python3.12`` -> ``python``, ``curl.exe`` -> ``curl``); public for the policy compiler
+    (M4)."""
+    return _resolve_program(program)[0]
 
 
 _DispatchFn = Callable[[_Acc, Sequence[Word]], None]

@@ -55,6 +55,9 @@ import httpx
 
 from boundkeep import __version__
 from boundkeep.audit.backends.base import (
+    PROPOSAL_SCHEMA,
+    PROPOSAL_TOOL_DESCRIPTION,
+    PROPOSAL_TOOL_NAME,
     VERDICT_SCHEMA,
     VERDICT_TOOL_DESCRIPTION,
     VERDICT_TOOL_NAME,
@@ -62,9 +65,11 @@ from boundkeep.audit.backends.base import (
     BackendError,
     FailureKind,
     GatedRequest,
-    ModelVerdict,
+    ProposalResult,
     Usage,
+    check_purpose,
     invalid,
+    parse_proposal_output,
     parse_verdict,
     strict_json,
 )
@@ -74,6 +79,7 @@ from boundkeep.redact import REDACTED, redact_text
 MAX_RESPONSE_BYTES: Final = 256 * 1024
 MAX_ERROR_BODY_BYTES: Final = 16 * 1024
 MAX_TOKENS: Final = 400
+MAX_PROPOSAL_TOKENS: Final = 8000  # a proposal is up to 32 KiB of JSON (M4)
 MIN_RETRY_BUDGET_S: Final = 0.5  # a retry needs at least this much of the budget left
 MAX_RETRY_WAIT_S: Final = 2.0
 MAX_HANGING_LOOKUPS: Final = 8  # name lookups still running after their attempt ended, at most
@@ -289,7 +295,12 @@ class OpenAICompatibleBackend:
 
     def body(self, request: GatedRequest) -> dict[str, Any]:
         """The JSON body of the request (no key in it; tests look at exactly this)."""
-        body: dict[str, Any] = {"temperature": 0, "max_tokens": MAX_TOKENS}
+        policy = request.purpose == "policy"
+        tool_name = PROPOSAL_TOOL_NAME if policy else VERDICT_TOOL_NAME
+        body: dict[str, Any] = {
+            "temperature": 0,
+            "max_tokens": MAX_PROPOSAL_TOKENS if policy else MAX_TOKENS,
+        }
         body.update(self._extra)
         body.update(
             {
@@ -306,13 +317,15 @@ class OpenAICompatibleBackend:
                 {
                     "type": "function",
                     "function": {
-                        "name": VERDICT_TOOL_NAME,
-                        "description": VERDICT_TOOL_DESCRIPTION,
-                        "parameters": VERDICT_SCHEMA,
+                        "name": tool_name,
+                        "description": (
+                            PROPOSAL_TOOL_DESCRIPTION if policy else VERDICT_TOOL_DESCRIPTION
+                        ),
+                        "parameters": PROPOSAL_SCHEMA if policy else VERDICT_SCHEMA,
                     },
                 }
             ]
-            body["tool_choice"] = {"type": "function", "function": {"name": VERDICT_TOOL_NAME}}
+            body["tool_choice"] = {"type": "function", "function": {"name": tool_name}}
         else:
             body["response_format"] = {"type": "json_object"}
         return body
@@ -330,17 +343,42 @@ class OpenAICompatibleBackend:
         return key
 
     def audit(self, request: GatedRequest, *, deadline: float) -> AuditResult:
-        if not isinstance(request, GatedRequest):
-            raise TypeError("a backend only takes a GatedRequest")
+        request = check_purpose(request, "audit")
         started = time.monotonic()
+        verdict, usage, attempts = self._call(request, deadline, parse_verdict)
+        return AuditResult(
+            verdict=verdict,
+            usage=usage,
+            latency_ms=(time.monotonic() - started) * 1000.0,
+            attempts=attempts,
+        )
+
+    def propose(self, request: GatedRequest, *, deadline: float) -> ProposalResult:
+        """A policy proposal (M4): the same transport, retry, limits and failure kinds as an
+        audit; only the output contract differs (``report_policy_proposal``)."""
+        request = check_purpose(request, "policy")
+        started = time.monotonic()
+        data, usage, attempts = self._call(request, deadline, parse_proposal_output)
+        return ProposalResult(
+            data=data,
+            usage=usage,
+            latency_ms=(time.monotonic() - started) * 1000.0,
+            attempts=attempts,
+        )
+
+    def _call(
+        self, request: GatedRequest, deadline: float, parse: Callable[[str], _T]
+    ) -> tuple[_T, Usage, int]:
         key = self._key()
         payload = json.dumps(self.body(request), ensure_ascii=False, separators=(",", ":"))
         data = payload.encode("utf-8")
+        tool_name = PROPOSAL_TOOL_NAME if request.purpose == "policy" else VERDICT_TOOL_NAME
         attempts = 0
         while True:
             attempts += 1
             try:
-                verdict, usage = self._once(data, key, deadline)
+                text, usage = self._once(data, key, deadline, tool_name)
+                return parse(text), usage, attempts
             except BackendError as exc:
                 exc.detail = _scrubbed(exc.detail, key)
                 left = deadline - time.monotonic()
@@ -355,18 +393,12 @@ class OpenAICompatibleBackend:
                 if wait > 0:
                     self._sleep(wait)
                 continue
-            return AuditResult(
-                verdict=verdict,
-                usage=usage,
-                latency_ms=(time.monotonic() - started) * 1000.0,
-                attempts=attempts,
-            )
 
-    def _once(self, data: bytes, key: str, deadline: float) -> tuple[ModelVerdict, Usage]:
+    def _once(self, data: bytes, key: str, deadline: float, tool_name: str) -> tuple[str, Usage]:
         left = deadline - time.monotonic()
         if left <= 0:
             raise BackendError("timeout", "no time left in the audit budget")
-        return self._parse(_run(self._post(data, key, deadline, left)))
+        return self._parse(_run(self._post(data, key, deadline, left)), tool_name)
 
     async def _post(self, data: bytes, key: str, deadline: float, left: float) -> bytes:
         headers = {
@@ -464,7 +496,7 @@ class OpenAICompatibleBackend:
         found = [t for t in (_token(error.get("type")), _token(error.get("code"))) if t]
         return ", ".join(dict.fromkeys(found))
 
-    def _parse(self, raw: bytes) -> tuple[ModelVerdict, Usage]:
+    def _parse(self, raw: bytes, tool_name: str) -> tuple[str, Usage]:
         try:
             obj = strict_json(raw.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
@@ -483,13 +515,12 @@ class OpenAICompatibleBackend:
         if message.get("refusal"):
             raise invalid("the model refused to answer")
         if self._transport == "tool_call":
-            text = _tool_arguments(message.get("tool_calls"))
+            text = _tool_arguments(message.get("tool_calls"), tool_name)
         else:
             content = message.get("content")
             if not isinstance(content, str):
                 raise invalid("the answer has no JSON content")
             text = content
-        verdict = parse_verdict(text)
         usage = obj.get("usage")
         if isinstance(usage, dict):
             counts = Usage(
@@ -499,18 +530,18 @@ class OpenAICompatibleBackend:
             )
         else:
             counts = Usage()
-        return verdict, counts
+        return text, counts
 
 
-def _tool_arguments(calls: object) -> str:
+def _tool_arguments(calls: object, tool_name: str = VERDICT_TOOL_NAME) -> str:
     if not isinstance(calls, list) or len(calls) != 1 or not isinstance(calls[0], dict):
         raise invalid("the answer does not make exactly one tool call")
     call = calls[0]
     if call.get("type", "function") != "function":
         raise invalid("the tool call is not a function call")
     function = call.get("function")
-    if not isinstance(function, dict) or function.get("name") != VERDICT_TOOL_NAME:
-        raise invalid(f"the tool call is not {VERDICT_TOOL_NAME}")
+    if not isinstance(function, dict) or function.get("name") != tool_name:
+        raise invalid(f"the tool call is not {tool_name}")
     arguments = function.get("arguments")
     if not isinstance(arguments, str):
         raise invalid("the tool call's arguments are not a JSON string")

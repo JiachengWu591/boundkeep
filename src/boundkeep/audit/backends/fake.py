@@ -16,7 +16,10 @@ from boundkeep.audit.backends.base import (
     AuditResult,
     BackendError,
     GatedRequest,
+    ProposalResult,
     Usage,
+    check_purpose,
+    parse_proposal_output,
     parse_verdict,
     verdict_json,
 )
@@ -64,9 +67,28 @@ class FakeBackend:
         return self._transport
 
     def audit(self, request: GatedRequest, *, deadline: float) -> AuditResult:
-        if not isinstance(request, GatedRequest):
-            raise TypeError("a backend only takes a GatedRequest")
+        request = check_purpose(request, "audit")
         started = time.monotonic()
+        answer = self._answer(request, deadline)
+        verdict = parse_verdict(answer)
+        return AuditResult(
+            verdict=verdict,
+            usage=self._usage,
+            latency_ms=(time.monotonic() - started) * 1000.0,
+        )
+
+    def propose(self, request: GatedRequest, *, deadline: float) -> ProposalResult:
+        """A policy proposal (M4): the step is the JSON text of the proposal object."""
+        request = check_purpose(request, "policy")
+        started = time.monotonic()
+        data = parse_proposal_output(self._answer(request, deadline))
+        return ProposalResult(
+            data=data,
+            usage=self._usage,
+            latency_ms=(time.monotonic() - started) * 1000.0,
+        )
+
+    def _answer(self, request: GatedRequest, deadline: float) -> str:
         self.requests.append(request)
         if self._every is not None:
             step: Step = self._every
@@ -81,9 +103,4 @@ class FakeBackend:
         answer = step(request) if callable(step) else step
         if isinstance(answer, BackendError):
             raise answer
-        verdict = parse_verdict(answer)
-        return AuditResult(
-            verdict=verdict,
-            usage=self._usage,
-            latency_ms=(time.monotonic() - started) * 1000.0,
-        )
+        return answer

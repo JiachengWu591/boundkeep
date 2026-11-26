@@ -405,6 +405,8 @@ _WRAPPERS: dict[str, _Spec] = {
         risky=_fs("-a", "--arg-file"),
     ),
 }  # fmt: skip
+# Public for the policy compiler (M4): an allow rule for a wrapper lets the wrapped program run.
+WRAPPERS: frozenset[str] = frozenset(_WRAPPERS)
 
 
 @dataclass(frozen=True, slots=True)

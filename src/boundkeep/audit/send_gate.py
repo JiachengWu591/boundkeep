@@ -524,3 +524,77 @@ def _gate(
         seal=_SEAL,
     )
     return GateResult(request, None, redacted)
+
+
+# --------------------------------------------------------------------------------------------
+# Policy proposals (M4, PROJECT_SPEC.md §8.1)
+# --------------------------------------------------------------------------------------------
+
+POLICY_SCHEMA_TAG: Final = "boundkeep.policy-request/1"
+MAX_POLICY_REQUEST_CHARS: Final = 2000
+MAX_POLICY_RULE_IDS: Final = 600  # the policy allows 500 rules
+
+
+def gate_policy_request(
+    request: object,
+    rule_ids: Sequence[str],
+    *,
+    home: str | None,
+    secrets: Sequence[str] = (),
+) -> GateResult:
+    """The request for a policy proposal, or why it must not be sent. Never raises.
+
+    Only two things leave: the user's sentence (at most ``MAX_POLICY_REQUEST_CHARS`` characters,
+    no control or format character other than tab, CR and LF, the home directory written as
+    ``~``) and the ids of the current policy's rules. Refused when the redactor would change the
+    sentence (it looks like it carries a secret: the user takes it out) or the request would carry
+    the value of a secret environment variable. The same content is what ``policy prompt`` prints
+    for the user to paste elsewhere, so both modes show the model the same thing."""
+    try:
+        return _gate_policy(request, rule_ids, home=home, secrets=secrets)
+    except _Refused as exc:
+        return GateResult(None, str(exc), None)
+    except Exception as exc:  # noqa: BLE001 - nothing leaves when the gate itself fails
+        return GateResult(None, f"the send gate failed ({type(exc).__name__})", None)
+
+
+def _gate_policy(
+    request: object, rule_ids: Sequence[str], *, home: str | None, secrets: Sequence[str]
+) -> GateResult:
+    from boundkeep.compiler.prompt import system_prompt as policy_prompt
+
+    if not isinstance(request, str) or not request.strip():
+        raise _Refused("the description is empty")
+    text = _checked_text(request.strip(), "the description", MAX_POLICY_REQUEST_CHARS)
+    shown = _Places(home, None).word(text)
+    if redact_text(shown) != shown:
+        raise _Refused(
+            "the description holds text that looks like a secret; take it out and try again"
+        )
+    ids = [i for i in rule_ids if isinstance(i, str) and _RULE_ID.fullmatch(i)]
+    if len(ids) != len(rule_ids) or len(ids) > MAX_POLICY_RULE_IDS:
+        raise _Refused("the policy's rule ids cannot be sent as they are")
+    payload: dict[str, Any] = {
+        "schema": POLICY_SCHEMA_TAG,
+        "request": shown,
+        "existing_rule_ids": ids,
+    }
+    content = json.dumps(payload, ensure_ascii=False, separators=(", ", ": "))
+    if redact_text(content) != content:
+        raise _Refused("the request would carry text that looks like a secret")
+    folded = content.casefold()
+    if any(_carries(folded, s) for s in secrets):
+        raise _Refused("the request would carry the value of a secret environment variable")
+    prompt = policy_prompt()
+    gated = GatedRequest(
+        content=content,
+        system_prompt=prompt.text,
+        prompt_hash=prompt.sha256,
+        prompt_version=prompt.version,
+        seal=_SEAL,
+        purpose="policy",
+    )
+    return GateResult(gated, None, payload)
+
+
+_RULE_ID: Final = re.compile(r"[a-z0-9-]{1,64}")

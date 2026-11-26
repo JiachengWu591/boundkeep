@@ -42,8 +42,11 @@ class Reply:
     content_length: bool = True  # send Content-Length (else close-delimited)
 
 
-def tool_call_answer(arguments: str, *, usage: dict[str, int] | None = None) -> dict[str, Any]:
-    """An OpenAI chat completion that calls report_verdict with ``arguments`` (a JSON string)."""
+def tool_call_answer(
+    arguments: str, *, usage: dict[str, int] | None = None, name: str = "report_verdict"
+) -> dict[str, Any]:
+    """An OpenAI chat completion that calls ``name`` (report_verdict) with ``arguments`` (a JSON
+    string)."""
     return {
         "id": "chatcmpl-test",
         "object": "chat.completion",
@@ -58,7 +61,7 @@ def tool_call_answer(arguments: str, *, usage: dict[str, int] | None = None) -> 
                         {
                             "id": "call_1",
                             "type": "function",
-                            "function": {"name": "report_verdict", "arguments": arguments},
+                            "function": {"name": name, "arguments": arguments},
                         }
                     ],
                 },

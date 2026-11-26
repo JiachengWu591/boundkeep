@@ -184,6 +184,8 @@ def test_trust_is_a_denied_boundkeep_subcommand(name: str) -> None:
     rules = _rules(name)
     rule = rules["deny-boundkeep-state-commands"]
     assert rule["action"] == "deny"
+    # M4 (spec revision 44) adds `policy`: the agent must not propose, apply or undo
+    # policy changes itself
     assert set(rule["match"]["subcommand"]) == {
         "mode",
         "uninstall",
@@ -191,6 +193,7 @@ def test_trust_is_a_denied_boundkeep_subcommand(name: str) -> None:
         "serve",
         "trust",
         "taint",
+        "policy",
     }
     assert rule["match"]["program"] == ["boundkeep", "boundkeep-hook"]
 

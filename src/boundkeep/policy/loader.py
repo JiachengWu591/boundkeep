@@ -239,7 +239,9 @@ def _format_loc(loc: Sequence[Any]) -> str:
     return out or "(top level)"
 
 
-def _describe_validation_error(exc: ValidationError, root: yaml.Node) -> PolicyError:
+def _describe_validation_error(
+    exc: ValidationError, root: yaml.Node, what: str = "policy"
+) -> PolicyError:
     """Short messages from pydantic: location and message only, never the offending input.
 
     A custom schema error may carry an ``at`` context: a path below ``loc`` (a list index, a key)
@@ -266,7 +268,25 @@ def _describe_validation_error(exc: ValidationError, root: yaml.Node) -> PolicyE
         parts.append(text)
     if len(errors) > _MAX_REPORTED_ERRORS:
         parts.append(f"and {len(errors) - _MAX_REPORTED_ERRORS} more")
-    return PolicyError("invalid policy: " + "; ".join(parts), line=first_line)
+    return PolicyError(f"invalid {what}: " + "; ".join(parts), line=first_line)
+
+
+def describe_validation_error(
+    exc: ValidationError, root: yaml.Node, what: str = "policy"
+) -> PolicyError:
+    """``PolicyError`` for a pydantic error on a document read by ``read_strict_mapping``: field
+    path and line, never the offending input (the M4 proposal reader shares it)."""
+    return _describe_validation_error(exc, root, what)
+
+
+def secret_location(location: Sequence[Any]) -> str:
+    """``rules[2].match.path_glob[0]`` for a ``find_secret`` location."""
+    return _format_loc(location)
+
+
+def node_line(root: yaml.Node, location: Sequence[Any]) -> int | None:
+    """Best-effort 1-based line of the node at ``location`` (keys and list indexes)."""
+    return _node_line(root, location)
 
 
 def _describe_yaml_error(exc: yaml.YAMLError) -> PolicyError:
@@ -313,57 +333,70 @@ def parse_policy_text(text: str, *, home: str | None = None) -> Policy:
     and the field path (``rules[2].match.path_glob[0]``); a string that looks like a secret is
     reported by location only, never echoed.
     """
+    data, root = read_strict_mapping(text, limit=MAX_POLICY_BYTES)
+    secret = find_secret(data, skip=skip_policy_test_inputs)
+    if secret is not None:
+        location, kind = secret
+        raise PolicyError(
+            f"invalid policy: {_format_loc(location)}: looks like {kind}; never put secrets "
+            "in a policy (name an environment variable with api_key_env)",
+            line=_node_line(root, location),
+        )
+    try:
+        return Policy.model_validate(data, context={"home": home})
+    except ValidationError as exc:
+        raise _describe_validation_error(exc, root) from None
+    except Exception as exc:  # noqa: BLE001 - the contract is "PolicyError or a Policy"
+        # A validator bug or an exotic input must still fail closed as a PolicyError; only the
+        # class name is kept, since the text may echo file content.
+        raise PolicyError(f"invalid policy: {_clean(type(exc).__name__)}") from None
+
+
+def read_strict_mapping(
+    text: str, *, limit: int, what: str = "policy"
+) -> tuple[dict[Any, Any], yaml.MappingNode]:
+    """The constructed top-level mapping of ``text`` and its node (marks give the lines), read by
+    ``_StrictLoader`` with every hardening of the module docstring. Raises only ``PolicyError``.
+
+    ``limit`` bounds the length of ``text`` in characters; ``what`` names the document in errors.
+    """
     if not isinstance(text, str):
         # PyYAML would happily sniff the encoding of bytes (UTF-16 included); never let it.
-        raise PolicyError("the policy text must be a string")
-    if len(text) > MAX_POLICY_BYTES:
-        raise PolicyError(f"policy is larger than {MAX_POLICY_BYTES} bytes")
+        raise PolicyError(f"the {what} text must be a string")
+    if len(text) > limit:
+        raise PolicyError(f"{what} is larger than {limit} bytes")
     _refuse_hidden_line_breaks(text)
     loader: _StrictLoader | None = None
     try:
-        try:
-            # The constructor already reads the text, so control characters fail here.
-            loader = _StrictLoader(text)
-            root = loader.get_single_node()
-            if root is None:
-                raise PolicyError("the policy file is empty")
-            if not isinstance(root, yaml.MappingNode):
-                raise PolicyError(
-                    "the top level of a policy must be a mapping", line=root.start_mark.line + 1
-                )
-            data = loader.construct_document(root)
-        except PolicyError:
-            raise
-        except yaml.YAMLError as exc:
-            raise _describe_yaml_error(exc) from None
-        except Exception as exc:  # noqa: BLE001 - deliberate catch-all, see below
-            # Why a blanket catch: PyYAML's constructors leak plain exceptions of any type on
-            # hostile scalars (ValueError / OverflowError for the timestamp 2001-13-45 or a
-            # 5000-digit integer; KeyError, IndexError and AttributeError historically for bad
-            # explicit-tag values), and RecursionError / MemoryError are possible for shapes the
-            # limits did not foresee. The contract is "PolicyError or a Policy, nothing else":
-            # the daemon fails closed on PolicyError only. Only the exception's class name is
-            # kept, never its text, which may echo file content.
-            raise PolicyError(f"invalid YAML: {_clean(type(exc).__name__)}") from None
-        secret = find_secret(data, skip=skip_policy_test_inputs)
-        if secret is not None:
-            location, kind = secret
+        # The constructor already reads the text, so control characters fail here.
+        loader = _StrictLoader(text)
+        root = loader.get_single_node()
+        if root is None:
+            raise PolicyError(f"the {what} file is empty")
+        if not isinstance(root, yaml.MappingNode):
             raise PolicyError(
-                f"invalid policy: {_format_loc(location)}: looks like {kind}; never put secrets "
-                "in a policy (name an environment variable with api_key_env)",
-                line=_node_line(root, location),
+                f"the top level of a {what} must be a mapping", line=root.start_mark.line + 1
             )
-        try:
-            return Policy.model_validate(data, context={"home": home})
-        except ValidationError as exc:
-            raise _describe_validation_error(exc, root) from None
-        except Exception as exc:  # noqa: BLE001 - the contract is "PolicyError or a Policy"
-            # A validator bug or an exotic input must still fail closed as a PolicyError; only the
-            # class name is kept, since the text may echo file content.
-            raise PolicyError(f"invalid policy: {_clean(type(exc).__name__)}") from None
+        data = loader.construct_document(root)
+    except PolicyError:
+        raise
+    except yaml.YAMLError as exc:
+        raise _describe_yaml_error(exc) from None
+    except Exception as exc:  # noqa: BLE001 - deliberate catch-all, see below
+        # Why a blanket catch: PyYAML's constructors leak plain exceptions of any type on
+        # hostile scalars (ValueError / OverflowError for the timestamp 2001-13-45 or a
+        # 5000-digit integer; KeyError, IndexError and AttributeError historically for bad
+        # explicit-tag values), and RecursionError / MemoryError are possible for shapes the
+        # limits did not foresee. The contract is "PolicyError or a Policy, nothing else":
+        # the daemon fails closed on PolicyError only. Only the exception's class name is
+        # kept, never its text, which may echo file content.
+        raise PolicyError(f"invalid YAML: {_clean(type(exc).__name__)}") from None
     finally:
         if loader is not None:
             loader.dispose()
+    if not isinstance(data, dict):  # a mapping node always constructs to a dict
+        raise PolicyError(f"the top level of a {what} must be a mapping")
+    return data, root
 
 
 # --------------------------------------------------------------------------- files

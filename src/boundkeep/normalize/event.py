@@ -189,6 +189,9 @@ _BUILD_FILES: dict[str, frozenset[str]] = {
     ),
     "flake8": frozenset({".flake8", "setup.cfg", "tox.ini"}),
 }
+# Public for the policy compiler (M4).
+INTERPRETERS: frozenset[str] = _INTERPRETERS
+BUILD_FILES: frozenset[str] = frozenset(_BUILD_FILES)
 
 # pytest also runs the test modules it discovers: one written earlier on the line counts
 _PYTEST_TEST_FILE = re.compile(r"^(test_.*|.*_test)\.py$", re.IGNORECASE)
